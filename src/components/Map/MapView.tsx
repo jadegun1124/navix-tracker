@@ -32,8 +32,8 @@ export const MapView: React.FC<MapViewProps> = ({
   useEffect(() => {
     if (!mapContainerRef.current || mapInstanceRef.current) return;
 
-    const initialLat = selectedDevice ? selectedDevice.currentLocation.lat : 37.4982;
-    const initialLng = selectedDevice ? selectedDevice.currentLocation.lng : 127.0612;
+    const initialLat = selectedDevice ? selectedDevice.currentLocation.lat : 37.6550;
+    const initialLng = selectedDevice ? selectedDevice.currentLocation.lng : 127.0610;
 
     const map = L.map(mapContainerRef.current, {
       center: [initialLat, initialLng],

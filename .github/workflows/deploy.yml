@@ -1,4 +1,4 @@
-name: Deploy NAVIX GO to GitHub Pages
+name: Deploy umap GO to GitHub Pages
 
 on:
   push:

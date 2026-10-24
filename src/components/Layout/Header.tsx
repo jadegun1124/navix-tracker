@@ -8,6 +8,8 @@ import {
   Phone,
   Search,
   Route,
+  Smartphone,
+  QrCode,
 } from 'lucide-react';
 import { Device } from '../../types';
 
@@ -21,6 +23,8 @@ interface HeaderProps {
   onGoToLanding: () => void;
   onQuickTrackPhone: (phoneNumber: string) => void;
   unreadCount: number;
+  onOpenMobileTracker?: () => void;
+  onOpenQrModal?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -33,6 +37,8 @@ export const Header: React.FC<HeaderProps> = ({
   onGoToLanding,
   onQuickTrackPhone,
   unreadCount,
+  onOpenMobileTracker,
+  onOpenQrModal,
 }) => {
   const [quickPhone, setQuickPhone] = useState('010-');
 
@@ -130,6 +136,30 @@ export const Header: React.FC<HeaderProps> = ({
 
       {/* Right Action Icons */}
       <div className="flex items-center gap-2">
+        {/* Open Dedicated Mobile Tracker Mode */}
+        {onOpenMobileTracker && (
+          <button
+            onClick={onOpenMobileTracker}
+            className="px-3 py-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-bold text-xs flex items-center gap-1.5 border border-emerald-200 transition-all active:scale-95 cursor-pointer shadow-2xs"
+            title="고정밀 GPS 4단계 필터링 모바일 트래커 화면으로 전환"
+          >
+            <Smartphone className="w-4 h-4 text-emerald-600" />
+            <span className="hidden sm:inline">위치추적 앱</span>
+          </button>
+        )}
+
+        {/* QR Code for Smartphone Scanning */}
+        {onOpenQrModal && (
+          <button
+            onClick={onOpenQrModal}
+            className="px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs flex items-center gap-1.5 border border-slate-200 transition-all active:scale-95 cursor-pointer"
+            title="스마트폰 카메라로 스캔하여 핸드폰에서 바로 위치추적 실행"
+          >
+            <QrCode className="w-4 h-4 text-sky-600" />
+            <span className="hidden lg:inline">폰으로 열기</span>
+          </button>
+        )}
+
         {/* Switch to Company Homepage */}
         <button
           onClick={onGoToLanding}

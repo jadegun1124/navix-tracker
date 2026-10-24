@@ -16,10 +16,18 @@ import { GeofenceModal } from './components/Geofence/GeofenceModal';
 import { DeviceRegisterModal } from './components/Device/DeviceRegisterModal';
 import { NotificationDrawer } from './components/Notification/NotificationDrawer';
 import { LandingPage } from './components/Landing/LandingPage';
-import { Bell, Navigation, Building2, LocateFixed, X, MapPin } from 'lucide-react';
+import { MobileTrackerApp } from './components/MobileTracker/MobileTrackerApp';
+import { QrCodeModal } from './components/MobileTracker/QrCodeModal';
+import { Bell, Navigation, Building2, LocateFixed, X, MapPin, Smartphone, QrCode } from 'lucide-react';
 
 export function App() {
-  const [currentView, setCurrentView] = useState<'landing' | 'tracker'>('tracker');
+  const [currentView, setCurrentView] = useState<'landing' | 'tracker' | 'mobile-app'>(() => {
+    if (typeof window !== 'undefined') {
+      const p = new URLSearchParams(window.location.search);
+      if (p.get('view') === 'mobile-app') return 'mobile-app';
+    }
+    return 'tracker';
+  });
 
   // User's Real-world detected coordinates (Defaults to Nowon-gu)
   const [userCoords, setUserCoords] = useState<{ lat: number; lng: number }>({
@@ -72,6 +80,7 @@ export function App() {
   const [isRegisterOpen, setIsRegisterOpen] = useState<boolean>(false);
   const [isGeofenceOpen, setIsGeofenceOpen] = useState<boolean>(false);
   const [isNotifDrawerOpen, setIsNotifDrawerOpen] = useState<boolean>(false);
+  const [isQrOpen, setIsQrOpen] = useState<boolean>(false);
 
   // 4. Toast Notification
   const [toast, setToast] = useState<AlertNotification | null>(null);
@@ -258,7 +267,7 @@ export function App() {
     }
   };
 
-  // Toggle Physical Real-World Geolocation
+  // Toggle Physical Real-World Geolocation with 4-Algorithm GPS Pipeline
   const handleToggleRealGps = () => {
     if (isRealGpsActive) {
       liveGeoTracker.stop();
@@ -276,24 +285,34 @@ export function App() {
       });
     } else {
       const realDeviceId = 'my-real-device';
-      const success = liveGeoTracker.start(realDeviceId, (loc) => {
-        setUserCoords({ lat: loc.lat, lng: loc.lng });
+      const success = liveGeoTracker.start(realDeviceId, (res) => {
+        // If rejected by pipeline (e.g. accuracy > 50m, 5m jitter, jump > 145km/h)
+        if (!res.isAccepted) {
+          if (res.rejectReason === 'ACCURACY_TOO_LOW' || res.rejectReason === 'VELOCITY_SANITY_FAILED') {
+            console.warn(`[GPS 필터링 차단] ${res.rejectReasonKorean}`);
+          }
+          return;
+        }
+
+        // Only accepted, Kalman-smoothed coordinates update the map and trail
+        setUserCoords({ lat: res.lat, lng: res.lng });
 
         setDevices((prev) => {
           let target = prev.find((d) => d.id === realDeviceId);
+          const timeStr = new Date(res.timestamp).toTimeString().split(' ')[0];
           const newPt = {
-            lat: loc.lat,
-            lng: loc.lng,
-            speed: loc.speed,
-            timestamp: loc.timestamp,
-            address: `노원구 실제 위치 (정밀도 ±${loc.accuracy}m)`,
+            lat: res.lat,
+            lng: res.lng,
+            speed: res.speedKmH,
+            timestamp: timeStr,
+            address: `노원구 실제 위치 (칼만 보정, 오차 ±${Math.round(res.accuracy)}m)`,
           };
 
           if (!target) {
             target = {
               id: realDeviceId,
               name: '내 스마트폰 (노원구 실제 GPS)',
-              model: 'HTML5 High-Accuracy Geolocation API',
+              model: '고정밀 칼만 필터링 GPS',
               type: 'smartphone',
               phoneNumber: '010-실제-내폰',
               serialNumber: 'REAL-NOWON-GPS',
@@ -315,7 +334,7 @@ export function App() {
                 daysLeft: 365,
               },
               assignedGeofences: [],
-              stats: { todayDistanceKm: 0, todayDurationMinutes: 1, topSpeedKmH: loc.speed, stopCount: 0 },
+              stats: { todayDistanceKm: 0, todayDurationMinutes: 1, topSpeedKmH: res.speedKmH, stopCount: 0 },
             };
             return [target, ...prev];
           }
@@ -342,8 +361,8 @@ export function App() {
           deviceName: '실제 내 기기',
           deviceType: 'smartphone',
           type: 'geofence_enter',
-          title: '📍 실제 물리적 GPS 연동 성공!',
-          message: '노원구 실제 위치가 성공적으로 연결되었습니다. 이동하시면 실제 궤적이 지도 위에 실시간으로 그려집니다.',
+          title: '📍 고정밀 GPS 연동 활성화 (4단계 필터 가동)',
+          message: '오차 반경 50m 이하, 정지 5m 노이즈 필터 및 칼만 보정이 적용된 실시간 궤적이 기록됩니다.',
           timestamp: '방금',
           read: false,
         });
@@ -430,7 +449,8 @@ export function App() {
           }`}
         >
           <Building2 className="w-3.5 h-3.5" />
-          <span>umap 회사 공식몰</span>
+          <span className="hidden sm:inline">umap 회사 공식몰</span>
+          <span className="sm:hidden">공식몰</span>
         </button>
         <button
           onClick={() => setCurrentView('tracker')}
@@ -441,7 +461,27 @@ export function App() {
           }`}
         >
           <Navigation className="w-3.5 h-3.5" />
-          <span>실시간 관제 & 궤적 (umap GO)</span>
+          <span className="hidden sm:inline">실시간 관제 & 궤적</span>
+          <span className="sm:hidden">지도 관제</span>
+        </button>
+        <button
+          onClick={() => setCurrentView('mobile-app')}
+          className={`px-3 py-1.5 rounded-xl transition-all flex items-center gap-1.5 cursor-pointer ${
+            currentView === 'mobile-app'
+              ? 'bg-sky-600 text-white shadow-xs'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+          }`}
+        >
+          <Smartphone className="w-3.5 h-3.5 text-emerald-500" />
+          <span>모바일 위치추적 앱</span>
+        </button>
+        <button
+          onClick={() => setIsQrOpen(true)}
+          className="px-2.5 py-1.5 rounded-xl text-slate-600 hover:text-slate-900 hover:bg-slate-50 transition-all flex items-center gap-1 cursor-pointer"
+          title="스마트폰으로 열 수 있는 QR코드 표시"
+        >
+          <QrCode className="w-3.5 h-3.5 text-sky-600" />
+          <span className="hidden md:inline">QR 스캔</span>
         </button>
       </div>
 
@@ -450,8 +490,16 @@ export function App() {
         <div className="w-full h-full overflow-y-auto pt-10">
           <LandingPage onGoToTracker={() => setCurrentView('tracker')} />
         </div>
+      ) : currentView === 'mobile-app' ? (
+        /* VIEW 2: Dedicated Mobile Location Tracking App (High-Accuracy 4-Algorithm GPS) */
+        <div className="w-full h-full overflow-y-auto pt-10">
+          <MobileTrackerApp
+            onBackToMap={() => setCurrentView('tracker')}
+            defaultPhoneNumber={selectedDevice?.phoneNumber || '010-1234-5678'}
+          />
+        </div>
       ) : (
-        /* VIEW 2: Real-time Tracker Web App (Nowon-gu & Real GPS) */
+        /* VIEW 3: Real-time Tracker Web App (Nowon-gu & Real GPS) */
         <div className="flex flex-col w-full h-full overflow-hidden">
           {/* Header with Quick 010 Phone Search */}
           <Header
@@ -464,6 +512,8 @@ export function App() {
             onGoToLanding={() => setCurrentView('landing')}
             onQuickTrackPhone={handleQuickTrackPhone}
             unreadCount={unreadCount}
+            onOpenMobileTracker={() => setCurrentView('mobile-app')}
+            onOpenQrModal={() => setIsQrOpen(true)}
           />
 
           {/* Main Map & Workspace */}
@@ -608,6 +658,13 @@ export function App() {
           />
         </div>
       )}
+
+      {/* QR Code Modal for Phone Camera Scanning */}
+      <QrCodeModal
+        isOpen={isQrOpen}
+        onClose={() => setIsQrOpen(false)}
+        targetPhone={selectedDevice?.phoneNumber || '010-1234-5678'}
+      />
     </div>
   );
 }
