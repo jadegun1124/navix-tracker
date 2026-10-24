@@ -29,7 +29,6 @@ export class RealtimeApiService {
       };
 
       this.ws.onclose = () => {
-        // Reconnect after 3s
         setTimeout(() => this.connectWs(), 3000);
       };
 
@@ -62,13 +61,18 @@ export class RealtimeApiService {
     return [];
   }
 
-  // 2. Track / Register a Korean 010 Phone Number
-  async trackPhoneNumber(phoneNumber: string, name?: string): Promise<Device | null> {
+  // 2. Track / Register a Korean 010 Phone Number at user's actual location
+  async trackPhoneNumber(
+    phoneNumber: string,
+    name?: string,
+    lat?: number,
+    lng?: number
+  ): Promise<Device | null> {
     try {
       const res = await fetch(`${API_BASE}/track-phone`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phoneNumber, name }),
+        body: JSON.stringify({ phoneNumber, name, lat, lng }),
       });
       if (res.ok) {
         const json = await res.json();

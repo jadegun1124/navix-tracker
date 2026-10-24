@@ -16,20 +16,34 @@ import { GeofenceModal } from './components/Geofence/GeofenceModal';
 import { DeviceRegisterModal } from './components/Device/DeviceRegisterModal';
 import { NotificationDrawer } from './components/Notification/NotificationDrawer';
 import { LandingPage } from './components/Landing/LandingPage';
-import { Bell, Navigation, Building2, LocateFixed, X, Route } from 'lucide-react';
+import { Bell, Navigation, Building2, LocateFixed, X, MapPin } from 'lucide-react';
 
 export function App() {
-  // Navigation View: 'landing' (회사 홈페이지) or 'tracker' (실시간 관제)
   const [currentView, setCurrentView] = useState<'landing' | 'tracker'>('tracker');
+
+  // User's Real-world detected coordinates (Defaults to Nowon-gu)
+  const [userCoords, setUserCoords] = useState<{ lat: number; lng: number }>({
+    lat: 37.6550,
+    lng: 127.0610,
+  });
 
   // 1. Devices & Real-time State
   const [devices, setDevices] = useState<Device[]>(() => {
     const saved = localStorage.getItem('umap_devices');
+    // Clear old Gangnam cache if present
+    if (saved && saved.includes('37.4982')) {
+      localStorage.removeItem('umap_devices');
+      return INITIAL_DEVICES;
+    }
     return saved ? JSON.parse(saved) : INITIAL_DEVICES;
   });
 
   const [geofences, setGeofences] = useState<Geofence[]>(() => {
     const saved = localStorage.getItem('umap_geofences');
+    if (saved && saved.includes('37.4982')) {
+      localStorage.removeItem('umap_geofences');
+      return INITIAL_GEOFENCES;
+    }
     return saved ? JSON.parse(saved) : INITIAL_GEOFENCES;
   });
 
@@ -38,17 +52,17 @@ export function App() {
     return saved ? JSON.parse(saved) : INITIAL_NOTIFICATIONS;
   });
 
-  const [selectedDeviceId, setSelectedDeviceId] = useState<string>(devices[0]?.id || 'dev-1');
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string>(devices[0]?.id || 'dev-phone-sample');
   const [showGeofences, setShowGeofences] = useState<boolean>(true);
   const [mapStyle, setMapStyle] = useState<'voyager' | 'osm' | 'satellite'>('voyager');
 
   // Map Notification Toggle
   const [notificationsEnabled, setNotificationsEnabled] = useState<boolean>(true);
 
-  // Real Physical GPS Tracking Toggle (Native Geolocation)
+  // Real Physical GPS Tracking Toggle
   const [isRealGpsActive, setIsRealGpsActive] = useState<boolean>(false);
 
-  // 2. Simulation State (For background devices without physical hardware)
+  // 2. Simulation State
   const [isSimulating, setIsSimulating] = useState<boolean>(true);
   const [simSpeed, setSimSpeed] = useState<number>(1);
   const engineRef = useRef<GpsSimulationEngine | null>(null);
@@ -61,6 +75,41 @@ export function App() {
 
   // 4. Toast Notification
   const [toast, setToast] = useState<AlertNotification | null>(null);
+
+  // Auto-Detect User's Real Location on Mount (Immediate Nowon-gu focus)
+  useEffect(() => {
+    if ('geolocation' in navigator) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const lat = pos.coords.latitude;
+          const lng = pos.coords.longitude;
+          setUserCoords({ lat, lng });
+
+          // Update the first smartphone device directly to user's real physical coordinates
+          setDevices((prev) =>
+            prev.map((dev) =>
+              dev.id === 'dev-phone-sample' || dev.type === 'smartphone'
+                ? {
+                    ...dev,
+                    currentLocation: {
+                      ...dev.currentLocation,
+                      lat,
+                      lng,
+                      address: '서울 노원구 현재 내 위치 (실시간 GPS)',
+                    },
+                    todayTrail: [{ lat, lng, timestamp: new Date().toTimeString().split(' ')[0], speed: 0, address: '현재 위치' }],
+                  }
+                : dev
+            )
+          );
+        },
+        (err) => {
+          console.log('[Geolocation] Using Nowon-gu default:', err.message);
+        },
+        { enableHighAccuracy: true, timeout: 6000 }
+      );
+    }
+  }, []);
 
   // Sync to localStorage
   useEffect(() => {
@@ -75,14 +124,13 @@ export function App() {
     localStorage.setItem('umap_notifications', JSON.stringify(notifications));
   }, [notifications]);
 
-  // Init Engine
+  // Init Engine with Nowon-gu configuration
   useEffect(() => {
     engineRef.current = new GpsSimulationEngine(geofences, devices);
   }, []);
 
   // Connect to Real-time Backend API & WebSocket Stream
   useEffect(() => {
-    // 1. Initial fetch from Backend API
     realtimeApi.getDevices().then((apiDevices) => {
       if (apiDevices && apiDevices.length > 0) {
         setDevices((prev) => {
@@ -101,7 +149,6 @@ export function App() {
       }
     });
 
-    // 2. Listen to live WebSocket stream
     const unsubscribe = realtimeApi.onMessage((type, payload) => {
       if (type === 'INIT_STATE') {
         if (payload?.devices) {
@@ -112,7 +159,6 @@ export function App() {
           });
         }
       } else if (type === 'LOCATION_UPDATE') {
-        // Real-time position & trail stream update
         setDevices((prev) =>
           prev.map((d) => (d.id === payload.deviceId ? payload.device : d))
         );
@@ -170,11 +216,23 @@ export function App() {
     return () => clearInterval(timer);
   }, [isSimulating, simSpeed, selectedDeviceId, selectedDevice?.isMissingMode, geofences, notificationsEnabled]);
 
-  // Real-time Phone Number Ingestion Handler via API
+  // Real-time Phone Number Ingestion Handler via API (Centered at user's actual location in Nowon-gu)
   const handleQuickTrackPhone = async (phoneNumber: string) => {
-    // 1. Call Backend API
-    const apiDevice = await realtimeApi.trackPhoneNumber(phoneNumber);
-    const newDevice = apiDevice || createPhoneTrackingDevice(phoneNumber);
+    // 1. Call Backend API with user's actual coordinates
+    const apiDevice = await realtimeApi.trackPhoneNumber(
+      phoneNumber,
+      undefined,
+      userCoords.lat,
+      userCoords.lng
+    );
+
+    const newDevice = apiDevice || createPhoneTrackingDevice(
+      phoneNumber,
+      undefined,
+      userCoords.lat,
+      userCoords.lng,
+      '서울 노원구 상계동 (실시간 궤적 수신)'
+    );
 
     setDevices((prev) => [newDevice, ...prev.filter((d) => d.id !== newDevice.id)]);
     setSelectedDeviceId(newDevice.id);
@@ -185,8 +243,8 @@ export function App() {
       deviceName: newDevice.name,
       deviceType: 'smartphone',
       type: 'geofence_enter',
-      title: '📱 010 실시간 궤적 수신 시작',
-      message: `${phoneNumber} 단말기 LTE 위치 및 궤적선이 API 서버에 동기화되었습니다.`,
+      title: '📱 노원구 010 실시간 궤적 연결 완료',
+      message: `${phoneNumber} 단말기가 서울 노원구 기지국 및 GPS에 연결되어 궤적 수신을 시작했습니다.`,
       timestamp: '방금',
       read: false,
       lat: newDevice.currentLocation.lat,
@@ -200,7 +258,7 @@ export function App() {
     }
   };
 
-  // Toggle Physical Real-World Geolocation from this Device
+  // Toggle Physical Real-World Geolocation
   const handleToggleRealGps = () => {
     if (isRealGpsActive) {
       liveGeoTracker.stop();
@@ -219,6 +277,8 @@ export function App() {
     } else {
       const realDeviceId = 'my-real-device';
       const success = liveGeoTracker.start(realDeviceId, (loc) => {
+        setUserCoords({ lat: loc.lat, lng: loc.lng });
+
         setDevices((prev) => {
           let target = prev.find((d) => d.id === realDeviceId);
           const newPt = {
@@ -226,17 +286,17 @@ export function App() {
             lng: loc.lng,
             speed: loc.speed,
             timestamp: loc.timestamp,
-            address: `정밀도 ${loc.accuracy}m (실제 위치)`,
+            address: `노원구 실제 위치 (정밀도 ±${loc.accuracy}m)`,
           };
 
           if (!target) {
             target = {
               id: realDeviceId,
-              name: '내 스마트폰 (실제 물리적 GPS)',
+              name: '내 스마트폰 (노원구 실제 GPS)',
               model: 'HTML5 High-Accuracy Geolocation API',
               type: 'smartphone',
               phoneNumber: '010-실제-내폰',
-              serialNumber: 'REAL-GPS-SENDER',
+              serialNumber: 'REAL-NOWON-GPS',
               battery: 98,
               isCharging: false,
               status: 'online',
@@ -283,7 +343,7 @@ export function App() {
           deviceType: 'smartphone',
           type: 'geofence_enter',
           title: '📍 실제 물리적 GPS 연동 성공!',
-          message: '브라우저 실시간 GPS가 연결되었습니다. 이동하시면 실제 궤적이 지도 위에 실시간으로 그려집니다.',
+          message: '노원구 실제 위치가 성공적으로 연결되었습니다. 이동하시면 실제 궤적이 지도 위에 실시간으로 그려집니다.',
           timestamp: '방금',
           read: false,
         });
@@ -359,7 +419,7 @@ export function App() {
 
   return (
     <div className="w-screen h-screen overflow-hidden bg-white text-slate-900 font-sans relative">
-      {/* View Switcher Floating Top Bar (umap Brand) */}
+      {/* View Switcher Floating Top Bar */}
       <div className="fixed top-2.5 left-1/2 -translate-x-1/2 z-[999] flex items-center p-1 bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200 shadow-xl text-xs font-bold text-slate-700">
         <button
           onClick={() => setCurrentView('landing')}
@@ -391,9 +451,9 @@ export function App() {
           <LandingPage onGoToTracker={() => setCurrentView('tracker')} />
         </div>
       ) : (
-        /* VIEW 2: Real-time Tracker Web App with Real Geolocation & Backend API */
+        /* VIEW 2: Real-time Tracker Web App (Nowon-gu & Real GPS) */
         <div className="flex flex-col w-full h-full overflow-hidden">
-          {/* Header with Quick 010 Phone Search & Real Device GPS button */}
+          {/* Header with Quick 010 Phone Search */}
           <Header
             devices={devices}
             selectedDevice={selectedDevice}
@@ -433,7 +493,7 @@ export function App() {
               />
 
               {/* Real Physical GPS Button (Floating at Top Left of Map) */}
-              <div className="absolute top-4 left-4 z-[500]">
+              <div className="absolute top-4 left-4 z-[500] flex items-center gap-2">
                 <button
                   onClick={handleToggleRealGps}
                   className={`px-3.5 py-2 rounded-2xl font-bold text-xs flex items-center gap-2 shadow-xl border transition-all cursor-pointer ${
@@ -444,8 +504,14 @@ export function App() {
                   title="내 실제 스마트폰/PC의 브라우저 GPS를 켜서 실제 이동 궤적을 실시간으로 추적합니다"
                 >
                   <LocateFixed className={`w-4 h-4 ${isRealGpsActive ? 'text-white' : 'text-emerald-600'}`} />
-                  <span>{isRealGpsActive ? '📍 내 실제 GPS 연동 중 (실시간)' : '📍 내 실제 GPS 연동 켜기'}</span>
+                  <span>{isRealGpsActive ? '📍 노원구 실제 GPS 연동 중' : '📍 내 실제 GPS 연동 켜기'}</span>
                 </button>
+
+                {/* Location indicator pill */}
+                <div className="hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-2xl bg-white/90 border border-slate-200 shadow-md text-xs font-semibold text-slate-700 pointer-events-none">
+                  <MapPin className="w-3.5 h-3.5 text-sky-600" />
+                  <span>현재 위치: 서울 노원구 상계동</span>
+                </div>
               </div>
 
               {/* Floating Map Controls with Alert Toggle */}

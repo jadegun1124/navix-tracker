@@ -1,5 +1,5 @@
 import { Device, Geofence, AlertNotification, GPSPoint } from '../types';
-import { CHILD_ROUTE_POINTS, PET_ROUTE_POINTS, VEHICLE_ROUTE_POINTS, PHONE_ROUTE_POINTS } from '../data/mockData';
+import { NOWON_CHILD_ROUTE, NOWON_PET_ROUTE, NOWON_VEHICLE_ROUTE, NOWON_PHONE_ROUTE } from '../data/mockData';
 
 // Haversine distance in meters
 export function getDistanceMeters(lat1: number, lon1: number, lat2: number, lon2: number): number {
@@ -14,27 +14,25 @@ export function getDistanceMeters(lat1: number, lon1: number, lat2: number, lon2
   return R * c;
 }
 
-// Map each device type to its predefined full path
+// Map each device to Nowon-gu paths
 export const DEVICE_FULL_PATHS: Record<string, GPSPoint[]> = {
-  'dev-1': CHILD_ROUTE_POINTS,
-  'dev-2': PET_ROUTE_POINTS,
-  'dev-3': VEHICLE_ROUTE_POINTS,
-  'dev-phone-sample': PHONE_ROUTE_POINTS,
+  'dev-1': NOWON_CHILD_ROUTE,
+  'dev-2': NOWON_PET_ROUTE,
+  'dev-3': NOWON_VEHICLE_ROUTE,
+  'dev-phone-sample': NOWON_PHONE_ROUTE,
 };
 
 export class GpsSimulationEngine {
   private deviceIndices: Record<string, number> = {
-    'dev-1': 4,
-    'dev-2': 4,
-    'dev-3': 3,
-    'dev-4': 0,
-    'dev-phone-sample': 3,
+    'dev-1': 3,
+    'dev-2': 2,
+    'dev-3': 2,
+    'dev-phone-sample': 1,
   };
 
-  private geofenceInsideStates: Record<string, Record<string, boolean>> = {}; // deviceId -> geofenceId -> isInside
+  private geofenceInsideStates: Record<string, Record<string, boolean>> = {};
 
   constructor(geofences: Geofence[], devices: Device[]) {
-    // Initial check
     devices.forEach((dev) => {
       this.geofenceInsideStates[dev.id] = {};
       geofences.forEach((geo) => {
@@ -44,20 +42,18 @@ export class GpsSimulationEngine {
     });
   }
 
-  // Progress simulation one step for a device or all devices
   tickDevice(
     device: Device,
     geofences: Geofence[]
   ): { updatedDevice: Device; newNotifications: AlertNotification[] } {
     let fullPath = DEVICE_FULL_PATHS[device.id];
     
-    // Fallback path for any dynamic phone tracker
     if (!fullPath) {
       if (device.type === 'smartphone' || device.phoneNumber) {
-        fullPath = PHONE_ROUTE_POINTS;
-        DEVICE_FULL_PATHS[device.id] = PHONE_ROUTE_POINTS;
+        fullPath = NOWON_PHONE_ROUTE;
+        DEVICE_FULL_PATHS[device.id] = NOWON_PHONE_ROUTE;
       } else {
-        fullPath = CHILD_ROUTE_POINTS;
+        fullPath = NOWON_CHILD_ROUTE;
       }
     }
 
@@ -78,7 +74,6 @@ export class GpsSimulationEngine {
       timestamp: timeStr,
     };
 
-    // Calculate updated stats
     const distDelta = getDistanceMeters(
       device.currentLocation.lat,
       device.currentLocation.lng,
@@ -92,7 +87,7 @@ export class GpsSimulationEngine {
       ...device,
       currentLocation: newLocation,
       todayTrail: updatedTodayTrail,
-      lastSeen: '방금 전 (실시간 궤적)',
+      lastSeen: '실시간 (수신 중)',
       battery: Math.max(10, device.battery - (Math.random() < 0.05 ? 1 : 0)),
       stats: {
         ...device.stats,
@@ -101,7 +96,6 @@ export class GpsSimulationEngine {
       },
     };
 
-    // Geofence checks
     const newNotifications: AlertNotification[] = [];
     if (!this.geofenceInsideStates[device.id]) {
       this.geofenceInsideStates[device.id] = {};
@@ -117,7 +111,6 @@ export class GpsSimulationEngine {
         return;
       }
 
-      // Entry trigger
       if (!wasInside && isInsideNow && geo.alertOnEntry) {
         newNotifications.push({
           id: `notif-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
@@ -125,8 +118,8 @@ export class GpsSimulationEngine {
           deviceName: device.name,
           deviceType: device.type,
           type: 'geofence_enter',
-          title: '안전구역 진입',
-          message: `${device.name}이(가) [${geo.name}] 안전구역에 진입하였습니다. (${timeStr.substring(0, 5)})`,
+          title: '안전구역 진입 (노원구)',
+          message: `${device.name}이(가) [${geo.name}]에 진입했습니다. (${timeStr.substring(0, 5)})`,
           timestamp: `방금 전`,
           read: false,
           lat: newLocation.lat,
@@ -134,7 +127,6 @@ export class GpsSimulationEngine {
         });
       }
 
-      // Exit trigger
       if (wasInside && !isInsideNow && geo.alertOnExit) {
         newNotifications.push({
           id: `notif-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
@@ -142,8 +134,8 @@ export class GpsSimulationEngine {
           deviceName: device.name,
           deviceType: device.type,
           type: 'geofence_exit',
-          title: '안전구역 이탈 감지',
-          message: `${device.name}이(가) [${geo.name}] 안전구역을 벗어났습니다. (${timeStr.substring(0, 5)})`,
+          title: '안전구역 이탈 (노원구)',
+          message: `${device.name}이(가) [${geo.name}]을 벗어났습니다. (${timeStr.substring(0, 5)})`,
           timestamp: `방금 전`,
           read: false,
           lat: newLocation.lat,
