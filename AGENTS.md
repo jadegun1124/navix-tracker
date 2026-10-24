@@ -4,7 +4,7 @@
 
 - React 19, TypeScript, Vite, Tailwind CSS v4
 - 웹: 회사 홈페이지. 가족 지도는 `?app=1` 또는 Capacitor 네이티브에서만 연다.
-- 지도: Leaflet + CARTO Voyager 일반 지도(OpenStreetMap). 위성 타일은 쓰지 않는다. 이동 경로는 `localStorage` 세션에 두고 선택한 구성원만 선으로 보여 준다.
+- 지도: Leaflet. 기본은 Esri World Imagery 위성(키 없음). 버튼으로 CARTO Voyager 일반 지도와 전환. 타일 실패 시 다른 스타일로 한 번 넘기고, 핀은 남긴다. 이동 경로는 `localStorage` 세션에 두고 선택한 구성원만 선으로 보여 준다.
 - 로그인: Google Identity Services. 키는 `VITE_GOOGLE_CLIENT_ID`.
 - 앱 셸: Capacitor Android. 표시 이름 Umap. 패키지 `kr.co.umap.tracker`.
 - 아이콘: `python3 scripts/render-umap-icon.py` 가 파란 타일, 흰 핀, 빨간 하트 마크를 런처와 스플래시에 넣는다.
