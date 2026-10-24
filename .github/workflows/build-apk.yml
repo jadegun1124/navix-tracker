@@ -59,18 +59,16 @@ jobs:
       - name: Build Debug APK with Gradle
         run: |
           cd android
-          ./gradlew assembleDebug --no-daemon 2>&1 | tee ../gradle.log || {
-            echo "=================== GRADLE ERROR DETAILS ==================="
-            grep -E "FAILURE|FAILED|error|Error|Exception" ../gradle.log -A 10 -B 2 || tail -n 50 ../gradle.log
-            exit 1
-          }
+          ./gradlew assembleDebug --no-daemon
 
       - name: Prepare APK Output
         run: |
           mkdir -p output
-          cp android/app/build/outputs/apk/debug/app-debug.apk output/umap-v1.0.0-tracker.apk
-          echo "APK successfully built:"
-          ls -la output/
+          echo "Locating built APK files:"
+          find android/ -name "*.apk" -ls
+          find android/ -name "*.apk" -exec cp {} output/umap-v1.0.0-tracker.apk \;
+          echo "Output directory contents:"
+          ls -lh output/
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
