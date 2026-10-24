@@ -59,12 +59,18 @@ jobs:
       - name: Build Debug APK with Gradle
         run: |
           cd android
-          ./gradlew assembleDebug --no-daemon --stacktrace 2>&1 | tee ../gradle.log || true
-          echo "### Gradle Build Log" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          tail -n 80 ../gradle.log >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          if grep -q "BUILD FAILED" ../gradle.log; then
+          ./gradlew assembleDebug --no-daemon --stacktrace > ../gradle.log 2>&1 || {
+            BUILD_FAILED=1
+          }
+          if [ "$BUILD_FAILED" = "1" ]; then
+            echo "Gradle build failed. Pushing log to debug-log branch..."
+            cd ..
+            git config --global user.name "GitHub Actions"
+            git config --global user.email "actions@github.com"
+            git checkout -B debug-log
+            git add gradle.log
+            git commit -m "debug: Gradle build error log" || true
+            git push origin debug-log --force || true
             exit 1
           fi
 
