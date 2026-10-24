@@ -2,7 +2,20 @@
 
 동의한 가족과 위치를 나누는 서비스입니다. 웹사이트는 회사 소개만 두고, 가족 지도는 휴대폰 앱에서 씁니다.
 
-저장소 이름은 `jadegun1124/navix-tracker` 입니다. 제품 이름은 **Umap** 입니다.
+제품 이름은 **Umap** 입니다. GitHub 저장소는 [jadegun1124/umap](https://github.com/jadegun1124/umap) 입니다.
+
+## 공개 주소
+
+| 무엇 | 어디 | 주소 |
+| :--- | :--- | :--- |
+| 회사 홈 | GitHub Pages | https://jadegun1124.github.io/umap/ |
+| 앱 화면 미리보기 | 같은 Pages의 `?app=1` | https://jadegun1124.github.io/umap/?app=1 |
+| 안드로이드 앱 | GitHub Releases APK | https://github.com/jadegun1124/umap/releases/latest/download/umap-v1.0.0-tracker.apk |
+| 릴리스 목록 | GitHub Releases | https://github.com/jadegun1124/umap/releases/latest |
+
+Google Play, App Store, TestFlight에는 올리지 않았습니다. iOS는 아이콘 에셋만 있고 설치 파일은 없습니다.
+
+`main`에 푸시하면 GitHub Actions가 회사 홈을 Pages에 배포하고, 같은 커밋으로 디버그 APK를 만들어 `v1.0.0` 릴리스의 `umap-v1.0.0-tracker.apk`를 갱신합니다.
 
 ## 화면
 
@@ -62,7 +75,9 @@ npm run dev
 
 ## 안드로이드 APK
 
-GitHub Actions `Build Android APK (Umap)` 가 디버그 APK를 만듭니다. 워크플로는 웹을 빌드한 뒤 `dist` 를 안드로이드 에셋으로 복사하고 `assembleDebug` 를 실행합니다.
+받는 곳: https://github.com/jadegun1124/umap/releases/latest/download/umap-v1.0.0-tracker.apk
+
+`main` 푸시마다 `Build Android APK (Umap)` 워크플로가 웹을 빌드하고 `dist` 를 안드로이드 에셋으로 복사한 뒤 `assembleDebug` 로 APK를 만듭니다. 결과 파일은 GitHub Release `v1.0.0`에 올립니다. Play 스토어 트랙은 없습니다.
 
 ## 데이터
 
