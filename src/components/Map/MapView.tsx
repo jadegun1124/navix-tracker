@@ -23,6 +23,7 @@ export const MapView: React.FC<MapViewProps> = ({
   const mapInstanceRef = useRef<L.Map | null>(null);
   const markersRef = useRef<Record<string, L.Marker>>({});
   const polylinesRef = useRef<Record<string, { recent: L.Polyline; history: L.Polyline }>>({});
+  const waypointMarkersRef = useRef<Record<string, L.LayerGroup>>({});
   const geofenceLayersRef = useRef<L.LayerGroup | null>(null);
   const tileLayerRef = useRef<L.TileLayer | null>(null);
   const labelsLayerRef = useRef<L.TileLayer | null>(null);
@@ -164,6 +165,9 @@ export const MapView: React.FC<MapViewProps> = ({
       } else if (device.type === 'valuable') {
         themeColor = '#8b5cf6'; // valuables - purple
         iconEmoji = '🚲';
+      } else if (device.type === 'smartphone') {
+        themeColor = '#0284c7'; // smartphone - sky blue
+        iconEmoji = '📱';
       }
 
       // Check for emergency / missing mode
@@ -217,7 +221,7 @@ export const MapView: React.FC<MapViewProps> = ({
         markersRef.current[device.id] = marker;
       }
 
-      // Trail Rendering (Split into History / Recent)
+      // Trail Rendering with Waypoint Breadcrumbs
       const points = device.todayTrail.map((p) => [p.lat, p.lng] as [number, number]);
       if (points.length >= 2) {
         const recentPoints = points.slice(-4);
@@ -226,14 +230,14 @@ export const MapView: React.FC<MapViewProps> = ({
         if (!polylinesRef.current[device.id]) {
           const historyLine = L.polyline(olderPoints, {
             color: themeColor,
-            weight: 3,
-            opacity: 0.4,
-            dashArray: '4, 6',
+            weight: 3.5,
+            opacity: 0.5,
+            dashArray: '5, 8',
           }).addTo(map);
 
           const recentLine = L.polyline(recentPoints, {
             color: themeColor,
-            weight: 5,
+            weight: 5.5,
             opacity: 0.95,
           }).addTo(map);
 
@@ -243,6 +247,30 @@ export const MapView: React.FC<MapViewProps> = ({
           polylinesRef.current[device.id].history.setStyle({ color: themeColor });
           polylinesRef.current[device.id].recent.setLatLngs(recentPoints);
           polylinesRef.current[device.id].recent.setStyle({ color: themeColor });
+        }
+
+        // Draw waypoint circles along the route for the selected device
+        if (!waypointMarkersRef.current[device.id]) {
+          waypointMarkersRef.current[device.id] = L.layerGroup().addTo(map);
+        }
+        const wpLayer = waypointMarkersRef.current[device.id];
+        wpLayer.clearLayers();
+
+        if (isSelected) {
+          // Draw subtle breadcrumb dots for previous points
+          device.todayTrail.slice(0, -1).forEach((pt, idx) => {
+            const dot = L.circleMarker([pt.lat, pt.lng], {
+              radius: idx === 0 ? 6 : 4,
+              color: idx === 0 ? '#10b981' : themeColor,
+              fillColor: idx === 0 ? '#10b981' : '#ffffff',
+              fillOpacity: 0.9,
+              weight: 2,
+            });
+            if (pt.address) {
+              dot.bindTooltip(`[${pt.timestamp}] ${pt.address}`, { direction: 'top', offset: [0, -5] });
+            }
+            wpLayer.addLayer(dot);
+          });
         }
       }
     });
@@ -255,7 +283,7 @@ export const MapView: React.FC<MapViewProps> = ({
       {/* No API Key Required Indicator Badge (Bright White Mode) */}
       <div className="absolute bottom-3 left-4 z-[450] px-3.5 py-1.5 rounded-xl bg-white/95 backdrop-blur-md border border-slate-200 text-xs text-slate-700 font-bold flex items-center gap-2 shadow-md pointer-events-none">
         <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-        <span>오픈 지도 서비스 (API 키 불필요 • 무료 무제한)</span>
+        <span>umap 오픈 지도 서비스 (API 키 불필요 • 실시간 궤적 출력)</span>
       </div>
     </div>
   );

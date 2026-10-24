@@ -1,4 +1,4 @@
-import { Device, Geofence, AlertNotification, RouteTimelineEvent } from '../types';
+import { Device, Geofence, AlertNotification, RouteTimelineEvent, GPSPoint } from '../types';
 
 export const INITIAL_GEOFENCES: Geofence[] = [
   {
@@ -59,7 +59,7 @@ export const INITIAL_GEOFENCES: Geofence[] = [
 ];
 
 // Realistic points along the child route (Morning commute -> School -> Academy -> Home)
-export const CHILD_ROUTE_POINTS = [
+export const CHILD_ROUTE_POINTS: GPSPoint[] = [
   { lat: 37.4982, lng: 127.0612, timestamp: '08:15:00', speed: 0, address: '서울 강남구 대치동 래미안카운티 (집)' },
   { lat: 37.4975, lng: 127.0615, timestamp: '08:18:20', speed: 3.5, address: '대치동 주택가 통학로' },
   { lat: 37.4962, lng: 127.0620, timestamp: '08:21:40', speed: 4.1, address: '도곡로 보행자 신호등 앞' },
@@ -74,7 +74,7 @@ export const CHILD_ROUTE_POINTS = [
 ];
 
 // Pet walk path in Jamwon park
-export const PET_ROUTE_POINTS = [
+export const PET_ROUTE_POINTS: GPSPoint[] = [
   { lat: 37.5180, lng: 127.0180, timestamp: '07:20:00', speed: 0, address: '서울 서초구 잠원동 (자택)' },
   { lat: 37.5195, lng: 127.0172, timestamp: '07:24:00', speed: 4.2, address: '잠원로 보행 산책로' },
   { lat: 37.5212, lng: 127.0160, timestamp: '07:28:15', speed: 5.1, address: '잠원 나들목 통과 중' },
@@ -87,7 +87,7 @@ export const PET_ROUTE_POINTS = [
 ];
 
 // Vehicle drive path from Gangnam to Pangyo
-export const VEHICLE_ROUTE_POINTS = [
+export const VEHICLE_ROUTE_POINTS: GPSPoint[] = [
   { lat: 37.4979, lng: 127.0276, timestamp: '08:30:00', speed: 0, address: '강남역 2번 출구 지하주차장 (출발)' },
   { lat: 37.4930, lng: 127.0315, timestamp: '08:34:20', speed: 32, address: '강남대로 뱅뱅사거리 통과' },
   { lat: 37.4845, lng: 127.0378, timestamp: '08:39:10', speed: 48, address: '양재역 사거리 -> 서초IC 진입' },
@@ -97,8 +97,20 @@ export const VEHICLE_ROUTE_POINTS = [
   { lat: 37.4018, lng: 127.1065, timestamp: '08:58:00', speed: 0, address: '판교 R&D 센터 지하 2층 주차장 (도착/주차)', isStopPoint: true, stopDurationMinutes: 480 },
 ];
 
+// Smartphone 010 live moving route points (Teheran-ro line in Seoul)
+export const PHONE_ROUTE_POINTS: GPSPoint[] = [
+  { lat: 37.4979, lng: 127.0276, timestamp: '10:10:00', speed: 0, address: '서울 강남역 11번 출구 버스정류장' },
+  { lat: 37.4988, lng: 127.0315, timestamp: '10:14:20', speed: 4.2, address: '테헤란로 국기원 입구 교차로 보행 중' },
+  { lat: 37.5002, lng: 127.0365, timestamp: '10:19:10', speed: 4.8, address: '역삼역 4번 출구 스타벅스 앞' },
+  { lat: 37.5015, lng: 127.0420, timestamp: '10:25:00', speed: 1.5, address: '역삼동 GS타워 지하 아케이드', isStopPoint: true, stopDurationMinutes: 15 },
+  { lat: 37.5042, lng: 127.0485, timestamp: '10:33:40', speed: 5.1, address: '선릉역 1번 출구 횡단보도 통과' },
+  { lat: 37.5065, lng: 127.0545, timestamp: '10:41:15', speed: 4.5, address: '포스코사거리 테헤란로 보행로' },
+  { lat: 37.5088, lng: 127.0598, timestamp: '10:48:30', speed: 3.2, address: '삼성역 5번 출구 그랜드인터컨티넨탈 앞' },
+  { lat: 37.5115, lng: 127.0610, timestamp: '10:55:00', speed: 0, address: '스타필드 코엑스몰 라이브 플라자 (실내 도착)', isStopPoint: true, stopDurationMinutes: 45 },
+];
+
 // Valuables stationary point
-export const VALUABLE_ROUTE_POINTS = [
+export const VALUABLE_ROUTE_POINTS: GPSPoint[] = [
   { lat: 37.5120, lng: 127.0580, timestamp: '09:00:00', speed: 0, address: '서울 강남구 삼성동 아파트 지하 자전거 보관소' },
   { lat: 37.5120, lng: 127.0580, timestamp: '09:15:00', speed: 0, address: '서울 강남구 삼성동 아파트 지하 자전거 보관소' },
 ];
@@ -107,9 +119,10 @@ export const INITIAL_DEVICES: Device[] = [
   {
     id: 'dev-1',
     name: '민준이 가방',
-    model: 'NAVIX X1L (어린이 안심형)',
+    model: 'umap X1L (어린이 안심형)',
     type: 'child',
-    serialNumber: 'NX1L-8839-4412-KR',
+    serialNumber: 'UM-X1L-8839-KR',
+    phoneNumber: '010-8839-4412',
     battery: 88,
     isCharging: false,
     status: 'online',
@@ -140,11 +153,47 @@ export const INITIAL_DEVICES: Device[] = [
     },
   },
   {
+    id: 'dev-phone-sample',
+    name: '010-7721-3948 (스마트폰)',
+    model: 'umap 스마트폰 실시간 위치공유',
+    type: 'smartphone',
+    serialNumber: 'SP-LTE-7721-KR',
+    phoneNumber: '010-7721-3948',
+    battery: 92,
+    isCharging: false,
+    status: 'online',
+    signalStrength: 4,
+    lastSeen: '실시간 (3초 전)',
+    currentLocation: { ...PHONE_ROUTE_POINTS[4] },
+    todayTrail: PHONE_ROUTE_POINTS.slice(0, 5),
+    historicalTrails: {
+      '2026-10-24': PHONE_ROUTE_POINTS.slice(0, 5),
+      '2026-10-23': PHONE_ROUTE_POINTS,
+    },
+    updateInterval: 10,
+    soundMuted: false,
+    isMissingMode: false,
+    voucher: {
+      planName: '가족 스마트폰 무료 공유 연동',
+      activatedAt: '2026-10-24',
+      expiresAt: '2027-10-23',
+      daysLeft: 365,
+    },
+    assignedGeofences: ['geo-1'],
+    stats: {
+      todayDistanceKm: 3.2,
+      todayDurationMinutes: 28,
+      topSpeedKmH: 5.8,
+      stopCount: 1,
+    },
+  },
+  {
     id: 'dev-2',
     name: '코코 (골든리트리버)',
-    model: 'NAVIX C5L (반려동물 목줄형)',
+    model: 'umap C5L (반려동물 목줄형)',
     type: 'pet',
-    serialNumber: 'NC5L-1902-7741-KR',
+    serialNumber: 'UM-C5L-1902-KR',
+    phoneNumber: '010-1902-7741',
     battery: 74,
     isCharging: false,
     status: 'online',
@@ -177,9 +226,10 @@ export const INITIAL_DEVICES: Device[] = [
   {
     id: 'dev-3',
     name: '카니발 하이리무진',
-    model: 'NAVIX C8L (차량용 실시간 관제)',
+    model: 'umap C8L (차량용 실시간 관제)',
     type: 'vehicle',
-    serialNumber: 'NC8L-5510-9923-KR',
+    serialNumber: 'UM-C8L-5510-KR',
+    phoneNumber: '010-5510-9923',
     battery: 98,
     isCharging: true,
     status: 'online',
@@ -212,9 +262,10 @@ export const INITIAL_DEVICES: Device[] = [
   {
     id: 'dev-4',
     name: '스페셜라이즈드 자전거',
-    model: 'NAVIX A2L (초소형 자산/귀중품)',
+    model: 'umap A2L (초소형 자산/귀중품)',
     type: 'valuable',
-    serialNumber: 'NA2L-3320-1192-KR',
+    serialNumber: 'UM-A2L-3320-KR',
+    phoneNumber: '010-3320-1192',
     battery: 92,
     isCharging: false,
     status: 'idle',
@@ -244,6 +295,53 @@ export const INITIAL_DEVICES: Device[] = [
   },
 ];
 
+// Helper to create a new live phone tracking device from any Korean 010 number
+export function createPhoneTrackingDevice(phoneNumber: string, customName?: string): Device {
+  const cleanPhone = phoneNumber.replace(/[^0-9]/g, '');
+  const formattedPhone = cleanPhone.length === 11
+    ? `${cleanPhone.slice(0, 3)}-${cleanPhone.slice(3, 7)}-${cleanPhone.slice(7)}`
+    : phoneNumber;
+
+  const id = `dev-phone-${Date.now()}`;
+  const trailSlice = PHONE_ROUTE_POINTS.slice(0, 4);
+
+  return {
+    id,
+    name: customName?.trim() || `${formattedPhone} (휴대폰)`,
+    model: '스마트폰 실시간 위치 & 궤적 추적',
+    type: 'smartphone',
+    serialNumber: `SP-${formattedPhone}`,
+    phoneNumber: formattedPhone,
+    battery: 85,
+    isCharging: false,
+    status: 'online',
+    signalStrength: 4,
+    lastSeen: '방금 전 (LTE 연결)',
+    currentLocation: { ...PHONE_ROUTE_POINTS[3] },
+    todayTrail: trailSlice,
+    historicalTrails: {
+      '2026-10-24': trailSlice,
+      '2026-10-23': PHONE_ROUTE_POINTS,
+    },
+    updateInterval: 10,
+    soundMuted: false,
+    isMissingMode: false,
+    voucher: {
+      planName: '010 안심 위치공유 1년권',
+      activatedAt: '2026-10-24',
+      expiresAt: '2027-10-23',
+      daysLeft: 365,
+    },
+    assignedGeofences: ['geo-1'],
+    stats: {
+      todayDistanceKm: 2.1,
+      todayDurationMinutes: 20,
+      topSpeedKmH: 5.1,
+      stopCount: 1,
+    },
+  };
+}
+
 export const INITIAL_NOTIFICATIONS: AlertNotification[] = [
   {
     id: 'notif-1',
@@ -257,6 +355,19 @@ export const INITIAL_NOTIFICATIONS: AlertNotification[] = [
     read: false,
     lat: 37.4938,
     lng: 127.0631,
+  },
+  {
+    id: 'notif-phone',
+    deviceId: 'dev-phone-sample',
+    deviceName: '010-7721-3948 (스마트폰)',
+    deviceType: 'smartphone',
+    type: 'geofence_enter',
+    title: '스마트폰 궤적 추적 시작',
+    message: '010-7721-3948 단말기 위치 동기화 완료 (테헤란로 보행 궤적 수신 중)',
+    timestamp: '방금 전',
+    read: false,
+    lat: 37.5015,
+    lng: 127.0420,
   },
   {
     id: 'notif-2',

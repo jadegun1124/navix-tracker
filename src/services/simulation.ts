@@ -1,5 +1,5 @@
 import { Device, Geofence, AlertNotification, GPSPoint } from '../types';
-import { CHILD_ROUTE_POINTS, PET_ROUTE_POINTS, VEHICLE_ROUTE_POINTS } from '../data/mockData';
+import { CHILD_ROUTE_POINTS, PET_ROUTE_POINTS, VEHICLE_ROUTE_POINTS, PHONE_ROUTE_POINTS } from '../data/mockData';
 
 // Haversine distance in meters
 export function getDistanceMeters(lat1: number, lon1: number, lat2: number, lon2: number): number {
@@ -19,6 +19,7 @@ export const DEVICE_FULL_PATHS: Record<string, GPSPoint[]> = {
   'dev-1': CHILD_ROUTE_POINTS,
   'dev-2': PET_ROUTE_POINTS,
   'dev-3': VEHICLE_ROUTE_POINTS,
+  'dev-phone-sample': PHONE_ROUTE_POINTS,
 };
 
 export class GpsSimulationEngine {
@@ -27,6 +28,7 @@ export class GpsSimulationEngine {
     'dev-2': 4,
     'dev-3': 3,
     'dev-4': 0,
+    'dev-phone-sample': 3,
   };
 
   private geofenceInsideStates: Record<string, Record<string, boolean>> = {}; // deviceId -> geofenceId -> isInside
@@ -47,7 +49,18 @@ export class GpsSimulationEngine {
     device: Device,
     geofences: Geofence[]
   ): { updatedDevice: Device; newNotifications: AlertNotification[] } {
-    const fullPath = DEVICE_FULL_PATHS[device.id];
+    let fullPath = DEVICE_FULL_PATHS[device.id];
+    
+    // Fallback path for any dynamic phone tracker
+    if (!fullPath) {
+      if (device.type === 'smartphone' || device.phoneNumber) {
+        fullPath = PHONE_ROUTE_POINTS;
+        DEVICE_FULL_PATHS[device.id] = PHONE_ROUTE_POINTS;
+      } else {
+        fullPath = CHILD_ROUTE_POINTS;
+      }
+    }
+
     if (!fullPath || fullPath.length <= 1) {
       return { updatedDevice: device, newNotifications: [] };
     }
@@ -79,8 +92,8 @@ export class GpsSimulationEngine {
       ...device,
       currentLocation: newLocation,
       todayTrail: updatedTodayTrail,
-      lastSeen: '방금 전 (실시간)',
-      battery: Math.max(10, device.battery - (Math.random() < 0.1 ? 1 : 0)),
+      lastSeen: '방금 전 (실시간 궤적)',
+      battery: Math.max(10, device.battery - (Math.random() < 0.05 ? 1 : 0)),
       stats: {
         ...device.stats,
         todayDistanceKm: Number((device.stats.todayDistanceKm + distDelta).toFixed(2)),

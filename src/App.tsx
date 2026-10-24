@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Device, Geofence, AlertNotification } from './types';
-import { INITIAL_DEVICES, INITIAL_GEOFENCES, INITIAL_NOTIFICATIONS } from './data/mockData';
+import { INITIAL_DEVICES, INITIAL_GEOFENCES, INITIAL_NOTIFICATIONS, createPhoneTrackingDevice } from './data/mockData';
 import { GpsSimulationEngine } from './services/simulation';
 import { sounds } from './utils/audio';
 
@@ -22,17 +22,17 @@ export function App() {
 
   // 1. Persistent State
   const [devices, setDevices] = useState<Device[]>(() => {
-    const saved = localStorage.getItem('navix_devices');
+    const saved = localStorage.getItem('umap_devices');
     return saved ? JSON.parse(saved) : INITIAL_DEVICES;
   });
 
   const [geofences, setGeofences] = useState<Geofence[]>(() => {
-    const saved = localStorage.getItem('navix_geofences');
+    const saved = localStorage.getItem('umap_geofences');
     return saved ? JSON.parse(saved) : INITIAL_GEOFENCES;
   });
 
   const [notifications, setNotifications] = useState<AlertNotification[]>(() => {
-    const saved = localStorage.getItem('navix_notifications');
+    const saved = localStorage.getItem('umap_notifications');
     return saved ? JSON.parse(saved) : INITIAL_NOTIFICATIONS;
   });
 
@@ -59,15 +59,15 @@ export function App() {
 
   // Save changes to localStorage
   useEffect(() => {
-    localStorage.setItem('navix_devices', JSON.stringify(devices));
+    localStorage.setItem('umap_devices', JSON.stringify(devices));
   }, [devices]);
 
   useEffect(() => {
-    localStorage.setItem('navix_geofences', JSON.stringify(geofences));
+    localStorage.setItem('umap_geofences', JSON.stringify(geofences));
   }, [geofences]);
 
   useEffect(() => {
-    localStorage.setItem('navix_notifications', JSON.stringify(notifications));
+    localStorage.setItem('umap_notifications', JSON.stringify(notifications));
   }, [notifications]);
 
   // Init Engine
@@ -115,6 +115,33 @@ export function App() {
 
     return () => clearInterval(timer);
   }, [isSimulating, simSpeed, selectedDeviceId, selectedDevice?.isMissingMode, geofences, notificationsEnabled]);
+
+  // Quick 010 Phone Number Tracking Handler (User feature request)
+  const handleQuickTrackPhone = (phoneNumber: string) => {
+    const newDevice = createPhoneTrackingDevice(phoneNumber);
+    setDevices((prev) => [newDevice, ...prev]);
+    setSelectedDeviceId(newDevice.id);
+
+    const trackNotif: AlertNotification = {
+      id: `phone-${Date.now()}`,
+      deviceId: newDevice.id,
+      deviceName: newDevice.name,
+      deviceType: 'smartphone',
+      type: 'geofence_enter',
+      title: '📱 010 번호 궤적 추적 시작',
+      message: `${phoneNumber} 단말기 LTE 위치 및 실시간 궤적이 성공적으로 연결되었습니다.`,
+      timestamp: '방금',
+      read: false,
+      lat: newDevice.currentLocation.lat,
+      lng: newDevice.currentLocation.lng,
+    };
+
+    setNotifications((prev) => [trackNotif, ...prev]);
+    if (notificationsEnabled) {
+      setToast(trackNotif);
+      sounds.playGeofenceAlert();
+    }
+  };
 
   // Handlers
   const handleTriggerBeep = (dev?: Device) => {
@@ -184,41 +211,41 @@ export function App() {
 
   return (
     <div className="w-screen h-screen overflow-hidden bg-white text-slate-900 font-sans relative">
-      {/* View Switcher Floating Top Bar (Clean White Pill Theme) */}
+      {/* View Switcher Floating Top Bar (umap Brand) */}
       <div className="fixed top-2.5 left-1/2 -translate-x-1/2 z-[999] flex items-center p-1 bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200 shadow-xl text-xs font-bold text-slate-700">
         <button
           onClick={() => setCurrentView('landing')}
-          className={`px-3 py-1.5 rounded-xl transition-all flex items-center gap-1.5 ${
+          className={`px-3 py-1.5 rounded-xl transition-all flex items-center gap-1.5 cursor-pointer ${
             currentView === 'landing'
               ? 'bg-sky-600 text-white shadow-xs'
               : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
           }`}
         >
           <Building2 className="w-3.5 h-3.5" />
-          <span>나빅스 회사 공식몰</span>
+          <span>umap 회사 공식몰</span>
         </button>
         <button
           onClick={() => setCurrentView('tracker')}
-          className={`px-3 py-1.5 rounded-xl transition-all flex items-center gap-1.5 ${
+          className={`px-3 py-1.5 rounded-xl transition-all flex items-center gap-1.5 cursor-pointer ${
             currentView === 'tracker'
               ? 'bg-sky-600 text-white shadow-xs'
               : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
           }`}
         >
           <Navigation className="w-3.5 h-3.5" />
-          <span>실시간 관제 (NAVIX GO)</span>
+          <span>실시간 관제 & 궤적 (umap GO)</span>
         </button>
       </div>
 
-      {/* VIEW 1: Company Landing Page (Bright White Theme) */}
+      {/* VIEW 1: Company Landing Page (umap White Theme) */}
       {currentView === 'landing' ? (
         <div className="w-full h-full overflow-y-auto pt-10">
           <LandingPage onGoToTracker={() => setCurrentView('tracker')} />
         </div>
       ) : (
-        /* VIEW 2: Real-time Tracker Web App (Bright White Theme) */
+        /* VIEW 2: Real-time Tracker Web App (umap White Theme) */
         <div className="flex flex-col w-full h-full overflow-hidden">
-          {/* Header */}
+          {/* Header with Quick 010 Phone Search */}
           <Header
             devices={devices}
             selectedDevice={selectedDevice}
@@ -227,6 +254,7 @@ export function App() {
             onOpenGeofenceModal={() => setIsGeofenceOpen(true)}
             onOpenNotificationDrawer={() => setIsNotifDrawerOpen(true)}
             onGoToLanding={() => setCurrentView('landing')}
+            onQuickTrackPhone={handleQuickTrackPhone}
             unreadCount={unreadCount}
           />
 

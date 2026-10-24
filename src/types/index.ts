@@ -1,4 +1,4 @@
-export type DeviceType = 'child' | 'pet' | 'vehicle' | 'valuable';
+export type DeviceType = 'child' | 'pet' | 'vehicle' | 'valuable' | 'smartphone';
 
 export type DeviceStatus = 'online' | 'idle' | 'offline' | 'emergency';
 
@@ -38,6 +38,7 @@ export interface Device {
   model: string;
   type: DeviceType;
   serialNumber: string;
+  phoneNumber?: string; // Korean 010 mobile or IoT phone number
   battery: number;
   isCharging: boolean;
   status: DeviceStatus;
