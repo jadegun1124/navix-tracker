@@ -3,6 +3,7 @@ name: Build Android APK (umap)
 on:
   push:
     branches: ['main']
+    tags: ['v*']
   workflow_dispatch:
 
 permissions:
@@ -30,6 +31,9 @@ jobs:
         uses: android-actions/setup-android@v3
         continue-on-error: true
 
+      - name: Make Gradle executable
+        run: chmod +x android/gradlew
+
       - name: Set up Node.js 20
         uses: actions/setup-node@v4
         with:
@@ -44,9 +48,6 @@ jobs:
 
       - name: Sync Capacitor Android
         run: npx cap sync android
-
-      - name: Make Gradle executable
-        run: chmod +x android/gradlew
 
       - name: Build Debug APK with Gradle
         run: |
@@ -67,17 +68,22 @@ jobs:
           path: output/umap-v1.0.0-tracker.apk
           retention-days: 30
 
-      - name: Create GitHub Release with APK
+      - name: Create or Update GitHub Release with APK
         uses: softprops/action-gh-release@v2
         continue-on-error: true
         with:
-          tag_name: v1.0.0-apk
+          tag_name: v1.0.0
           name: 'umap Android APK Release v1.0.0'
           body: |
-            ### 🛰️ umap 안드로이드 전용 위치추적 앱 (APK)
+            ### 🛰️ umap 안드로이드 전용 고정밀 위치추적 앱 (APK)
             - **앱 패키지명**: `kr.co.umap.tracker`
-            - **고정밀 GPS 4단계 필터링 탑재**: 오차 반경 50m 이하, 정지 5m 노이즈 필터, 칼만 필터 스무딩, 속도 이상치 제거
-            - **다운로드**: 아래 Assets 목록에서 `umap-v1.0.0-tracker.apk`를 클릭하여 다운로드 후 스마트폰에 설치하세요.
+            - **고정밀 GPS 4단계 필터링 탑재**:
+              1. 오차 반경 50m 초과 좌표 자동 폐기
+              2. 정지 중 5m 미만 센서 노이즈 필터링
+              3. 2D 칼만 필터(Kalman Filter) 실시간 궤적 스무딩
+              4. 시속 145km/h 초과 비정상 순간 점프 폐기
+            - **화면 꺼짐 방지(WakeLock)** 및 포그라운드 위치 수신 지원
+            - **설치 방법**: 아래 Assets에서 `umap-v1.0.0-tracker.apk` 파일을 스마트폰에 다운로드하여 설치하세요.
           files: output/umap-v1.0.0-tracker.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
