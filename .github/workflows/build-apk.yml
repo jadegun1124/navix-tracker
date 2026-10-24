@@ -36,11 +36,14 @@ jobs:
           node-version: 20
           cache: 'npm'
 
-      - name: Install Dependencies & Build Web
-        run: |
-          npm install
-          npm run build
-          npx cap copy android
+      - name: Install Node Dependencies
+        run: npm ci || npm install --legacy-peer-deps
+
+      - name: Build Web Application
+        run: npm run build
+
+      - name: Copy Web Assets to Android
+        run: npx cap copy android
 
       - name: Build Debug APK with Gradle
         run: |
