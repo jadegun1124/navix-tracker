@@ -13,9 +13,13 @@ import { RoutePlaybackModal } from './components/Playback/RoutePlaybackModal';
 import { GeofenceModal } from './components/Geofence/GeofenceModal';
 import { DeviceRegisterModal } from './components/Device/DeviceRegisterModal';
 import { NotificationDrawer } from './components/Notification/NotificationDrawer';
-import { Bell, ShieldAlert, X } from 'lucide-react';
+import { LandingPage } from './components/Landing/LandingPage';
+import { Bell, Navigation, Building2, ArrowLeft } from 'lucide-react';
 
 export function App() {
+  // Navigation View: 'landing' (회사 홈페이지) or 'tracker' (실시간 관제)
+  const [currentView, setCurrentView] = useState<'landing' | 'tracker'>('landing');
+
   // 1. Persistent State
   const [devices, setDevices] = useState<Device[]>(() => {
     const saved = localStorage.getItem('navix_devices');
@@ -74,7 +78,6 @@ export function App() {
   useEffect(() => {
     if (!isSimulating || !engineRef.current) return;
 
-    // missing mode speeds up tick
     const isMissing = selectedDevice?.isMissingMode;
     const baseInterval = isMissing ? 1000 : 3000;
     const intervalMs = Math.max(500, baseInterval / simSpeed);
@@ -82,7 +85,6 @@ export function App() {
     const timer = setInterval(() => {
       setDevices((prevDevices) => {
         return prevDevices.map((dev) => {
-          // If in missing mode, prioritize this device, or tick all active devices
           if (dev.id === selectedDeviceId || isSimulating) {
             const { updatedDevice, newNotifications } = engineRef.current!.tickDevice(dev, geofences);
 
@@ -92,7 +94,6 @@ export function App() {
               setToast(latest);
               sounds.playGeofenceAlert();
 
-              // Auto dismiss toast after 4s
               setTimeout(() => {
                 setToast((curr) => (curr?.id === latest.id ? null : curr));
               }, 4000);
@@ -173,140 +174,171 @@ export function App() {
   const unreadCount = notifications.filter((n) => !n.read).length;
 
   return (
-    <div className="flex flex-col w-screen h-screen overflow-hidden bg-slate-900 text-slate-800 dark:text-slate-100 font-sans">
-      {/* Top Header */}
-      <Header
-        devices={devices}
-        selectedDevice={selectedDevice}
-        onSelectDevice={(d) => setSelectedDeviceId(d.id)}
-        onOpenRegisterModal={() => setIsRegisterOpen(true)}
-        onOpenGeofenceModal={() => setIsGeofenceOpen(true)}
-        onOpenNotificationDrawer={() => setIsNotifDrawerOpen(true)}
-        unreadCount={unreadCount}
-      />
-
-      {/* Main Workspace */}
-      <div className="flex-1 flex relative overflow-hidden">
-        {/* Left Sidebar (Desktop) */}
-        <Sidebar
-          devices={devices}
-          selectedDevice={selectedDevice}
-          onSelectDevice={(d) => setSelectedDeviceId(d.id)}
-          onOpenPlayback={(d) => setPlaybackDevice(d)}
-          onTriggerBeep={handleTriggerBeep}
-          onTriggerSos={handleTriggerSos}
-          onToggleMissingMode={handleToggleMissingMode}
-          onOpenRegisterModal={() => setIsRegisterOpen(true)}
-          onOpenGeofenceModal={() => setIsGeofenceOpen(true)}
-        />
-
-        {/* Map Center Area */}
-        <main className="flex-1 relative h-full w-full">
-          {/* Leaflet Map */}
-          <MapView
-            devices={devices}
-            selectedDevice={selectedDevice}
-            geofences={geofences}
-            showGeofences={showGeofences}
-            onSelectDevice={(d) => setSelectedDeviceId(d.id)}
-            onOpenPlayback={(d) => setPlaybackDevice(d)}
-            onTriggerBeep={handleTriggerBeep}
-            mapStyle={mapStyle}
-          />
-
-          {/* Floating Map Controls */}
-          <MapControls
-            selectedDevice={selectedDevice}
-            showGeofences={showGeofences}
-            onToggleGeofences={() => setShowGeofences(!showGeofences)}
-            onCenterDevice={() => {
-              if (selectedDevice) {
-                // re-triggers pan by toggling id or state
-                setSelectedDeviceId(selectedDevice.id);
-              }
-            }}
-            mapStyle={mapStyle}
-            onChangeMapStyle={setMapStyle}
-            isSimulating={isSimulating}
-            simSpeed={simSpeed}
-            onToggleSimulation={() => setIsSimulating(!isSimulating)}
-            onChangeSimSpeed={setSimSpeed}
-            onTriggerBeep={() => handleTriggerBeep()}
-          />
-
-          {/* Toast Notification Banner */}
-          {toast && (
-            <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[700] w-[90%] max-w-md bg-slate-900/95 text-white p-3.5 rounded-2xl shadow-2xl border border-sky-500/50 backdrop-blur-md flex items-center justify-between gap-3 animate-slide-down">
-              <div className="flex items-center gap-3">
-                <div className="p-2 rounded-xl bg-sky-500 text-white shrink-0">
-                  <Bell className="w-4 h-4 animate-bounce" />
-                </div>
-                <div>
-                  <h5 className="text-xs font-bold text-sky-400">{toast.title}</h5>
-                  <p className="text-xs text-slate-200 line-clamp-1">{toast.message}</p>
-                </div>
-              </div>
-              <button
-                onClick={() => setToast(null)}
-                className="p-1 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-          )}
-
-          {/* Bottom Sheet (Mobile) */}
-          <BottomSheet
-            devices={devices}
-            selectedDevice={selectedDevice}
-            onSelectDevice={(d) => setSelectedDeviceId(d.id)}
-            onOpenPlayback={(d) => setPlaybackDevice(d)}
-            onTriggerBeep={handleTriggerBeep}
-            onTriggerSos={handleTriggerSos}
-            onToggleMissingMode={handleToggleMissingMode}
-          />
-        </main>
+    <div className="w-screen h-screen overflow-hidden bg-slate-950 text-slate-800 dark:text-slate-100 font-sans relative">
+      {/* View Switcher Floating Top Bar (Easy switching anytime) */}
+      <div className="fixed top-2.5 left-1/2 -translate-x-1/2 z-[999] flex items-center p-1 bg-slate-900/90 backdrop-blur-md rounded-2xl border border-slate-700/80 shadow-2xl text-xs font-bold text-white">
+        <button
+          onClick={() => setCurrentView('landing')}
+          className={`px-3 py-1.5 rounded-xl transition-all flex items-center gap-1.5 ${
+            currentView === 'landing'
+              ? 'bg-sky-500 text-slate-950 shadow-md'
+              : 'text-slate-400 hover:text-white'
+          }`}
+        >
+          <Building2 className="w-3.5 h-3.5" />
+          <span>나빅스 회사 공식몰</span>
+        </button>
+        <button
+          onClick={() => setCurrentView('tracker')}
+          className={`px-3 py-1.5 rounded-xl transition-all flex items-center gap-1.5 ${
+            currentView === 'tracker'
+              ? 'bg-sky-500 text-slate-950 shadow-md'
+              : 'text-slate-400 hover:text-white'
+          }`}
+        >
+          <Navigation className="w-3.5 h-3.5" />
+          <span>실시간 관제 (NAVIX GO)</span>
+        </button>
       </div>
 
-      {/* Modals */}
-      {playbackDevice && (
-        <RoutePlaybackModal
-          device={playbackDevice}
-          onClose={() => setPlaybackDevice(null)}
-        />
-      )}
+      {/* VIEW 1: Company Landing Page */}
+      {currentView === 'landing' ? (
+        <div className="w-full h-full overflow-y-auto pt-10">
+          <LandingPage onGoToTracker={() => setCurrentView('tracker')} />
+        </div>
+      ) : (
+        /* VIEW 2: Real-time Tracker Web App */
+        <div className="flex flex-col w-full h-full overflow-hidden">
+          {/* Header */}
+          <Header
+            devices={devices}
+            selectedDevice={selectedDevice}
+            onSelectDevice={(d) => setSelectedDeviceId(d.id)}
+            onOpenRegisterModal={() => setIsRegisterOpen(true)}
+            onOpenGeofenceModal={() => setIsGeofenceOpen(true)}
+            onOpenNotificationDrawer={() => setIsNotifDrawerOpen(true)}
+            onGoToLanding={() => setCurrentView('landing')}
+            unreadCount={unreadCount}
+          />
 
-      {isRegisterOpen && (
-        <DeviceRegisterModal
-          onRegister={(newDev) => {
-            setDevices((prev) => [newDev, ...prev]);
-            setSelectedDeviceId(newDev.id);
-          }}
-          onClose={() => setIsRegisterOpen(false)}
-        />
-      )}
+          {/* Main Map & Workspace */}
+          <div className="flex-1 flex relative overflow-hidden">
+            {/* Left Sidebar (Desktop) */}
+            <Sidebar
+              devices={devices}
+              selectedDevice={selectedDevice}
+              onSelectDevice={(d) => setSelectedDeviceId(d.id)}
+              onOpenPlayback={(d) => setPlaybackDevice(d)}
+              onTriggerBeep={handleTriggerBeep}
+              onTriggerSos={handleTriggerSos}
+              onToggleMissingMode={handleToggleMissingMode}
+              onOpenRegisterModal={() => setIsRegisterOpen(true)}
+              onOpenGeofenceModal={() => setIsGeofenceOpen(true)}
+            />
 
-      {isGeofenceOpen && (
-        <GeofenceModal
-          geofences={geofences}
-          selectedDevice={selectedDevice}
-          onSaveGeofences={(updated) => setGeofences(updated)}
-          onClose={() => setIsGeofenceOpen(false)}
-        />
-      )}
+            {/* Map Area */}
+            <main className="flex-1 relative h-full w-full">
+              <MapView
+                devices={devices}
+                selectedDevice={selectedDevice}
+                geofences={geofences}
+                showGeofences={showGeofences}
+                onSelectDevice={(d) => setSelectedDeviceId(d.id)}
+                mapStyle={mapStyle}
+              />
 
-      <NotificationDrawer
-        notifications={notifications}
-        isOpen={isNotifDrawerOpen}
-        onClose={() => setIsNotifDrawerOpen(false)}
-        onMarkAllAsRead={() => {
-          setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
-        }}
-        onClearAll={() => setNotifications([])}
-        onSelectNotificationLocation={(lat, lng) => {
-          // If needed, focus on coordinate
-        }}
-      />
+              {/* Floating Map Controls */}
+              <MapControls
+                selectedDevice={selectedDevice}
+                showGeofences={showGeofences}
+                onToggleGeofences={() => setShowGeofences(!showGeofences)}
+                onCenterDevice={() => {
+                  if (selectedDevice) {
+                    setSelectedDeviceId(selectedDevice.id);
+                  }
+                }}
+                mapStyle={mapStyle}
+                onChangeMapStyle={setMapStyle}
+                isSimulating={isSimulating}
+                simSpeed={simSpeed}
+                onToggleSimulation={() => setIsSimulating(!isSimulating)}
+                onChangeSimSpeed={setSimSpeed}
+                onTriggerBeep={() => handleTriggerBeep()}
+              />
+
+              {/* Toast Notification */}
+              {toast && (
+                <div className="absolute top-16 left-1/2 -translate-x-1/2 z-[700] w-[90%] max-w-md bg-slate-900/95 text-white p-3.5 rounded-2xl shadow-2xl border border-sky-500/50 backdrop-blur-md flex items-center justify-between gap-3 animate-slide-down">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 rounded-xl bg-sky-500 text-white shrink-0">
+                      <Bell className="w-4 h-4 animate-bounce" />
+                    </div>
+                    <div>
+                      <h5 className="text-xs font-bold text-sky-400">{toast.title}</h5>
+                      <p className="text-xs text-slate-200 line-clamp-1">{toast.message}</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setToast(null)}
+                    className="p-1 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white"
+                  >
+                    ×
+                  </button>
+                </div>
+              )}
+
+              {/* Bottom Sheet (Mobile) */}
+              <BottomSheet
+                devices={devices}
+                selectedDevice={selectedDevice}
+                onSelectDevice={(d) => setSelectedDeviceId(d.id)}
+                onOpenPlayback={(d) => setPlaybackDevice(d)}
+                onTriggerBeep={handleTriggerBeep}
+                onTriggerSos={handleTriggerSos}
+                onToggleMissingMode={handleToggleMissingMode}
+              />
+            </main>
+          </div>
+
+          {/* Modals */}
+          {playbackDevice && (
+            <RoutePlaybackModal
+              device={playbackDevice}
+              onClose={() => setPlaybackDevice(null)}
+            />
+          )}
+
+          {isRegisterOpen && (
+            <DeviceRegisterModal
+              onRegister={(newDev) => {
+                setDevices((prev) => [newDev, ...prev]);
+                setSelectedDeviceId(newDev.id);
+              }}
+              onClose={() => setIsRegisterOpen(false)}
+            />
+          )}
+
+          {isGeofenceOpen && (
+            <GeofenceModal
+              geofences={geofences}
+              selectedDevice={selectedDevice}
+              onSaveGeofences={(updated) => setGeofences(updated)}
+              onClose={() => setIsGeofenceOpen(false)}
+            />
+          )}
+
+          <NotificationDrawer
+            notifications={notifications}
+            isOpen={isNotifDrawerOpen}
+            onClose={() => setIsNotifDrawerOpen(false)}
+            onMarkAllAsRead={() => {
+              setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
+            }}
+            onClearAll={() => setNotifications([])}
+            onSelectNotificationLocation={() => {}}
+          />
+        </div>
+      )}
     </div>
   );
 }

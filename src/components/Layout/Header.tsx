@@ -4,9 +4,8 @@ import {
   Shield,
   Bell,
   Plus,
-  Share2,
-  SlidersHorizontal,
-  Smartphone,
+  Home,
+  Building,
 } from 'lucide-react';
 import { Device } from '../../types';
 
@@ -17,6 +16,7 @@ interface HeaderProps {
   onOpenRegisterModal: () => void;
   onOpenGeofenceModal: () => void;
   onOpenNotificationDrawer: () => void;
+  onGoToLanding: () => void;
   unreadCount: number;
 }
 
@@ -27,13 +27,14 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenRegisterModal,
   onOpenGeofenceModal,
   onOpenNotificationDrawer,
+  onGoToLanding,
   unreadCount,
 }) => {
   return (
     <header className="h-16 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200/80 dark:border-slate-800 px-4 flex items-center justify-between z-[500] shrink-0">
       {/* Brand & Status */}
       <div className="flex items-center gap-3">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 cursor-pointer" onClick={onGoToLanding} title="공식 홈페이지로 이동">
           <div className="w-9 h-9 rounded-2xl bg-gradient-to-tr from-sky-600 to-cyan-400 flex items-center justify-center text-white shadow-md shadow-sky-500/20">
             <Navigation className="w-5 h-5 fill-current" />
           </div>
@@ -49,14 +50,14 @@ export const Header: React.FC<HeaderProps> = ({
             <div className="flex items-center gap-1.5">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
               <span className="text-[10px] text-slate-400 font-medium hidden sm:inline">
-                전국 LTE 위치 관제 정상
+                API키 불필요 • 무료 무제한 관제
               </span>
             </div>
           </div>
         </div>
 
         {/* Quick Device Switcher on larger screens */}
-        <div className="hidden md:flex items-center gap-1.5 ml-6 bg-slate-100 dark:bg-slate-800 p-1 rounded-2xl">
+        <div className="hidden md:flex items-center gap-1.5 ml-4 bg-slate-100 dark:bg-slate-800 p-1 rounded-2xl">
           {devices.map((dev) => {
             const isSelected = selectedDevice?.id === dev.id;
             return (
@@ -81,6 +82,16 @@ export const Header: React.FC<HeaderProps> = ({
 
       {/* Right Action Icons */}
       <div className="flex items-center gap-2">
+        {/* Switch to Company Homepage */}
+        <button
+          onClick={onGoToLanding}
+          className="px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold text-xs flex items-center gap-1.5 border border-slate-200 dark:border-slate-700 transition-all active:scale-95"
+          title="나빅스 공식 브랜드몰 및 회사 홈페이지로 이동"
+        >
+          <Building className="w-4 h-4 text-sky-500" />
+          <span className="hidden sm:inline">회사 홈페이지</span>
+        </button>
+
         {/* Add Device Button */}
         <button
           onClick={onOpenRegisterModal}

@@ -8,9 +8,9 @@ interface MapViewProps {
   geofences: Geofence[];
   showGeofences: boolean;
   onSelectDevice: (device: Device) => void;
-  onOpenPlayback: (device: Device) => void;
-  onTriggerBeep: (device: Device) => void;
-  mapStyle?: 'voyager' | 'light' | 'dark';
+  onOpenPlayback?: (device: Device) => void;
+  onTriggerBeep?: (device: Device) => void;
+  mapStyle?: 'voyager' | 'osm' | 'light' | 'dark';
 }
 
 export const MapView: React.FC<MapViewProps> = ({
@@ -19,8 +19,6 @@ export const MapView: React.FC<MapViewProps> = ({
   geofences,
   showGeofences,
   onSelectDevice,
-  onOpenPlayback,
-  onTriggerBeep,
   mapStyle = 'voyager',
 }) => {
   const mapContainerRef = useRef<HTMLDivElement>(null);
@@ -46,12 +44,13 @@ export const MapView: React.FC<MapViewProps> = ({
     // Add zoom control at bottom-right
     L.control.zoom({ position: 'bottomright' }).addTo(map);
 
-    // Initial tile layer (CartoDB Voyager)
+    // Initial tile layer (CartoDB Voyager - Free Open Map, No API Key needed)
     const tileLayer = L.tileLayer(
       'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
       {
-        attribution: '&copy; <a href="https://carto.com/">CARTO</a> &copy; OpenStreetMap',
+        attribution: '&copy; OpenStreetMap &copy; CARTO (No API Key Required)',
         maxZoom: 19,
+        subdomains: 'abcd',
       }
     ).addTo(map);
 
@@ -65,12 +64,14 @@ export const MapView: React.FC<MapViewProps> = ({
     };
   }, []);
 
-  // Update Tile Layer if mapStyle changes
+  // Update Tile Layer if mapStyle changes (All Free, No API Keys required)
   useEffect(() => {
     if (!mapInstanceRef.current || !tileLayerRef.current) return;
 
     let url = 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png';
-    if (mapStyle === 'light') {
+    if (mapStyle === 'osm') {
+      url = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+    } else if (mapStyle === 'light') {
       url = 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png';
     } else if (mapStyle === 'dark') {
       url = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
@@ -234,6 +235,12 @@ export const MapView: React.FC<MapViewProps> = ({
   return (
     <div className="relative w-full h-full">
       <div ref={mapContainerRef} className="w-full h-full" />
+
+      {/* No API Key Required Indicator Badge */}
+      <div className="absolute bottom-3 left-4 z-[450] px-3 py-1.5 rounded-xl bg-slate-900/90 backdrop-blur-md border border-slate-700/80 text-[11px] text-slate-200 font-semibold flex items-center gap-2 shadow-lg pointer-events-none">
+        <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+        <span>오픈 지도 서비스 (API 키 불필요 • 무료 무제한)</span>
+      </div>
     </div>
   );
 };
