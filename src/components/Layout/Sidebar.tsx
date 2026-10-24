@@ -41,15 +41,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [activeTab, setActiveTab] = useState<'detail' | 'list'>('detail');
 
   return (
-    <aside className="hidden lg:flex w-96 bg-slate-50/90 dark:bg-slate-900/90 backdrop-blur-md border-r border-slate-200/80 dark:border-slate-800 flex-col h-full shrink-0 z-[400] overflow-hidden">
-      {/* Top Tab Bar */}
-      <div className="p-3 border-b border-slate-200/70 dark:border-slate-800 bg-white dark:bg-slate-900 grid grid-cols-2 gap-1.5 shrink-0">
+    <aside className="hidden lg:flex w-96 bg-slate-50/90 backdrop-blur-md border-r border-slate-200 flex-col h-full shrink-0 z-[400] overflow-hidden">
+      {/* Top Tab Bar (Clean White) */}
+      <div className="p-3 border-b border-slate-200 bg-white grid grid-cols-2 gap-1.5 shrink-0">
         <button
           onClick={() => setActiveTab('detail')}
           className={`py-2 px-3 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-1.5 ${
             activeTab === 'detail'
-              ? 'bg-sky-50 dark:bg-sky-950 text-sky-600 dark:text-sky-400 border border-sky-200 dark:border-sky-800 shadow-xs'
-              : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+              ? 'bg-sky-50 text-sky-700 border border-sky-200 shadow-xs'
+              : 'text-slate-500 hover:text-slate-800'
           }`}
         >
           <Layers className="w-4 h-4" />
@@ -59,8 +59,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
           onClick={() => setActiveTab('list')}
           className={`py-2 px-3 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-1.5 ${
             activeTab === 'list'
-              ? 'bg-sky-50 dark:bg-sky-950 text-sky-600 dark:text-sky-400 border border-sky-200 dark:border-sky-800 shadow-xs'
-              : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+              ? 'bg-sky-50 text-sky-700 border border-sky-200 shadow-xs'
+              : 'text-slate-500 hover:text-slate-800'
           }`}
         >
           <List className="w-4 h-4" />
@@ -82,7 +82,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             />
 
             {/* Target Dedicated Theme View */}
-            <div className="p-4 rounded-3xl bg-white dark:bg-slate-800/80 border border-slate-200/80 dark:border-slate-700/80 shadow-sm">
+            <div className="p-4 rounded-3xl bg-white border border-slate-200 shadow-sm">
               <TargetThemeView
                 device={selectedDevice}
                 onOpenPlayback={() => onOpenPlayback(selectedDevice)}
@@ -92,10 +92,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
               />
             </div>
 
-            {/* Voucher & Subscription info badge */}
-            <div className="p-4 rounded-2xl bg-gradient-to-br from-slate-900 to-slate-800 text-white shadow-md relative overflow-hidden">
+            {/* Voucher & Subscription info badge (Clean White Card with blue gradient) */}
+            <div className="p-4 rounded-2xl bg-gradient-to-br from-sky-900 to-slate-900 text-white shadow-md relative overflow-hidden">
               <div className="flex items-center justify-between mb-2">
-                <div className="flex items-center gap-1.5 text-xs text-sky-400 font-bold">
+                <div className="flex items-center gap-1.5 text-xs text-sky-300 font-bold">
                   <CreditCard className="w-4 h-4" />
                   <span>서비스 이용권 정보</span>
                 </div>
@@ -104,7 +104,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 </span>
               </div>
               <h4 className="font-bold text-sm">{selectedDevice.voucher.planName}</h4>
-              <p className="text-[11px] text-slate-400 mt-1 font-mono">
+              <p className="text-[11px] text-slate-300 mt-1 font-mono">
                 유효기간: {selectedDevice.voucher.expiresAt} 까지
               </p>
             </div>
@@ -118,7 +118,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <span className="text-xs font-bold text-slate-500">전체 등록 기기</span>
               <button
                 onClick={onOpenRegisterModal}
-                className="text-xs font-bold text-sky-500 hover:text-sky-600 flex items-center gap-1"
+                className="text-xs font-bold text-sky-600 hover:text-sky-700 flex items-center gap-1"
               >
                 <Plus className="w-3.5 h-3.5" />
                 <span>새 기기</span>

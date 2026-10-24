@@ -14,7 +14,7 @@ import { GeofenceModal } from './components/Geofence/GeofenceModal';
 import { DeviceRegisterModal } from './components/Device/DeviceRegisterModal';
 import { NotificationDrawer } from './components/Notification/NotificationDrawer';
 import { LandingPage } from './components/Landing/LandingPage';
-import { Bell, Navigation, Building2, ArrowLeft } from 'lucide-react';
+import { Bell, Navigation, Building2, BellOff, X } from 'lucide-react';
 
 export function App() {
   // Navigation View: 'landing' (회사 홈페이지) or 'tracker' (실시간 관제)
@@ -38,7 +38,10 @@ export function App() {
 
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>(devices[0]?.id || 'dev-1');
   const [showGeofences, setShowGeofences] = useState<boolean>(true);
-  const [mapStyle, setMapStyle] = useState<'voyager' | 'light' | 'dark'>('voyager');
+  const [mapStyle, setMapStyle] = useState<'voyager' | 'osm' | 'satellite'>('voyager');
+
+  // Map Notification Toggle (User requirement: 알림 끄는 토글)
+  const [notificationsEnabled, setNotificationsEnabled] = useState<boolean>(true);
 
   // 2. Simulation State
   const [isSimulating, setIsSimulating] = useState<boolean>(true);
@@ -90,13 +93,17 @@ export function App() {
 
             if (newNotifications.length > 0) {
               setNotifications((prevN) => [...newNotifications, ...prevN]);
-              const latest = newNotifications[0];
-              setToast(latest);
-              sounds.playGeofenceAlert();
 
-              setTimeout(() => {
-                setToast((curr) => (curr?.id === latest.id ? null : curr));
-              }, 4000);
+              // Trigger Audio & Toast only if notifications are enabled
+              if (notificationsEnabled) {
+                const latest = newNotifications[0];
+                setToast(latest);
+                sounds.playGeofenceAlert();
+
+                setTimeout(() => {
+                  setToast((curr) => (curr?.id === latest.id ? null : curr));
+                }, 4000);
+              }
             }
 
             return updatedDevice;
@@ -107,25 +114,27 @@ export function App() {
     }, intervalMs);
 
     return () => clearInterval(timer);
-  }, [isSimulating, simSpeed, selectedDeviceId, selectedDevice?.isMissingMode, geofences]);
+  }, [isSimulating, simSpeed, selectedDeviceId, selectedDevice?.isMissingMode, geofences, notificationsEnabled]);
 
   // Handlers
   const handleTriggerBeep = (dev?: Device) => {
     const target = dev || selectedDevice;
     if (!target) return;
     sounds.playTrackerBeep();
-    setToast({
-      id: `toast-${Date.now()}`,
-      deviceId: target.id,
-      deviceName: target.name,
-      deviceType: target.type,
-      type: 'low_battery',
-      title: '트래커 비프음 호출 성공',
-      message: `${target.name} 단말기에서 '삐-삐-' 찾기 소리가 울리고 있습니다.`,
-      timestamp: '방금',
-      read: true,
-    });
-    setTimeout(() => setToast(null), 3500);
+    if (notificationsEnabled) {
+      setToast({
+        id: `toast-${Date.now()}`,
+        deviceId: target.id,
+        deviceName: target.name,
+        deviceType: target.type,
+        type: 'low_battery',
+        title: '트래커 비프음 호출 성공',
+        message: `${target.name} 단말기에서 '삐-삐-' 찾기 소리가 울리고 있습니다.`,
+        timestamp: '방금',
+        read: true,
+      });
+      setTimeout(() => setToast(null), 3500);
+    }
   };
 
   const handleTriggerSos = (dev: Device) => {
@@ -174,15 +183,15 @@ export function App() {
   const unreadCount = notifications.filter((n) => !n.read).length;
 
   return (
-    <div className="w-screen h-screen overflow-hidden bg-slate-950 text-slate-800 dark:text-slate-100 font-sans relative">
-      {/* View Switcher Floating Top Bar (Easy switching anytime) */}
-      <div className="fixed top-2.5 left-1/2 -translate-x-1/2 z-[999] flex items-center p-1 bg-slate-900/90 backdrop-blur-md rounded-2xl border border-slate-700/80 shadow-2xl text-xs font-bold text-white">
+    <div className="w-screen h-screen overflow-hidden bg-white text-slate-900 font-sans relative">
+      {/* View Switcher Floating Top Bar (Clean White Pill Theme) */}
+      <div className="fixed top-2.5 left-1/2 -translate-x-1/2 z-[999] flex items-center p-1 bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200 shadow-xl text-xs font-bold text-slate-700">
         <button
           onClick={() => setCurrentView('landing')}
           className={`px-3 py-1.5 rounded-xl transition-all flex items-center gap-1.5 ${
             currentView === 'landing'
-              ? 'bg-sky-500 text-slate-950 shadow-md'
-              : 'text-slate-400 hover:text-white'
+              ? 'bg-sky-600 text-white shadow-xs'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
           }`}
         >
           <Building2 className="w-3.5 h-3.5" />
@@ -192,8 +201,8 @@ export function App() {
           onClick={() => setCurrentView('tracker')}
           className={`px-3 py-1.5 rounded-xl transition-all flex items-center gap-1.5 ${
             currentView === 'tracker'
-              ? 'bg-sky-500 text-slate-950 shadow-md'
-              : 'text-slate-400 hover:text-white'
+              ? 'bg-sky-600 text-white shadow-xs'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
           }`}
         >
           <Navigation className="w-3.5 h-3.5" />
@@ -201,13 +210,13 @@ export function App() {
         </button>
       </div>
 
-      {/* VIEW 1: Company Landing Page */}
+      {/* VIEW 1: Company Landing Page (Bright White Theme) */}
       {currentView === 'landing' ? (
         <div className="w-full h-full overflow-y-auto pt-10">
           <LandingPage onGoToTracker={() => setCurrentView('tracker')} />
         </div>
       ) : (
-        /* VIEW 2: Real-time Tracker Web App */
+        /* VIEW 2: Real-time Tracker Web App (Bright White Theme) */
         <div className="flex flex-col w-full h-full overflow-hidden">
           {/* Header */}
           <Header
@@ -222,8 +231,8 @@ export function App() {
           />
 
           {/* Main Map & Workspace */}
-          <div className="flex-1 flex relative overflow-hidden">
-            {/* Left Sidebar (Desktop) */}
+          <div className="flex-1 flex relative overflow-hidden bg-slate-50">
+            {/* Left Sidebar (Desktop, Bright White Theme) */}
             <Sidebar
               devices={devices}
               selectedDevice={selectedDevice}
@@ -247,7 +256,7 @@ export function App() {
                 mapStyle={mapStyle}
               />
 
-              {/* Floating Map Controls */}
+              {/* Floating Map Controls with Alert Toggle */}
               <MapControls
                 selectedDevice={selectedDevice}
                 showGeofences={showGeofences}
@@ -264,25 +273,27 @@ export function App() {
                 onToggleSimulation={() => setIsSimulating(!isSimulating)}
                 onChangeSimSpeed={setSimSpeed}
                 onTriggerBeep={() => handleTriggerBeep()}
+                notificationsEnabled={notificationsEnabled}
+                onToggleNotifications={() => setNotificationsEnabled(!notificationsEnabled)}
               />
 
-              {/* Toast Notification */}
-              {toast && (
-                <div className="absolute top-16 left-1/2 -translate-x-1/2 z-[700] w-[90%] max-w-md bg-slate-900/95 text-white p-3.5 rounded-2xl shadow-2xl border border-sky-500/50 backdrop-blur-md flex items-center justify-between gap-3 animate-slide-down">
+              {/* Toast Notification (Bright White Theme) */}
+              {toast && notificationsEnabled && (
+                <div className="absolute top-16 left-1/2 -translate-x-1/2 z-[700] w-[90%] max-w-md bg-white text-slate-900 p-3.5 rounded-2xl shadow-2xl border border-sky-300 backdrop-blur-md flex items-center justify-between gap-3 animate-slide-down">
                   <div className="flex items-center gap-3">
-                    <div className="p-2 rounded-xl bg-sky-500 text-white shrink-0">
+                    <div className="p-2 rounded-xl bg-sky-500 text-white shrink-0 shadow-xs">
                       <Bell className="w-4 h-4 animate-bounce" />
                     </div>
                     <div>
-                      <h5 className="text-xs font-bold text-sky-400">{toast.title}</h5>
-                      <p className="text-xs text-slate-200 line-clamp-1">{toast.message}</p>
+                      <h5 className="text-xs font-bold text-sky-700">{toast.title}</h5>
+                      <p className="text-xs text-slate-600 line-clamp-1">{toast.message}</p>
                     </div>
                   </div>
                   <button
                     onClick={() => setToast(null)}
-                    className="p-1 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white"
+                    className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-700 cursor-pointer"
                   >
-                    ×
+                    <X className="w-4 h-4" />
                   </button>
                 </div>
               )}

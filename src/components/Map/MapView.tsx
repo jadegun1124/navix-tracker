@@ -8,9 +8,7 @@ interface MapViewProps {
   geofences: Geofence[];
   showGeofences: boolean;
   onSelectDevice: (device: Device) => void;
-  onOpenPlayback?: (device: Device) => void;
-  onTriggerBeep?: (device: Device) => void;
-  mapStyle?: 'voyager' | 'osm' | 'light' | 'dark';
+  mapStyle?: 'voyager' | 'osm' | 'satellite';
 }
 
 export const MapView: React.FC<MapViewProps> = ({
@@ -27,6 +25,7 @@ export const MapView: React.FC<MapViewProps> = ({
   const polylinesRef = useRef<Record<string, { recent: L.Polyline; history: L.Polyline }>>({});
   const geofenceLayersRef = useRef<L.LayerGroup | null>(null);
   const tileLayerRef = useRef<L.TileLayer | null>(null);
+  const labelsLayerRef = useRef<L.TileLayer | null>(null);
 
   // Initialize Map
   useEffect(() => {
@@ -44,11 +43,11 @@ export const MapView: React.FC<MapViewProps> = ({
     // Add zoom control at bottom-right
     L.control.zoom({ position: 'bottomright' }).addTo(map);
 
-    // Initial tile layer (CartoDB Voyager - Free Open Map, No API Key needed)
+    // Initial tile layer (CartoDB Voyager - Clean Bright White Vector Map, No API Key needed)
     const tileLayer = L.tileLayer(
       'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
       {
-        attribution: '&copy; OpenStreetMap &copy; CARTO (No API Key Required)',
+        attribution: '&copy; OpenStreetMap &copy; CARTO (API 키 필요 없음)',
         maxZoom: 19,
         subdomains: 'abcd',
       }
@@ -64,20 +63,37 @@ export const MapView: React.FC<MapViewProps> = ({
     };
   }, []);
 
-  // Update Tile Layer if mapStyle changes (All Free, No API Keys required)
+  // Update Tile Layer if mapStyle changes (All Free & 0 API Key)
   useEffect(() => {
-    if (!mapInstanceRef.current || !tileLayerRef.current) return;
+    const map = mapInstanceRef.current;
+    if (!map || !tileLayerRef.current) return;
 
-    let url = 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png';
-    if (mapStyle === 'osm') {
-      url = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
-    } else if (mapStyle === 'light') {
-      url = 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png';
-    } else if (mapStyle === 'dark') {
-      url = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
+    // Clean up label layer if exists
+    if (labelsLayerRef.current) {
+      map.removeLayer(labelsLayerRef.current);
+      labelsLayerRef.current = null;
     }
 
-    tileLayerRef.current.setUrl(url);
+    if (mapStyle === 'satellite') {
+      // Esri World Imagery (Same as awakening-map, 0 API Key)
+      tileLayerRef.current.setUrl(
+        'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
+      );
+      // Reference label overlay
+      const labels = L.tileLayer(
+        'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+        { maxZoom: 19 }
+      ).addTo(map);
+      labelsLayerRef.current = labels;
+    } else if (mapStyle === 'osm') {
+      // Standard OpenStreetMap (0 API Key)
+      tileLayerRef.current.setUrl('https://tile.openstreetmap.org/{z}/{x}/{y}.png');
+    } else {
+      // CartoDB Voyager Bright White (0 API Key)
+      tileLayerRef.current.setUrl(
+        'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png'
+      );
+    }
   }, [mapStyle]);
 
   // Center on selected device when changed
@@ -103,7 +119,7 @@ export const MapView: React.FC<MapViewProps> = ({
         radius: geo.radius,
         color: geo.color,
         fillColor: geo.color,
-        fillOpacity: 0.12,
+        fillOpacity: 0.15,
         weight: 2,
         dashArray: '6, 6',
       });
@@ -112,7 +128,7 @@ export const MapView: React.FC<MapViewProps> = ({
       const labelIcon = L.divIcon({
         className: 'geofence-label-marker',
         html: `
-          <div style="transform: translate(-50%, -50%);" class="px-2 py-0.5 rounded-full text-[11px] font-bold text-white shadow-md flex items-center gap-1 border border-white/50 whitespace-nowrap bg-slate-800/80 backdrop-blur-sm">
+          <div style="transform: translate(-50%, -50%);" class="px-2.5 py-1 rounded-full text-[11px] font-bold text-slate-800 shadow-md flex items-center gap-1.5 border border-slate-200 whitespace-nowrap bg-white/95 backdrop-blur-sm">
             <span style="background-color: ${geo.color}; width: 8px; height: 8px; border-radius: 9999px; display: inline-block;"></span>
             ${geo.name} (${geo.radius}m)
           </div>
@@ -136,7 +152,7 @@ export const MapView: React.FC<MapViewProps> = ({
       const isSelected = selectedDevice?.id === device.id;
       const { lat, lng } = device.currentLocation;
 
-      // Icon colors based on target type
+      // Colors based on target type
       let themeColor = '#0284c7'; // child - blue
       let iconEmoji = '🎒';
       if (device.type === 'pet') {
@@ -161,24 +177,24 @@ export const MapView: React.FC<MapViewProps> = ({
         html: `
           <div class="relative flex items-center justify-center cursor-pointer" style="width: 48px; height: 48px;">
             <!-- Outer Pulsing Glow -->
-            <div class="absolute inset-0 rounded-full opacity-70 pulse-ring-anim" style="background-color: ${themeColor};"></div>
+            <div class="absolute inset-0 rounded-full opacity-60 pulse-ring-anim" style="background-color: ${themeColor};"></div>
             
             <!-- Center Pin Bubble -->
-            <div class="relative z-10 flex items-center justify-center rounded-2xl shadow-xl transition-transform duration-200 ${
-              isSelected ? 'scale-115 ring-3 ring-white' : 'hover:scale-105'
-            }" style="width: 38px; height: 38px; background: linear-gradient(135deg, ${themeColor}, #0f172a); border: 2px solid #ffffff;">
+            <div class="relative z-10 flex items-center justify-center rounded-2xl shadow-lg transition-transform duration-200 ${
+              isSelected ? 'scale-115 ring-3 ring-sky-500' : 'hover:scale-105'
+            }" style="width: 38px; height: 38px; background: #ffffff; border: 2.5px solid ${themeColor};">
               <span class="text-lg leading-none">${iconEmoji}</span>
               
               <!-- Battery Indicator Dot -->
-              <span class="absolute -top-1 -right-1 px-1 py-0.2 rounded-full text-[9px] font-black text-white ${
+              <span class="absolute -top-1.5 -right-1.5 px-1 py-0.2 rounded-full text-[9px] font-black text-white ${
                 device.battery <= 20 ? 'bg-red-500' : 'bg-emerald-600'
-              } border border-white">
+              } border border-white shadow-xs">
                 ${device.battery}%
               </span>
             </div>
 
             <!-- Name Tag Below Pin -->
-            <div class="absolute -bottom-6 left-1/2 -translate-x-1/2 px-2 py-0.5 rounded-md text-[10px] font-semibold text-slate-800 bg-white/95 backdrop-blur-md shadow-md border border-slate-200/80 whitespace-nowrap pointer-events-none flex items-center gap-1">
+            <div class="absolute -bottom-6 left-1/2 -translate-x-1/2 px-2.5 py-0.5 rounded-lg text-[11px] font-bold text-slate-800 bg-white/95 backdrop-blur-md shadow-md border border-slate-200 whitespace-nowrap pointer-events-none flex items-center gap-1.5">
               <span class="w-1.5 h-1.5 rounded-full ${device.status === 'online' ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'}"></span>
               ${device.name}
             </div>
@@ -211,7 +227,7 @@ export const MapView: React.FC<MapViewProps> = ({
           const historyLine = L.polyline(olderPoints, {
             color: themeColor,
             weight: 3,
-            opacity: 0.35,
+            opacity: 0.4,
             dashArray: '4, 6',
           }).addTo(map);
 
@@ -233,12 +249,12 @@ export const MapView: React.FC<MapViewProps> = ({
   }, [devices, selectedDevice, onSelectDevice]);
 
   return (
-    <div className="relative w-full h-full">
+    <div className="relative w-full h-full bg-slate-50">
       <div ref={mapContainerRef} className="w-full h-full" />
 
-      {/* No API Key Required Indicator Badge */}
-      <div className="absolute bottom-3 left-4 z-[450] px-3 py-1.5 rounded-xl bg-slate-900/90 backdrop-blur-md border border-slate-700/80 text-[11px] text-slate-200 font-semibold flex items-center gap-2 shadow-lg pointer-events-none">
-        <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+      {/* No API Key Required Indicator Badge (Bright White Mode) */}
+      <div className="absolute bottom-3 left-4 z-[450] px-3.5 py-1.5 rounded-xl bg-white/95 backdrop-blur-md border border-slate-200 text-xs text-slate-700 font-bold flex items-center gap-2 shadow-md pointer-events-none">
+        <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
         <span>오픈 지도 서비스 (API 키 불필요 • 무료 무제한)</span>
       </div>
     </div>
