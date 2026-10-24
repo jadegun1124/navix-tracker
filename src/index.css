@@ -25,7 +25,22 @@
 
 .umap-street-map.leaflet-container {
   z-index: 0;
+  min-height: 240px;
+  background: #d7e3ee;
   font-family: inherit;
+}
+
+.leaflet-container img,
+.leaflet-container canvas {
+  max-width: none !important;
+  max-height: none !important;
+}
+
+.leaflet-control-attribution {
+  max-width: 68%;
+  font-size: 10px;
+  line-height: 1.3;
+  background: rgba(255, 255, 255, 0.86) !important;
 }
 
 .leaflet-control-zoom {

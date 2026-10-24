@@ -1,8 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Bell, Copy, Home, LocateFixed, MapPin, Minus, Plus, Route, UserPlus, X } from 'lucide-react';
+import { Bell, Copy, Home, LocateFixed, MapPin, Minus, Plus, Route, Satellite, UserPlus, X } from 'lucide-react';
 import { buildInviteLink, formatClock, haversineMeters } from '../../lib/geo';
 import { DEFAULT_CENTER, type HomeZone, type Member } from '../../types/family';
-import { StreetMap, type StreetMapHandle } from './StreetMap';
+import { BASEMAPS, StreetMap, type BasemapStyle, type StreetMapHandle } from './StreetMap';
 import { useFamily } from './session';
 
 export function FamilyMapScreen() {
@@ -12,6 +12,9 @@ export function FamilyMapScreen() {
   const [center] = useState(self ?? DEFAULT_CENTER);
   const [showZone, setShowZone] = useState(true);
   const [showTrail, setShowTrail] = useState(true);
+  const [basemap, setBasemap] = useState<BasemapStyle>('satellite');
+  const [mapNote, setMapNote] = useState('');
+  const tileFallback = useRef(false);
   const [homeCenter, setHomeCenter] = useState(self ?? DEFAULT_CENTER);
   const mapRef = useRef<StreetMapHandle>(null);
   const [sheet, setSheet] = useState<'home' | 'invite' | null>(state.pendingInvite && state.pendingInvite !== state.inviteCode ? 'invite' : null);
@@ -112,6 +115,16 @@ export function FamilyMapScreen() {
             trail={trail}
             trailColor={trailColor}
             selectedId={selected?.id}
+            basemap={basemap}
+            onTileProblem={() => {
+              if (!tileFallback.current && basemap === 'satellite') {
+                tileFallback.current = true;
+                setBasemap('street');
+                setMapNote('위성 사진을 불러오지 못해 일반 지도로 바꿨습니다.');
+                return;
+              }
+              setMapNote('지도 타일을 불러오지 못했습니다. 핀과 경로는 이 화면에 남아 있습니다.');
+            }}
             onSelect={(id) => {
               const member = state.members.find((item) => item.id === id);
               if (member) focusMember(member, true);
@@ -119,7 +132,8 @@ export function FamilyMapScreen() {
           />
 
           <div className="pointer-events-none absolute left-3 top-3 z-30 max-w-[230px] rounded-2xl bg-white/95 px-3 py-1.5 text-[11px] font-semibold leading-4 text-slate-600 shadow">
-            일반 지도 · OpenStreetMap / CARTO
+            {BASEMAPS[basemap].label}
+            {mapNote && <span className="mt-0.5 block text-amber-700">{mapNote}</span>}
             {showTrail && selected && (
               <span className="mt-0.5 block text-slate-500">
                 {selected.name} 경로 {trail.length}점 · 이 기기에만 저장
@@ -128,6 +142,16 @@ export function FamilyMapScreen() {
           </div>
 
           <div className="absolute right-3 top-14 z-30 flex flex-col gap-2">
+            <RoundButton
+              label={basemap === 'satellite' ? '일반 지도로 전환' : '위성 지도로 전환'}
+              onClick={() => {
+                tileFallback.current = true;
+                setMapNote('');
+                setBasemap((value) => (value === 'satellite' ? 'street' : 'satellite'));
+              }}
+            >
+              <Satellite className={`h-5 w-5 ${basemap === 'satellite' ? 'text-[#0084FF]' : 'text-slate-400'}`} />
+            </RoundButton>
             <RoundButton label="안심존 표시" onClick={() => setShowZone((value) => !value)}>
               <Home className={`h-5 w-5 ${showZone ? 'text-[#0084FF]' : 'text-slate-400'}`} />
             </RoundButton>

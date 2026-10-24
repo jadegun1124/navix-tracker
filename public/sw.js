@@ -10,6 +10,8 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
-  // Let network fetch proceed directly
+  const url = event.request.url;
+  const tile = url.includes('arcgisonline.com') || url.includes('cartocdn.com') || url.includes('openstreetmap.org');
+  if (tile || event.request.destination === 'image') return;
   event.respondWith(fetch(event.request).catch(() => caches.match(event.request)));
 });
