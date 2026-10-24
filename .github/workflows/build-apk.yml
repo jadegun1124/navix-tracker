@@ -1,0 +1,83 @@
+name: Build Android APK (umap)
+
+on:
+  push:
+    branches: ['main']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-apk:
+    name: Build umap Android APK
+    runs-on: ubuntu-latest
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+        continue-on-error: true
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Node Dependencies
+        run: npm ci
+
+      - name: Build Web Application
+        run: npm run build
+
+      - name: Sync Capacitor Android
+        run: npx cap sync android
+
+      - name: Make Gradle executable
+        run: chmod +x android/gradlew
+
+      - name: Build Debug APK with Gradle
+        run: |
+          cd android
+          ./gradlew assembleDebug --no-daemon --stacktrace
+
+      - name: Prepare APK Output
+        run: |
+          mkdir -p output
+          cp android/app/build/outputs/apk/debug/app-debug.apk output/umap-v1.0.0-tracker.apk
+          echo "APK successfully built:"
+          ls -la output/
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: umap-v1.0.0-tracker-apk
+          path: output/umap-v1.0.0-tracker.apk
+          retention-days: 30
+
+      - name: Create GitHub Release with APK
+        uses: softprops/action-gh-release@v2
+        continue-on-error: true
+        with:
+          tag_name: v1.0.0-apk
+          name: 'umap Android APK Release v1.0.0'
+          body: |
+            ### 🛰️ umap 안드로이드 전용 위치추적 앱 (APK)
+            - **앱 패키지명**: `kr.co.umap.tracker`
+            - **고정밀 GPS 4단계 필터링 탑재**: 오차 반경 50m 이하, 정지 5m 노이즈 필터, 칼만 필터 스무딩, 속도 이상치 제거
+            - **다운로드**: 아래 Assets 목록에서 `umap-v1.0.0-tracker.apk`를 클릭하여 다운로드 후 스마트폰에 설치하세요.
+          files: output/umap-v1.0.0-tracker.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
