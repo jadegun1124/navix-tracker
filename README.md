@@ -49,9 +49,10 @@ VITE_GOOGLE_MAPS_API_KEY=
 ```
 
 - 로그인: [Google Identity Services](https://developers.google.com/identity/gsi/web/guides/overview) 웹 클라이언트. 승인된 자바스크립트 원본에 사이트 주소와 Capacitor의 `https://localhost` 를 넣습니다.
-- 지도: Maps JavaScript API. **무제한 무료가 아닙니다.** 월간 무료 사용량을 넘기면 과금됩니다. 최신 단가는 [Google Maps Platform 가격](https://mapsplatform.google.com/pricing/)에서 확인합니다. 키는 HTTP 리퍼러로 제한합니다.
+- 지도: CARTO Voyager 일반 지도 타일. 데이터는 [OpenStreetMap](https://www.openstreetmap.org/copyright)이고, 타일 제공은 [CARTO](https://carto.com/attributions)입니다. 위성 사진은 쓰지 않습니다. API 키는 필요 없습니다.
+- 이동 경로: 구성원을 고르면 지도에 궤적이 표시됩니다. 내 위치는 앱이 열려 있는 동안 약 12m 이상 움직이면 이 브라우저의 `localStorage`에 최대 300점까지 쌓입니다. 샘플 구성원에는 하계동 근처의 예시 경로가 들어 있습니다. 서버로 보내지 않습니다.
 
-클라이언트 ID나 지도 키가 없으면 로그인은 미리보기로 이어지고, 지도는 미리보기 격자로 표시됩니다. 미리보기라고 화면에 적습니다.
+클라이언트 ID가 없으면 로그인은 미리보기로 이어집니다. 미리보기라고 화면에 적습니다. `VITE_GOOGLE_MAPS_API_KEY`는 가족 지도에서 쓰지 않습니다.
 
 ## 아이콘
 

@@ -229,13 +229,13 @@ const TERM_COPY: { id: string; title: string; required: boolean; body: string }[
     id: 'location',
     title: '위치기반서비스 이용약관 동의',
     required: true,
-    body: '가족 지도, 우리 집 안심존, 들어오고 나간 알림에 이 기기의 위치를 사용합니다.',
+    body: '가족 지도, 우리 집 안심존, 들어오고 나간 알림, 이 기기에 남기는 이동 경로에 위치를 사용합니다. 경로는 서버로 보내지 않습니다.',
   },
   {
     id: 'privacy',
     title: '개인정보 수집·이용 동의',
     required: true,
-    body: 'Google 계정 이름과 이메일, 선택한 위치 권한, 직접 입력한 연락처와 가족 이름을 이 기기에 저장합니다.',
+    body: 'Google 계정 이름과 이메일, 선택한 위치 권한, 직접 입력한 연락처, 가족 이름, 이동 경로를 이 기기에 저장합니다.',
   },
   {
     id: 'guardian',
@@ -253,7 +253,7 @@ const TERM_COPY: { id: string; title: string; required: boolean; body: string }[
     id: 'overseas',
     title: '개인정보 국외 이전 동의',
     required: false,
-    body: 'Google 로그인과 Google Maps를 쓰면 계정 식별자와 지도 요청이 Google로 전달됩니다. 지도 키 없이 미리보기 지도를 쓰는 동안에는 지도 요청을 보내지 않습니다.',
+    body: 'Google 로그인을 쓰면 계정 식별자가 Google로 전달됩니다. 지도는 OpenStreetMap과 CARTO의 일반 지도 타일을 쓰며, 위성 사진을 쓰지 않습니다.',
   },
 ];
 
