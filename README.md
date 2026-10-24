@@ -1,103 +1,69 @@
-# 🛰️ umap (유맵) - 010 핸드폰 실시간 위치 궤적 & 고정밀 GPS 관제 플랫폼
+# Umap
 
-> **"API 키 없이 언제 어디서나 010 휴대폰 및 스마트 단말기의 실시간 위치와 이동 궤적을 정밀하게 관제하는 밝은 화이트 테마 위치관제 솔루션"**
+동의한 가족과 위치를 나누는 서비스입니다. 웹사이트는 회사 소개만 두고, 가족 지도는 휴대폰 앱에서 씁니다.
 
----
+저장소 이름은 `jadegun1124/navix-tracker` 입니다. 제품 이름은 **Umap** 입니다.
 
-## 📱 스마트폰 위치추적 앱 & 4대 고정밀 알고리즘 파이프라인
+## 화면
 
-본 플랫폼은 브라우저의 HTML5 Geolocation API를 활용한 전용 **모바일 위치추적 앱 (`umap GO Mobile`)**을 탑재하고 있으며, 부정확한 GPS 신호와 센서 오차를 완벽하게 정제하기 위한 **4단계 실시간 필터링 알고리즘**을 내장하고 있습니다.
+- 웹(GitHub Pages): 회사 홈페이지. 관제 콘솔은 없습니다.
+- 앱: Capacitor 안드로이드 앱이 가족 위치 화면을 엽니다. 브라우저에서 같은 화면을 보려면 `?app=1` 을 붙입니다.
 
-### ① 오차 반경 (Accuracy) 필터링 & 신선도 검증 (핵심)
-- **수평 오차 기준치 필터링**: 수신된 위치 데이터의 오차 반경(`location.accuracy`)이 **50m**를 초과할 경우 이상치로 판정하여 궤적 업데이트를 무시하고 즉시 폐기합니다.
-- **과거 캐시 데이터 폐기**: `location.timestamp`를 확인하여 10초 이상 지난 오래된 캐시 좌표는 폐기합니다.
+흐름은 Google 로그인 → 권한 안내 → 가족 지도 → 우리 집 → 초대 코드입니다.
 
-### ② 최소 이동 거리 (Distance Filter) 설정
-- **정지 센서 노이즈 제거**: 단말기가 정지해 있을 때 발생하는 미세 센서 지터(Jitter)를 걸러내기 위해, 직전 좌표 대비 **최소 5m 이상 이동했을 때만** 유효한 위치 갱신으로 승인합니다.
-- (iOS의 `locationManager.distanceFilter = 10`, Android의 `setMinUpdateDistanceMeters(10)` 원리 반영)
+## 권한
 
-### ③ 칼만 필터 (Kalman Filter) 2D 좌표 보정
-- 오차 공분산과 측정 오차를 기반으로 동적 칼만 게인($K$)을 계산하여, 빌딩 숲이나 실내 진입 시 발생하는 순간적인 좌표 튐(Spike) 현상을 부드럽고 매끄러운 궤적으로 실시간 수학적 보정합니다.
+앱이 설명한 뒤에만 요청합니다.
 
-### ④ 속도 기반 이상치 제거 (Velocity Sanity Check)
-- 두 좌표 간 이동 거리와 수신 시간 간격을 계산하여 이동 속도를 산출합니다. 사람이 걷거나 차량이 정상 주행할 수 없는 비정상적인 속도(예: 1초 만에 500m 이동 = 시속 1,800km/h 등, 기준치 시속 145km/h 초과)의 순간 점프 좌표를 자동으로 감지하여 폐기합니다.
+| 권한 | 쓰는 이유 |
+| :--- | :--- |
+| 알림 | 집 도착·출발 |
+| 위치 | 정확한 위치 또는 대략적인 위치. 앱 사용 중과 항상 허용을 사용자가 고릅니다. |
+| 움직임 | 이동과 머무름을 구분해 위치 점을 안정시킬 때만 |
+| 배터리 안내 | 항상 허용을 고른 경우에만 설정 경로를 알려 줍니다. 최적화 예외를 자동으로 요청하지 않습니다. |
 
----
+마이크, 문자, 주변 소리, 원격으로 소리를 울리는 기능은 없습니다. 전화번호만으로 다른 사람을 찾지 않습니다.
 
-## 🌟 주요 핵심 기능
+항상 허용은 선호로 저장됩니다. 이 버전은 앱이 열려 있는 동안 위치를 갱신하고, 권한을 몰래 올리지 않습니다.
 
-1. **밝은 화이트 모드 디자인**: 가독성을 극대화한 세련된 모던 화이트/스카이블루 UI
-2. **지도 API 키 0개 (완전 무료 오픈 지도)**:
-   - Carto Voyager (선명한 화이트 벡터 지도)
-   - Esri World Imagery & 라벨 (고해상도 위성 지도)
-   - OpenStreetMap (표준 오픈 지도)
-3. **010 핸드폰 번호 실시간 추적 & 궤적(Trail) 표시**:
-   - `010-XXXX-XXXX` 번호 입력 시 즉시 단말기 등록 및 궤적 연결
-   - 현재 위치 핀 마커 및 당일 이동 경로(선명한 실선 + 과거 페이딩 점선 + 시간대별 경유지 닷 마커)
-4. **서울 노원구 기준 좌표 초기 설정**:
-   - 상계동, 노원역 일대를 기본 관제 중심지로 셋업
-5. **실시간 맵 알림 음소거/토글 버튼**:
-   - 지도 우측 하단 컨트롤러에서 알림음 및 팝업 ON/OFF 지원
-6. **QR 코드 스캔을 통한 스마트폰 원클릭 실행**:
-   - PC 화면의 QR 코드를 휴대폰 카메라로 비추면 바로 고정밀 위치추적 앱으로 진입
-7. **화면 꺼짐 방지 (Screen WakeLock API)**:
-   - 스마트폰 화면이 꺼지지 않고 백그라운드 궤적을 지속 전송
-8. **PWA (Progressive Web App) 완벽 지원**:
-   - 아이폰/갤럭시에서 '홈 화면에 추가' 시 앱스토어 설치 없이 네이티브 앱처럼 전체화면 구동
+## Google 로그인과 지도
 
----
+키는 환경 변수로만 넣습니다. `.env.example` 을 복사해 `.env.local` 을 만들고, GitHub Actions에는 같은 이름의 secret을 등록합니다.
 
-## 📲 안드로이드 전용 설치 파일 (APK) 다운로드 및 설치
-
-본 프로젝트는 **Capacitor Android Native** 프로젝트(`android/`)로 패키징되어 있어 스마트폰에 직접 설치할 수 있는 `.apk` 파일이 자동으로 생성됩니다.
-
-### 🌟 깃허브에서 바로 APK 다운로드 (1클릭)
-1. GitHub 저장소(`https://github.com/jadegun1124/navix-tracker`) 상단의 **[Actions]** 탭으로 이동합니다.
-2. **`Build Android APK (umap)`** 워크플로우를 클릭합니다.
-3. 하단의 **Artifacts** 항목에서 **`umap-v1.0.0-tracker-apk`**를 클릭하면 `umap-v1.0.0-tracker.apk`가 다운로드됩니다!
-4. (또는 저장소 우측 **[Releases]** 페이지에서 첨부된 APK 파일을 다운로드할 수 있습니다.)
-
-### 📲 스마트폰에 설치하는 방법
-1. 갤럭시 등 안드로이드 폰으로 `umap-v1.0.0-tracker.apk` 파일을 전송하거나 폰 브라우저에서 직접 다운로드합니다.
-2. 다운로드 완료된 APK 파일을 터치하여 실행합니다.
-3. 보안 경고가 나타나면 **[출처를 알 수 없는 앱 설치 허용]**을 선택하고 설치를 완료합니다.
-4. 앱 실행 시 **"정확한 위치 허용"**을 승인하면 4단계 필터링 알고리즘이 적용된 실시간 위치 궤적 관제가 즉시 시작됩니다!
-
----
-
-## 🚀 깃허브(GitHub) 배포 방법 (24시간 어디서나 무료 접속)
-
-본 프로젝트는 완전한 정적 웹 애플리케이션(SPA) 및 클라이언트 동기화 아키텍처로 빌드되어 있어, **GitHub Pages**에 올리면 개인 PC를 꺼두어도 전 세계 어디서나 24시간 스마트폰과 컴퓨터로 접속할 수 있습니다.
-
-### 1단계: GitHub에 새 저장소(Repository) 생성
-1. [GitHub.com](https://github.com/) 로그인 후 우측 상단 **[+] → [New repository]**
-2. Repository name 입력 (예: `umap-gps-tracker`)
-3. **Public** 선택 후 **[Create repository]** 클릭
-
-### 2단계: 터미널에서 코드 푸시 (Push)
-저장소 폴더에서 아래 명령어 실행 (또는 동봉된 `deploy-to-github.bat` 실행):
-
-```powershell
-# 1. 원격 저장소 연결 (본인의 GitHub 계정 및 저장소 이름으로 변경)
-git remote add origin https://github.com/<본인_깃허브_아이디>/<저장소_이름>.git
-
-# 2. 메인 브랜치 설정 및 푸시
-git branch -M main
-git push -u origin main
+```bash
+VITE_GOOGLE_CLIENT_ID=
+VITE_GOOGLE_MAPS_API_KEY=
 ```
 
-### 3단계: GitHub Pages 켜기 (최초 1회)
-1. GitHub 저장소의 **[Settings]** 탭 클릭
-2. 좌측 메뉴에서 **[Pages]** 클릭
-3. **Build and deployment > Source**를 **`GitHub Actions`**로 선택!
-4. 상단 **[Actions]** 탭에서 자동 빌드 및 배포가 완료되면 (약 1분 소요), 배포된 사이트 URL이 생성됩니다:
-   👉 `https://<본인_아이디>.github.io/<저장소_이름>/`
+- 로그인: [Google Identity Services](https://developers.google.com/identity/gsi/web/guides/overview) 웹 클라이언트. 승인된 자바스크립트 원본에 사이트 주소와 Capacitor의 `https://localhost` 를 넣습니다.
+- 지도: Maps JavaScript API. **무제한 무료가 아닙니다.** 월간 무료 사용량을 넘기면 과금됩니다. 최신 단가는 [Google Maps Platform 가격](https://mapsplatform.google.com/pricing/)에서 확인합니다. 키는 HTTP 리퍼러로 제한합니다.
 
----
+클라이언트 ID나 지도 키가 없으면 로그인은 미리보기로 이어지고, 지도는 미리보기 격자로 표시됩니다. 미리보기라고 화면에 적습니다.
 
-## 🛠️ 기술 스택
-- **프론트엔드**: React 19, TypeScript, Vite, Tailwind CSS v4
-- **지도 엔진**: Leaflet (0 API Key - Carto Voyager, Esri Satellite, OSM)
-- **알고리즘**: 2D Coordinate Kalman Smoothing Filter, Haversine Metric Engine, Velocity Sanity Checker
-- **모바일 웹/PWA**: Screen WakeLock API, HTML5 Geolocation Watcher, Web App Manifest
-- **CI/CD**: GitHub Actions (`.github/workflows/deploy.yml`)
+## 아이콘
+
+승인된 마크는 파란 배경, 흰 위치 핀, 핀 안의 빨간 하트입니다. 핀 위에 머리 컬은 없습니다.
+
+- 웹 파비콘과 PWA 아이콘: `public/`
+- 안드로이드 런처·적응형 아이콘·스플래시: `android/app/src/main/res/`
+- iOS 앱 아이콘과 스플래시 세트: `resources/ios/`
+- 다시 그리기: `python3 scripts/render-umap-icon.py`
+
+이 저장소에는 아직 Xcode 프로젝트가 없습니다. `resources/ios` 는 Capacitor iOS를 추가하기 전에 둔 에셋입니다. `ios/` 폴더를 미리 만들어 두면 `cap add ios` 가 막히므로 거기에 두지 않았습니다.
+
+## 로컬 실행
+
+```bash
+npm ci
+npm run dev
+```
+
+회사 홈은 `/`, 앱 화면은 `/?app=1` 입니다. `/?app=1&reset=1` 은 이 브라우저에 저장된 가족 세션을 지웁니다.
+
+## 안드로이드 APK
+
+GitHub Actions `Build Android APK (Umap)` 가 디버그 APK를 만듭니다. 워크플로는 웹을 빌드한 뒤 `dist` 를 안드로이드 에셋으로 복사하고 `assembleDebug` 를 실행합니다.
+
+## 데이터
+
+가족, 우리 집, 권한 선택은 이 기기의 `localStorage` 에 있습니다. 초대 코드는 그 기기의 가족 목록에 사람을 더하는 데 쓰입니다. 기기 사이의 실시간 동기화 서버는 이 버전에 없습니다.

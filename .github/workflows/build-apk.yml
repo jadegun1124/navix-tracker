@@ -1,4 +1,4 @@
-name: Build Android APK (umap)
+name: Build Android APK (Umap)
 
 on:
   push:
@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   build-apk:
-    name: Build umap Android APK
+    name: Build Umap Android APK
     runs-on: ubuntu-latest
     env:
       ANDROID_HOME: /usr/local/lib/android/sdk
@@ -47,6 +47,9 @@ jobs:
         run: npm ci || npm install --legacy-peer-deps
 
       - name: Build Web Application
+        env:
+          VITE_GOOGLE_MAPS_API_KEY: ${{ secrets.VITE_GOOGLE_MAPS_API_KEY }}
+          VITE_GOOGLE_CLIENT_ID: ${{ secrets.VITE_GOOGLE_CLIENT_ID }}
         run: npm run build
 
       - name: Copy Web Assets into Native Android Assets
@@ -80,17 +83,14 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v1.0.0
-          name: 'umap Android APK Release v1.0.0'
+          name: 'Umap Android APK v1.0.0'
           body: |
-            ### 🛰️ umap 안드로이드 전용 고정밀 위치추적 앱 (APK)
-            - **앱 패키지명**: `kr.co.umap.tracker`
-            - **고정밀 GPS 4단계 필터링 탑재**:
-              1. 오차 반경 50m 이하 허용 (50m 초과 좌표 자동 폐기)
-              2. 정지 중 5m 미만 센서 노이즈 필터링
-              3. 2D 칼만 필터(Kalman Filter) 실시간 궤적 스무딩
-              4. 시속 145km/h 초과 비정상 순간 점프 폐기
-            - **화면 꺼짐 방지(WakeLock)** 및 포그라운드 위치 수신 지원
-            - **설치 방법**: 아래 Assets에서 `umap-v1.0.0-tracker.apk` 파일을 스마트폰에 다운로드하여 설치하세요.
+            ### Umap 안드로이드 앱
+            - 표시 이름: Umap
+            - 패키지: `kr.co.umap.tracker`
+            - Google 로그인, 권한 안내, 가족 지도, 우리 집 안심존, 초대 코드
+            - 마이크, 문자, 주변 소리, 원격 경보음은 요청하지 않습니다
+            - 설치: Assets의 `umap-v1.0.0-tracker.apk`
           files: output/umap-v1.0.0-tracker.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
