@@ -7,12 +7,14 @@ android {
   }
 }
 
-apply from: "../capacitor-cordova-android-plugins/cordova.variables.gradle"
-dependencies {
-
-
+def cordovaVariables = file("../capacitor-cordova-android-plugins/cordova.variables.gradle")
+if (cordovaVariables.exists()) {
+    apply from: cordovaVariables
 }
 
+dependencies {
+
+}
 
 if (hasProperty('postBuildExtras')) {
   postBuildExtras()
