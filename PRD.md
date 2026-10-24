@@ -6,7 +6,9 @@
 
 ## 이름
 
-제품 표시 이름은 Umap. 저장소 이름은 `navix-tracker` 로 둔다.
+제품 표시 이름은 Umap. 저장소는 `jadegun1124/umap`.
+
+회사 홈은 GitHub Pages `https://jadegun1124.github.io/umap/`. 안드로이드 설치 파일은 GitHub Releases `https://github.com/jadegun1124/umap/releases/latest/download/umap-v1.0.0-tracker.apk`. Play 스토어와 App Store 배포는 없다.
 
 ## 웹
 

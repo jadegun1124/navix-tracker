@@ -2,6 +2,10 @@ import React, { useState } from 'react';
 
 const iconSrc = `${import.meta.env.BASE_URL}umap-icon.png`;
 
+export const COMPANY_HOME_URL = 'https://jadegun1124.github.io/umap/';
+export const ANDROID_RELEASES_URL = 'https://github.com/jadegun1124/umap/releases/latest';
+export const ANDROID_APK_URL = 'https://github.com/jadegun1124/umap/releases/latest/download/umap-v1.0.0-tracker.apk';
+
 export function CompanyHome() {
   const [sent, setSent] = useState(false);
   const [name, setName] = useState('');
@@ -18,6 +22,7 @@ export function CompanyHome() {
           <nav className="flex items-center gap-4 text-sm font-semibold text-slate-600">
             <a href="#product">서비스</a>
             <a href="#consent">동의</a>
+            <a href="#download">앱 받기</a>
             <a href="#contact">문의</a>
           </nav>
         </div>
@@ -31,9 +36,14 @@ export function CompanyHome() {
             <p className="mt-4 max-w-xl text-base leading-7 text-slate-600">
               Umap은 회사에 남긴 소개 페이지와, 휴대폰에서 쓰는 가족 지도로 이루어져 있습니다. 실시간 위치, 우리 집 안심존, 초대 코드가 전부입니다.
             </p>
-            <a href="#contact" className="mt-8 inline-flex rounded-full bg-[#0084FF] px-5 py-3 text-sm font-bold text-white">
-              문의하기
-            </a>
+            <div className="mt-8 flex flex-wrap gap-3">
+              <a href={ANDROID_APK_URL} className="inline-flex rounded-full bg-[#0084FF] px-5 py-3 text-sm font-bold text-white">
+                안드로이드 앱 받기
+              </a>
+              <a href="#contact" className="inline-flex rounded-full bg-slate-100 px-5 py-3 text-sm font-bold text-slate-800">
+                문의하기
+              </a>
+            </div>
           </div>
           <div className="mx-auto w-full max-w-sm rounded-[36px] border border-slate-200 bg-[#f4f7fb] p-6 shadow-sm">
             <img src={iconSrc} alt="Umap 앱 아이콘" className="h-20 w-20 rounded-[22px]" />
@@ -78,6 +88,38 @@ export function CompanyHome() {
           </div>
         </section>
 
+        <section id="download" className="mx-auto max-w-5xl px-5 py-14">
+          <h2 className="text-2xl font-black">어디서 보나요</h2>
+          <dl className="mt-6 space-y-4 text-sm leading-6">
+            <div>
+              <dt className="font-bold">회사 홈</dt>
+              <dd className="text-slate-600">
+                GitHub Pages.{' '}
+                <a className="font-semibold text-[#0084FF]" href={COMPANY_HOME_URL}>
+                  {COMPANY_HOME_URL}
+                </a>
+              </dd>
+            </div>
+            <div>
+              <dt className="font-bold">안드로이드 앱</dt>
+              <dd className="text-slate-600">
+                GitHub Releases의 APK입니다. Google Play에는 올리지 않았습니다.{' '}
+                <a className="font-semibold text-[#0084FF]" href={ANDROID_RELEASES_URL}>
+                  릴리스 목록
+                </a>
+                {' · '}
+                <a className="font-semibold text-[#0084FF]" href={ANDROID_APK_URL}>
+                  APK 다운로드
+                </a>
+              </dd>
+            </div>
+            <div>
+              <dt className="font-bold">iOS 앱</dt>
+              <dd className="text-slate-600">App Store와 TestFlight에는 아직 없습니다. 아이콘 파일만 저장소에 있습니다.</dd>
+            </div>
+          </dl>
+        </section>
+
         <section id="contact" className="bg-[#f7fafc]">
           <form
             className="mx-auto max-w-xl px-5 py-14"
@@ -107,7 +149,7 @@ export function CompanyHome() {
 
       <footer className="border-t border-slate-200 px-5 py-8 text-sm text-slate-500">
         <div className="mx-auto flex max-w-5xl flex-col gap-2 md:flex-row md:items-center md:justify-between">
-          <p>© 2026 Umap. 가족 위치는 동의한 사람에게만 보입니다.</p>
+          <p>© 2026 Umap. 회사 홈은 GitHub Pages, 안드로이드 앱은 GitHub Releases입니다.</p>
           <a href="?app=1" className="font-semibold text-[#0084FF]">
             모바일 앱 화면 미리보기
           </a>
