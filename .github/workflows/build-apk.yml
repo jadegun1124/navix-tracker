@@ -59,17 +59,14 @@ jobs:
       - name: Build Debug APK with Gradle
         run: |
           cd android
-          ./gradlew assembleDebug --no-daemon --stacktrace 2>&1 | tee ../gradle.log || {
-            echo "::error::$(tail -n 25 ../gradle.log | tr '\n' ' ')"
+          ./gradlew assembleDebug --no-daemon --stacktrace 2>&1 | tee ../gradle.log || true
+          echo "### Gradle Build Log" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          tail -n 80 ../gradle.log >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          if grep -q "BUILD FAILED" ../gradle.log; then
             exit 1
-          }
-
-      - name: Upload Build Log Artifact on Failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: gradle-build-log
-          path: gradle.log
+          fi
 
       - name: Prepare APK Output
         run: |
