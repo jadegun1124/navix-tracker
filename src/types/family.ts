@@ -6,6 +6,12 @@ export interface Profile {
   preview: boolean;
 }
 
+export interface TrackPoint {
+  lat: number;
+  lng: number;
+  at: number;
+}
+
 export interface Member {
   id: string;
   name: string;
@@ -56,6 +62,7 @@ export interface Session {
   phone: string;
   permissions: PermissionState;
   members: Member[];
+  tracks: Record<string, TrackPoint[]>;
   home: HomeZone | null;
   inviteCode: string;
   notices: FamilyNotice[];

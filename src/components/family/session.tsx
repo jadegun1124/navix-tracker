@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useReducer } from 'react';
-import { haversineMeters } from '../../lib/geo';
+import { appendTrail, haversineMeters, sampleTrail } from '../../lib/geo';
 import {
   DEFAULT_CENTER,
   REQUIRED_TERMS,
@@ -11,6 +11,7 @@ import {
   type Profile,
   type Session,
   type Stage,
+  type TrackPoint,
 } from '../../types/family';
 
 const STORAGE_KEY = 'umap_family_v1';
@@ -52,6 +53,7 @@ function fresh(stage: Stage = 'splash'): Session {
     phone: '',
     permissions: { ...EMPTY_PERMISSIONS },
     members: [],
+    tracks: {},
     home: null,
     inviteCode: String(10000 + Math.floor(Math.random() * 90000)),
     notices: [],
@@ -89,6 +91,34 @@ function membersFor(profile: Profile): Member[] {
   ];
 }
 
+function isPoint(value: unknown): value is TrackPoint {
+  if (!value || typeof value !== 'object') return false;
+  const point = value as TrackPoint;
+  return Number.isFinite(point.lat) && Number.isFinite(point.lng) && Number.isFinite(point.at);
+}
+
+function cleanTracks(value: unknown): Record<string, TrackPoint[]> {
+  if (!value || typeof value !== 'object') return {};
+  const tracks: Record<string, TrackPoint[]> = {};
+  for (const [id, points] of Object.entries(value as Record<string, unknown>)) {
+    if (!Array.isArray(points)) continue;
+    const clean = points.filter(isPoint).slice(-300);
+    if (clean.length > 0) tracks[id] = clean;
+  }
+  return tracks;
+}
+
+function withTracks(session: Session): Session {
+  const tracks = { ...session.tracks };
+  for (const member of session.members) {
+    if (tracks[member.id]?.length) continue;
+    tracks[member.id] = member.isSample
+      ? sampleTrail(member, member.updatedAt)
+      : [{ lat: member.lat, lng: member.lng, at: member.updatedAt }];
+  }
+  return { ...session, tracks };
+}
+
 function isSession(value: unknown): value is Session {
   if (!value || typeof value !== 'object') return false;
   const session = value as Session;
@@ -114,10 +144,11 @@ function load(): Session {
       ...parsed,
       terms: { ...EMPTY_TERMS, ...parsed.terms },
       permissions: { ...EMPTY_PERMISSIONS, ...parsed.permissions },
+      tracks: cleanTracks((parsed as Session).tracks),
       pendingInvite: invite || parsed.pendingInvite,
     };
     if (session.profile && session.permissions.completed) session.stage = 'map';
-    return session;
+    return withTracks(session);
   } catch {
     return fresh();
   }
@@ -160,7 +191,7 @@ function reducer(state: Session, action: Action): Session {
       const members = state.members.length > 0
         ? state.members.map((member) => (member.id === 'self' ? { ...member, name: action.profile.name } : member))
         : membersFor(action.profile);
-      return { ...state, profile: action.profile, members, stage: 'survey' };
+      return withTracks({ ...state, profile: action.profile, members, stage: 'survey' });
     }
     case 'skip-survey':
       return { ...state, stage: 'terms' };
@@ -221,26 +252,39 @@ function reducer(state: Session, action: Action): Session {
       return {
         ...state,
         members: [...state.members, member],
+        tracks: {
+          ...state.tracks,
+          [member.id]: [{ lat: member.lat, lng: member.lng, at: member.updatedAt }],
+        },
         pendingInvite: null,
         notices: [notice('가족을 추가했습니다', `${member.name} 님이 이 기기의 가족 목록에 표시됩니다.`), ...state.notices],
       };
     }
-    case 'remove-member':
+    case 'remove-member': {
       if (action.id === 'self') return state;
-      return { ...state, members: state.members.filter((member) => member.id !== action.id) };
+      const tracks = { ...state.tracks };
+      delete tracks[action.id];
+      return { ...state, members: state.members.filter((member) => member.id !== action.id), tracks };
+    }
     case 'dismiss-invite':
       return { ...state, pendingInvite: null };
     case 'mark-alerts-read':
       return { ...state, notices: state.notices.map((item) => ({ ...item, read: true })) };
-    case 'update-self':
+    case 'update-self': {
+      const at = Date.now();
       return {
         ...state,
         members: state.members.map((member) =>
           member.id === 'self'
-            ? { ...member, lat: action.lat, lng: action.lng, accuracyM: Math.max(1, Math.round(action.accuracyM)), updatedAt: Date.now() }
+            ? { ...member, lat: action.lat, lng: action.lng, accuracyM: Math.max(1, Math.round(action.accuracyM)), updatedAt: at }
             : member,
         ),
+        tracks: {
+          ...state.tracks,
+          self: appendTrail(state.tracks.self, { lat: action.lat, lng: action.lng, at }),
+        },
       };
+    }
     case 'set-motion':
       return {
         ...state,

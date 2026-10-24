@@ -1,21 +1,21 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Bell, Copy, Home, LocateFixed, MapPin, Minus, Plus, UserPlus, X } from 'lucide-react';
-import { buildInviteLink, formatClock, haversineMeters, projectMeters } from '../../lib/geo';
-import { loadGoogleMaps, mapsApiKey } from '../../services/googleMaps';
-import type { GoogleMap } from '../../types/google';
+import { Bell, Copy, Home, LocateFixed, MapPin, Minus, Plus, Route, UserPlus, X } from 'lucide-react';
+import { buildInviteLink, formatClock, haversineMeters } from '../../lib/geo';
 import { DEFAULT_CENTER, type HomeZone, type Member } from '../../types/family';
+import { StreetMap, type StreetMapHandle } from './StreetMap';
 import { useFamily } from './session';
 
 export function FamilyMapScreen() {
   const family = useFamily();
   const { state } = family;
   const self = state.members.find((member) => member.id === 'self');
-  const [center, setCenter] = useState(self ?? DEFAULT_CENTER);
-  const [zoom, setZoom] = useState(16);
+  const [center] = useState(self ?? DEFAULT_CENTER);
   const [showZone, setShowZone] = useState(true);
+  const [showTrail, setShowTrail] = useState(true);
+  const [homeCenter, setHomeCenter] = useState(self ?? DEFAULT_CENTER);
+  const mapRef = useRef<StreetMapHandle>(null);
   const [sheet, setSheet] = useState<'home' | 'invite' | null>(state.pendingInvite && state.pendingInvite !== state.inviteCode ? 'invite' : null);
   const [selectedId, setSelectedId] = useState(state.members.find((member) => member.isSample)?.id ?? 'self');
-  const [googleFailed, setGoogleFailed] = useState(false);
   const insideRef = useRef<Record<string, boolean>>({});
   const lastFix = useRef<{ lat: number; lng: number; at: number } | null>(null);
   const centeredFix = useRef(false);
@@ -39,7 +39,7 @@ export function FamilyMapScreen() {
         familyRef.current.updateSelf(next.lat, next.lng, position.coords.accuracy);
         if (!centeredFix.current) {
           centeredFix.current = true;
-          setCenter(next);
+          mapRef.current?.panTo(next.lat, next.lng);
         }
       },
       () => undefined,
@@ -89,59 +89,73 @@ export function FamilyMapScreen() {
   }, [notifyOk, state.home, state.members]);
 
   const selected = state.members.find((member) => member.id === selectedId) ?? state.members[0];
-  const useGoogle = Boolean(mapsApiKey()) && !googleFailed;
+  const trail = selected && showTrail ? state.tracks[selected.id] ?? [] : [];
+  const trailColor = selected?.isSample ? '#ff8a34' : '#0084FF';
+
+  const focusMember = (member: Member, fitTrail: boolean) => {
+    setSelectedId(member.id);
+    const points = state.tracks[member.id] ?? [];
+    if (fitTrail && showTrail && points.length >= 2) mapRef.current?.fit(points);
+    else mapRef.current?.panTo(member.lat, member.lng);
+  };
 
   return (
     <div className="flex h-full justify-center bg-[#d7e3ee]">
       <div className="relative flex h-full w-full max-w-[430px] flex-col overflow-hidden bg-white">
         <div className="relative min-h-0 flex-1">
-          {useGoogle ? (
-            <GoogleMapPane
-              center={center}
-              zoom={zoom}
-              members={state.members}
-              home={showZone ? state.home : null}
-              onFail={() => setGoogleFailed(true)}
-              onSelect={(id) => {
-                setSelectedId(id);
-                const member = state.members.find((item) => item.id === id);
-                if (member) setCenter(member);
-              }}
-            />
-          ) : (
-            <FallbackMap
-              center={center}
-              zoom={zoom}
-              members={state.members}
-              home={showZone ? state.home : null}
-              selectedId={selected?.id}
-              onSelect={(member) => {
-                setSelectedId(member.id);
-                setCenter(member);
-              }}
-            />
-          )}
+          <StreetMap
+            ref={mapRef}
+            center={center}
+            zoom={16}
+            members={state.members}
+            home={showZone ? state.home : null}
+            trail={trail}
+            trailColor={trailColor}
+            selectedId={selected?.id}
+            onSelect={(id) => {
+              const member = state.members.find((item) => item.id === id);
+              if (member) focusMember(member, true);
+            }}
+          />
 
-          {!useGoogle && (
-            <div className="pointer-events-none absolute left-3 top-3 max-w-[220px] rounded-full bg-white/95 px-3 py-1.5 text-[11px] font-semibold text-slate-600 shadow">
-              미리보기 지도 · Google Maps 키를 넣으면 실제 지도로 바뀝니다
-            </div>
-          )}
+          <div className="pointer-events-none absolute left-3 top-3 z-30 max-w-[230px] rounded-2xl bg-white/95 px-3 py-1.5 text-[11px] font-semibold leading-4 text-slate-600 shadow">
+            일반 지도 · OpenStreetMap / CARTO
+            {showTrail && selected && (
+              <span className="mt-0.5 block text-slate-500">
+                {selected.name} 경로 {trail.length}점 · 이 기기에만 저장
+              </span>
+            )}
+          </div>
 
-          <div className="absolute right-3 top-14 flex flex-col gap-2">
+          <div className="absolute right-3 top-14 z-30 flex flex-col gap-2">
             <RoundButton label="안심존 표시" onClick={() => setShowZone((value) => !value)}>
               <Home className={`h-5 w-5 ${showZone ? 'text-[#0084FF]' : 'text-slate-400'}`} />
             </RoundButton>
-            <RoundButton label="확대" onClick={() => setZoom((value) => Math.min(19, value + 1))}>
+            <RoundButton
+              label="이동 경로"
+              onClick={() => {
+                setShowTrail((value) => {
+                  const next = !value;
+                  if (next && selected) {
+                    const points = state.tracks[selected.id] ?? [];
+                    if (points.length >= 2) mapRef.current?.fit(points);
+                  }
+                  return next;
+                });
+              }}
+            >
+              <Route className={`h-5 w-5 ${showTrail ? 'text-[#0084FF]' : 'text-slate-400'}`} />
+            </RoundButton>
+            <RoundButton label="확대" onClick={() => mapRef.current?.zoomBy(1)}>
               <Plus className="h-5 w-5" />
             </RoundButton>
-            <RoundButton label="축소" onClick={() => setZoom((value) => Math.max(14, value - 1))}>
+            <RoundButton label="축소" onClick={() => mapRef.current?.zoomBy(-1)}>
               <Minus className="h-5 w-5" />
             </RoundButton>
             <RoundButton
               label="내 위치"
               onClick={() => {
-                if (self) setCenter(self);
+                if (self) focusMember(self, false);
               }}
             >
               <LocateFixed className="h-5 w-5 text-[#0084FF]" />
@@ -162,7 +176,14 @@ export function FamilyMapScreen() {
           <section className="rounded-t-3xl bg-white px-4 pb-2 pt-3 shadow-[0_-8px_30px_rgba(15,23,42,0.08)]">
             <div className="mb-2 flex items-center justify-between">
               <h2 className="text-lg font-black">우리 가족</h2>
-              <button type="button" onClick={() => setSheet('home')} className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-bold text-slate-700">
+              <button
+                type="button"
+                onClick={() => {
+                  setHomeCenter(mapRef.current?.getCenter() ?? center);
+                  setSheet('home');
+                }}
+                className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-bold text-slate-700"
+              >
                 {state.home ? '우리 집 수정' : '우리 집 추가'}
               </button>
             </div>
@@ -174,10 +195,7 @@ export function FamilyMapScreen() {
                   member={member}
                   home={state.home}
                   selected={member.id === selected?.id}
-                  onSelect={() => {
-                    setSelectedId(member.id);
-                    setCenter(member);
-                  }}
+                  onSelect={() => focusMember(member, true)}
                   onRemove={member.isSample ? () => family.removeMember(member.id) : undefined}
                 />
               ))}
@@ -245,11 +263,11 @@ export function FamilyMapScreen() {
         {sheet === 'home' && (
           <HomeSheet
             initial={state.home}
-            center={center}
+            center={homeCenter}
             onClose={() => setSheet(null)}
             onSave={(home) => {
               family.saveHome(home);
-              setCenter(home);
+              mapRef.current?.panTo(home.lat, home.lng);
               setSheet(null);
             }}
             onClear={() => {
@@ -273,182 +291,6 @@ export function FamilyMapScreen() {
           />
         )}
       </div>
-    </div>
-  );
-}
-
-function GoogleMapPane({
-  center,
-  zoom,
-  members,
-  home,
-  onFail,
-  onSelect,
-}: {
-  center: { lat: number; lng: number };
-  zoom: number;
-  members: Member[];
-  home: HomeZone | null;
-  onFail: () => void;
-  onSelect: (id: string) => void;
-}) {
-  const ref = useRef<HTMLDivElement>(null);
-  const mapRef = useRef<GoogleMap | null>(null);
-  const [ready, setReady] = useState(false);
-  const onFailRef = useRef(onFail);
-  const onSelectRef = useRef(onSelect);
-  const centerRef = useRef(center);
-  const zoomRef = useRef(zoom);
-  useEffect(() => {
-    onFailRef.current = onFail;
-    onSelectRef.current = onSelect;
-    centerRef.current = center;
-    zoomRef.current = zoom;
-  });
-
-  useEffect(() => {
-    let dead = false;
-    loadGoogleMaps()
-      .then((maps) => {
-        if (dead || !ref.current) return;
-        mapRef.current = new maps.Map(ref.current, {
-          center: centerRef.current,
-          zoom: zoomRef.current,
-          disableDefaultUI: true,
-          clickableIcons: false,
-          gestureHandling: 'greedy',
-          backgroundColor: '#e7eef3',
-        });
-        setReady(true);
-      })
-      .catch(() => onFailRef.current());
-    return () => {
-      dead = true;
-      mapRef.current = null;
-      setReady(false);
-    };
-  }, []);
-
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!ready || !map) return;
-    map.panTo(center);
-    map.setZoom(zoom);
-  }, [center, ready, zoom]);
-
-  useEffect(() => {
-    const map = mapRef.current;
-    const maps = window.google?.maps;
-    if (!ready || !map || !maps) return;
-    const markers = members.map((member) => {
-      const marker = new maps.Marker({
-        map,
-        position: { lat: member.lat, lng: member.lng },
-        title: member.name,
-        label: { text: member.name.slice(0, 2), color: '#ffffff', fontSize: '11px', fontWeight: '700' },
-        icon: {
-          path: maps.SymbolPath.CIRCLE,
-          scale: member.id === 'self' ? 16 : 14,
-          fillColor: member.isSample ? '#ff8a34' : '#0084FF',
-          fillOpacity: 1,
-          strokeColor: '#ffffff',
-          strokeWeight: 3,
-        },
-      });
-      marker.addListener('click', () => onSelectRef.current(member.id));
-      return marker;
-    });
-    const circle = home
-      ? new maps.Circle({
-          map,
-          center: { lat: home.lat, lng: home.lng },
-          radius: home.radiusM,
-          fillColor: '#0084FF',
-          fillOpacity: 0.15,
-          strokeColor: '#0084FF',
-          strokeWeight: 2,
-        })
-      : null;
-    return () => {
-      markers.forEach((marker) => marker.setMap(null));
-      circle?.setMap(null);
-    };
-  }, [home, members, ready]);
-
-  return <div ref={ref} className="h-full w-full" />;
-}
-
-function FallbackMap({
-  center,
-  zoom,
-  members,
-  home,
-  selectedId,
-  onSelect,
-}: {
-  center: { lat: number; lng: number };
-  zoom: number;
-  members: Member[];
-  home: HomeZone | null;
-  selectedId?: string;
-  onSelect: (member: Member) => void;
-}) {
-  const pxPerMeter = 0.42 * (zoom - 12);
-  const homePx = home ? projectMeters(home, center) : null;
-  return (
-    <div className="relative h-full overflow-hidden bg-[#e6eef3]">
-      <div
-        className="absolute inset-0"
-        style={{
-          backgroundImage:
-            'linear-gradient(#ffffff 0 0), linear-gradient(#ffffff 0 0), linear-gradient(90deg, transparent 46%, #f7fbff 46% 54%, transparent 54%), linear-gradient(transparent 46%, #f7fbff 46% 54%, transparent 54%)',
-          backgroundSize: '100% 3px, 3px 100%, 180px 180px, 180px 180px',
-          backgroundPosition: '0 28%, 22% 0, 0 0, 0 0',
-        }}
-      />
-      <div className="absolute left-[8%] top-[18%] h-24 w-28 rounded-full bg-[#cfe8c8]" />
-      <div className="absolute bottom-[22%] right-[6%] h-20 w-36 rounded-[40%] bg-[#d5ebc8]" />
-      <div className="absolute left-[18%] top-[48%] h-16 w-40 -rotate-6 rounded-full bg-[#d7e7f5]" />
-      {home && homePx && (
-        <div
-          className="absolute rounded-full border-2 border-[#0084FF]/70 bg-[#0084FF]/15"
-          style={{
-            width: home.radiusM * pxPerMeter * 2,
-            height: home.radiusM * pxPerMeter * 2,
-            left: `calc(50% + ${homePx.x * pxPerMeter}px)`,
-            top: `calc(46% + ${homePx.y * pxPerMeter}px)`,
-            transform: 'translate(-50%, -50%)',
-          }}
-        />
-      )}
-      {home && homePx && (
-        <div
-          className="absolute flex -translate-x-1/2 -translate-y-full flex-col items-center"
-          style={{ left: `calc(50% + ${homePx.x * pxPerMeter}px)`, top: `calc(46% + ${homePx.y * pxPerMeter}px)` }}
-        >
-          <span className="mb-1 rounded-full bg-white px-2 py-0.5 text-[10px] font-bold text-slate-700 shadow">우리 집</span>
-          <Home className="h-6 w-6 text-[#0084FF]" />
-        </div>
-      )}
-      {members.map((member) => {
-        const point = projectMeters(member, center);
-        return (
-          <button
-            key={member.id}
-            type="button"
-            onClick={() => onSelect(member)}
-            className="absolute flex -translate-x-1/2 -translate-y-full flex-col items-center"
-            style={{ left: `calc(50% + ${point.x * pxPerMeter}px)`, top: `calc(46% + ${point.y * pxPerMeter}px)` }}
-          >
-            <span className={`mb-1 rounded-full px-2 py-0.5 text-[11px] font-bold shadow ${member.id === selectedId ? 'bg-[#0084FF] text-white' : 'bg-white text-slate-800'}`}>
-              {member.name}
-            </span>
-            <span className={`flex h-11 w-11 items-center justify-center rounded-full border-4 border-white shadow-lg ${member.isSample ? 'bg-[#ff8a34]' : 'bg-[#0084FF]'}`}>
-              <span className="text-sm font-black text-white">{member.name.slice(0, 1)}</span>
-            </span>
-          </button>
-        );
-      })}
     </div>
   );
 }

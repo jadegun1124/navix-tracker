@@ -24,6 +24,39 @@ export function formatClock(timestamp: number): string {
   return new Intl.DateTimeFormat('ko-KR', { hour: 'numeric', minute: '2-digit' }).format(timestamp);
 }
 
+export interface TrailPoint {
+  lat: number;
+  lng: number;
+  at: number;
+}
+
+const SAMPLE_STEPS: [number, number][] = [
+  [-0.0036, -0.0022],
+  [-0.0028, -0.0011],
+  [-0.0021, -0.0001],
+  [-0.0014, 0.0006],
+  [-0.0007, 0.0009],
+  [-0.0002, 0.0004],
+  [0, 0],
+];
+
+export function sampleTrail(end: { lat: number; lng: number }, at: number): TrailPoint[] {
+  const span = 45 * 60 * 1000;
+  return SAMPLE_STEPS.map(([dLat, dLng], index) => ({
+    lat: end.lat + dLat,
+    lng: end.lng + dLng,
+    at: at - span + Math.round((span * index) / (SAMPLE_STEPS.length - 1)),
+  }));
+}
+
+export function appendTrail(points: TrailPoint[] | undefined, point: TrailPoint): TrailPoint[] {
+  const list = points ? points.slice(-299) : [];
+  const last = list[list.length - 1];
+  if (last && haversineMeters(last, point) < 12) return points ? points.slice(-300) : [];
+  list.push(point);
+  return list.slice(-300);
+}
+
 export function buildInviteLink(code: string): string {
   const url = new URL(window.location.href);
   url.searchParams.set('app', '1');

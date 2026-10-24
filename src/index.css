@@ -23,6 +23,11 @@
   background-color: #f8fafc;
 }
 
+.umap-street-map.leaflet-container {
+  z-index: 0;
+  font-family: inherit;
+}
+
 .leaflet-control-zoom {
   border: none !important;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12) !important;
