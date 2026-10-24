@@ -1,4 +1,4 @@
-// Minimal Service Worker for umap PWA Installation
+// Umap PWA. Network first, no offline cache of location data.
 const CACHE_NAME = 'umap-pwa-v1';
 
 self.addEventListener('install', (event) => {

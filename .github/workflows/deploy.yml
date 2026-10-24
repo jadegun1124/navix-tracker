@@ -1,4 +1,4 @@
-name: Deploy umap GO to GitHub Pages
+name: Deploy Umap homepage
 
 on:
   push:
@@ -34,6 +34,9 @@ jobs:
         run: npm ci
 
       - name: Build Standalone Static Web App
+        env:
+          VITE_GOOGLE_MAPS_API_KEY: ${{ secrets.VITE_GOOGLE_MAPS_API_KEY }}
+          VITE_GOOGLE_CLIENT_ID: ${{ secrets.VITE_GOOGLE_CLIENT_ID }}
         run: npm run build
 
       - name: Setup Pages

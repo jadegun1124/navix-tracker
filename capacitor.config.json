@@ -1,6 +1,6 @@
 {
   "appId": "kr.co.umap.tracker",
-  "appName": "umap",
+  "appName": "Umap",
   "webDir": "dist",
   "bundledWebRuntime": false
 }
