@@ -27,6 +27,13 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
+      - name: Configure Android SDK and Licenses
+        run: |
+          mkdir -p android
+          echo "sdk.dir=/usr/local/lib/android/sdk" > android/local.properties
+          cat android/local.properties
+          yes | /usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager --licenses || true
+
       - name: Make Gradle executable
         run: chmod +x android/gradlew
 
