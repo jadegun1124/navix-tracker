@@ -27,10 +27,6 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-        continue-on-error: true
-
       - name: Make Gradle executable
         run: chmod +x android/gradlew
 
@@ -40,14 +36,11 @@ jobs:
           node-version: 20
           cache: 'npm'
 
-      - name: Install Node Dependencies
-        run: npm ci
-
-      - name: Build Web Application
-        run: npm run build
-
-      - name: Sync Capacitor Android
-        run: npx cap sync android
+      - name: Install Dependencies & Build Web
+        run: |
+          npm install
+          npm run build
+          npx cap copy android
 
       - name: Build Debug APK with Gradle
         run: |
@@ -78,7 +71,7 @@ jobs:
             ### 🛰️ umap 안드로이드 전용 고정밀 위치추적 앱 (APK)
             - **앱 패키지명**: `kr.co.umap.tracker`
             - **고정밀 GPS 4단계 필터링 탑재**:
-              1. 오차 반경 50m 초과 좌표 자동 폐기
+              1. 오차 반경 50m 이하 허용 (50m 초과 좌표 자동 폐기)
               2. 정지 중 5m 미만 센서 노이즈 필터링
               3. 2D 칼만 필터(Kalman Filter) 실시간 궤적 스무딩
               4. 시속 145km/h 초과 비정상 순간 점프 폐기
