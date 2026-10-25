@@ -385,7 +385,7 @@ function Phone({ onSave, onSkip, onBack }: { onSave: (phone: string) => void; on
       <div className="flex-1 px-6">
         <h1 className="mt-6 text-2xl font-black">전화번호</h1>
         <p className="mt-2 text-sm leading-6 text-slate-500">
-          관리자 모드에서 우리 집 반경을 나갈 때 문자 초안을 받을 번호입니다. 다른 사람의 번호로 위치를 조회하지 않고, 문자도 자동으로 보내지 않습니다.
+          가족에게 보여 줄 보호자 연락처입니다. 다른 사람의 번호로 위치를 조회하지 않습니다.
         </p>
         <label className="mt-8 block text-xs font-semibold text-slate-400" htmlFor="umap-phone">
           전화번호

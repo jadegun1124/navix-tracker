@@ -44,14 +44,12 @@ export function appendTrail(points: TrailPoint[] | undefined, point: TrailPoint)
   return list.slice(-300);
 }
 
-export function buildInviteLink(code: string, home?: { label: string; lat: number; lng: number; radiusM: number; alertPhone: string } | null): string {
+export function buildInviteLink(code: string, home?: { label: string; lat: number; lng: number; radiusM: number } | null): string {
   const url = new URL(window.location.href);
   url.searchParams.set('app', '1');
   url.searchParams.set('invite', code);
   url.searchParams.delete('reset');
-  const phone = home?.alertPhone.replace(/[^\d+]/g, '') ?? '';
-  if (home && phone.length >= 8 && Number.isFinite(home.lat) && Number.isFinite(home.lng) && home.radiusM >= 50) {
-    url.searchParams.set('alertPhone', phone);
+  if (home && Number.isFinite(home.lat) && Number.isFinite(home.lng) && home.radiusM >= 50) {
     url.searchParams.set('homeLat', String(home.lat));
     url.searchParams.set('homeLng', String(home.lng));
     url.searchParams.set('homeRadius', String(home.radiusM));

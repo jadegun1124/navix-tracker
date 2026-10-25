@@ -72,13 +72,11 @@ function fresh(stage: Stage = 'splash'): Session {
 function readLeaveAlert(): LeaveAlert | null {
   if (typeof window === 'undefined') return null;
   const query = new URLSearchParams(window.location.search);
-  const phone = (query.get('alertPhone') || '').replace(/[^\d+]/g, '');
   const lat = Number(query.get('homeLat'));
   const lng = Number(query.get('homeLng'));
   const radiusM = Number(query.get('homeRadius'));
-  if (phone.length < 8 || !Number.isFinite(lat) || !Number.isFinite(lng) || !Number.isFinite(radiusM)) return null;
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || !Number.isFinite(radiusM)) return null;
   return {
-    phone,
     label: (query.get('homeLabel') || '우리 집').slice(0, 40),
     lat,
     lng,
@@ -104,10 +102,8 @@ function cleanHome(value: unknown): HomeZone | null {
 function cleanLeaveAlert(value: unknown): LeaveAlert | null {
   if (!value || typeof value !== 'object') return null;
   const alert = value as LeaveAlert;
-  const phone = typeof alert.phone === 'string' ? alert.phone.replace(/[^\d+]/g, '') : '';
-  if (phone.length < 8 || !Number.isFinite(alert.lat) || !Number.isFinite(alert.lng) || !Number.isFinite(alert.radiusM)) return null;
+  if (!Number.isFinite(alert.lat) || !Number.isFinite(alert.lng) || !Number.isFinite(alert.radiusM)) return null;
   return {
-    phone,
     label: alert.label || '우리 집',
     lat: alert.lat,
     lng: alert.lng,
@@ -329,14 +325,12 @@ function reducer(state: Session, action: Action): Session {
     case 'save-home': {
       const created = notice(
         '우리 집을 저장했습니다',
-        action.home.alertPhone
-          ? `반경 ${action.home.radiusM}m입니다. 공유를 허용한 피관리자가 이 원을 나가면 그 폰의 문자 앱이 열립니다. 보내기를 눌러야 도착하고, 자동으로 전송하지 않습니다.`
-          : `반경 ${action.home.radiusM}m입니다. 이 원을 나가면 이 폰의 알림에 기록됩니다.`,
+        `반경 ${action.home.radiusM}m입니다. 위치 공유를 허용한 피관리자가 이 원을 나가면 관리자 화면에 사이렌이 울립니다. 피관리자 폰에서는 울리지 않습니다.`,
       );
       return {
         ...state,
-        home: action.home,
-        phone: action.home.alertPhone || state.phone,
+        home: { ...action.home, alertPhone: '' },
+        phone: state.phone,
         notices: [created, ...state.notices],
         tab: 'map',
       };
@@ -387,7 +381,7 @@ function reducer(state: Session, action: Action): Session {
       if (state.guardians.some((link) => link.code === code)) return state;
       const leaveAlert = state.pendingInvite === code || readInvite() === code ? state.pendingLeaveAlert : null;
       const link: GuardianLink = { id: `g-${Date.now()}`, label, code, share: 'accepted', leaveAlert };
-      const alertNote = leaveAlert ? ` 집을 나가면 ${leaveAlert.radiusM}m 밖에서 문자 앱이 열립니다. 위치 공유를 허용한 뒤에만 동작합니다.` : '';
+      const alertNote = leaveAlert ? ` 위치 공유를 허용한 뒤 집 반경 ${leaveAlert.radiusM}m를 나가면 관리자 화면에 사이렌이 울립니다. 이 폰에서는 울리지 않습니다.` : '';
       return {
         ...state,
         guardians: [...state.guardians, link],
@@ -401,12 +395,12 @@ function reducer(state: Session, action: Action): Session {
       const current = state.guardians.find((link) => link.code === action.code);
       if (!current || current.share === action.share) return state;
       const guardians = state.guardians.map((link) => (link.code === action.code ? { ...link, share: action.share } : link));
-      const smsNote = action.share === 'allowed' && current.leaveAlert
-        ? ` ${current.leaveAlert.label} 반경 ${current.leaveAlert.radiusM}m를 나가면 문자 앱이 열립니다. 보내기를 눌러야 전달됩니다.`
+      const zoneNote = action.share === 'allowed' && current.leaveAlert
+        ? ` ${current.leaveAlert.label} 반경 ${current.leaveAlert.radiusM}m를 나가면 관리자 화면에만 사이렌이 울립니다.`
         : '';
       const body = action.share === 'allowed'
-        ? `${current.label} 님에게 내 위치 공유를 허용했습니다. 끄기 전에는 이 폰에서 공유 상태가 유지됩니다.${smsNote}`
-        : `${current.label} 님에게 보내던 위치 공유를 껐습니다. 이탈 문자도 함께 멈춥니다.`;
+        ? `${current.label} 님에게 내 위치 공유를 허용했습니다. 끄기 전에는 이 폰에서 공유 상태가 유지됩니다.${zoneNote}`
+        : `${current.label} 님에게 보내던 위치 공유를 껐습니다. 집 이탈 알림도 함께 멈춥니다.`;
       return {
         ...state,
         guardians,

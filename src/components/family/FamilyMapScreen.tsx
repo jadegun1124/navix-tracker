@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Bell, Copy, Home, LocateFixed, MapPin, Minus, Plus, Route, UserPlus, X } from 'lucide-react';
 import { buildInviteLink, formatClock, hasLocation, haversineMeters, shouldAlertLeave } from '../../lib/geo';
-import { openSmsComposer } from '../../services/sms';
+import { ackFamilyAlert, isFamilyAlertAcked, publishFamilyAlert, readFamilyAlert, subscribeFamilyAlerts, type FamilyAlert } from '../../services/familyAlert';
+import { sounds } from '../../utils/audio';
 import { DEFAULT_CENTER, type GuardianLink, type HomeZone, type Member } from '../../types/family';
 import { StreetMap, type StreetMapHandle } from './StreetMap';
 import { useFamily } from './session';
@@ -19,6 +20,8 @@ export function FamilyMapScreen() {
   const mapRef = useRef<StreetMapHandle>(null);
   const [sheet, setSheet] = useState<'home' | 'invite' | 'accept' | null>(state.mode === 'managed' && state.pendingInvite ? 'accept' : null);
   const [confirm, setConfirm] = useState<{ kind: 'remove' | 'leave'; id: string; name: string } | null>(null);
+  const [incoming, setIncoming] = useState<FamilyAlert | null>(null);
+  const [sirenOn, setSirenOn] = useState(false);
   const [selectedId, setSelectedId] = useState('self');
   const insideRef = useRef<Record<string, boolean>>({});
   const lastFix = useRef<{ lat: number; lng: number; at: number } | null>(null);
@@ -79,10 +82,12 @@ export function FamilyMapScreen() {
       const inside = haversineMeters(member, state.home) <= state.home.radiusM;
       const previous = insideRef.current[member.id];
       if (previous !== undefined && previous !== inside) {
+        if (member.id === 'self') {
+          insideRef.current[member.id] = inside;
+          continue;
+        }
         const title = inside ? `${member.name} 님이 집에 도착했습니다` : `${member.name} 님이 집 반경 ${state.home.radiusM}m 밖으로 나갔습니다`;
-        const body = inside
-          ? (state.home.label || '우리 집 안심존')
-          : '이 폰의 알림에 기록했습니다. 피관리자가 공유 중이고 문자 받기가 켜져 있으면 그 폰에서 문자 앱이 열립니다. 자동 전송은 하지 않습니다.';
+        const body = state.home.label || '우리 집 안심존';
         familyRef.current.pushNotice(title, body);
         if (notifyOk && 'Notification' in window && Notification.permission === 'granted') {
           try {
@@ -105,21 +110,61 @@ export function FamilyMapScreen() {
       const inside = haversineMeters(self, zone) <= zone.radiusM;
       const previous = insideRef.current[`leave-${link.id}`];
       if (shouldAlertLeave(previous, inside, link.share === 'allowed')) {
-        const title = `${zone.label} 반경 ${zone.radiusM}m 밖으로 나갔습니다`;
-        const body = `${profileName} 님이 ${zone.label} 반경 ${zone.radiusM}m 밖으로 나갔습니다.`;
-        familyRef.current.pushNotice(title, '문자 앱이 열립니다. 보내기를 눌러야 관리자에게 도착합니다. 자동으로 전송하지 않습니다.');
-        if (notifyOk && 'Notification' in window && Notification.permission === 'granted') {
-          try {
-            new Notification(title, { body });
-          } catch {
-            /* 알림 표시만 거절된 경우 */
-          }
-        }
-        openSmsComposer(zone.phone, body);
+        publishFamilyAlert({
+          kind: 'leave',
+          code: link.code,
+          from: profileName,
+          body: `${profileName} 님이 ${zone.label} 반경 ${zone.radiusM}m 밖으로 나갔습니다.`,
+        });
       }
       insideRef.current[`leave-${link.id}`] = inside;
     }
-  }, [notifyOk, self, state.guardians, state.mode, state.profile?.name]);
+  }, [self, state.guardians, state.mode, state.profile?.name]);
+
+  useEffect(() => {
+    if (state.mode !== 'admin') return;
+    const seen = new Set<string>();
+    const handle = (alert: FamilyAlert) => {
+      if (alert.code !== state.inviteCode || seen.has(alert.id) || isFamilyAlertAcked(alert.id)) return;
+      if (Date.now() - alert.at > 3 * 60 * 1000) return;
+      seen.add(alert.id);
+      setIncoming(alert);
+      sounds.startSiren();
+      const title = alert.kind === 'sos' ? 'SOS' : '집 반경을 나갔습니다';
+      familyRef.current.pushNotice(title, alert.body);
+      if (notifyOk && 'Notification' in window && Notification.permission === 'granted') {
+        try {
+          new Notification(title, { body: alert.body });
+        } catch {
+          /* 알림 표시만 거절된 경우 */
+        }
+      }
+    };
+    const latest = readFamilyAlert();
+    if (latest) handle(latest);
+    return subscribeFamilyAlerts(handle);
+  }, [notifyOk, state.inviteCode, state.mode]);
+
+  const stopIncoming = () => {
+    if (incoming) ackFamilyAlert(incoming.id);
+    sounds.stopSiren();
+    setIncoming(null);
+    setSirenOn(false);
+  };
+
+  const triggerSos = () => {
+    const name = state.profile?.name || '가족';
+    const links = state.guardians.filter((link) => link.share !== 'revoked');
+    sounds.startSiren();
+    setSirenOn(true);
+    if (links.length === 0) {
+      family.pushNotice('SOS', '연결된 관리자가 없습니다. 이 폰에서만 사이렌이 울립니다.');
+      return;
+    }
+    for (const link of links) {
+      publishFamilyAlert({ kind: 'sos', code: link.code, from: name, body: `${name} 님이 SOS를 눌렀습니다.` });
+    }
+  };
 
   const selected = state.members.find((member) => member.id === selectedId) ?? state.members[0];
   const visibleMembers = state.members.filter((member) => member.id === 'self' || (state.mode === 'admin' && member.share === 'allowed' && hasLocation(member)));
@@ -199,6 +244,25 @@ export function FamilyMapScreen() {
             </RoundButton>
           </div>
 
+          {state.mode === 'managed' && (
+            <button
+              type="button"
+              onClick={sirenOn ? stopIncoming : triggerSos}
+              className={`absolute bottom-3 left-3 z-30 rounded-full px-5 py-4 text-base font-black text-white shadow-lg ${sirenOn ? 'bg-slate-900' : 'bg-red-600'}`}
+            >
+              {sirenOn ? '사이렌 끄기' : 'SOS'}
+            </button>
+          )}
+          {incoming && state.mode === 'admin' && (
+            <div className="absolute inset-x-4 top-24 z-40 rounded-3xl bg-red-600 px-4 py-4 text-white shadow-xl">
+              <p className="text-lg font-black">{incoming.kind === 'sos' ? 'SOS' : '집 반경 이탈'}</p>
+              <p className="mt-1 text-sm leading-5">{incoming.body}</p>
+              <p className="mt-1 text-xs leading-5 text-red-100">같은 브라우저에서 열린 관리자 화면만 사이렌이 들립니다. 다른 폰으로 울리려면 서버가 필요합니다.</p>
+              <button type="button" onClick={stopIncoming} className="mt-3 w-full rounded-full bg-white py-3 text-sm font-black text-red-600">
+                사이렌 끄기
+              </button>
+            </div>
+          )}
           {state.mode === 'admin' ? (
             <button
               type="button"
@@ -329,7 +393,6 @@ export function FamilyMapScreen() {
         {sheet === 'home' && (
           <HomeSheet
             initial={state.home}
-            phone={state.phone}
             center={homeCenter}
             onPreview={setDraftHome}
             onClose={() => {
@@ -479,7 +542,6 @@ function GuardianCard({
 
 function HomeSheet({
   initial,
-  phone,
   center,
   onPreview,
   onClose,
@@ -487,7 +549,6 @@ function HomeSheet({
   onClear,
 }: {
   initial: HomeZone | null;
-  phone: string;
   center: { lat: number; lng: number };
   onPreview: (home: HomeZone) => void;
   onClose: () => void;
@@ -496,27 +557,25 @@ function HomeSheet({
 }) {
   const [address, setAddress] = useState(initial?.address ?? '');
   const [radius, setRadius] = useState(initial?.radiusM ?? 200);
-  const [alertOn, setAlertOn] = useState(Boolean(initial?.alertPhone));
-  const [alertPhone, setAlertPhone] = useState(initial?.alertPhone || phone);
-  const draft = (nextRadius: number, nextAddress: string, nextPhone: string, sms: boolean): HomeZone => ({
+  const draft = (nextRadius: number, nextAddress: string): HomeZone => ({
     label: nextAddress.trim() || '우리 집',
     address: nextAddress.trim(),
     lat: center.lat,
     lng: center.lng,
     radiusM: nextRadius,
-    alertPhone: sms ? nextPhone.replace(/[^\d+]/g, '').slice(0, 16) : '',
+    alertPhone: '',
   });
-  const publish = (nextRadius: number, nextAddress = address, nextPhone = alertPhone, sms = alertOn) => {
+  const publish = (nextRadius: number, nextAddress = address) => {
     const clamped = Math.min(2000, Math.max(50, Math.round(nextRadius) || 50));
     setRadius(clamped);
-    onPreview(draft(clamped, nextAddress, nextPhone, sms));
+    onPreview(draft(clamped, nextAddress));
   };
   useEffect(() => {
-    onPreview(draft(radius, address, alertPhone, alertOn));
-  }, [address, alertOn, alertPhone, center.lat, center.lng, onPreview, radius]);
+    onPreview(draft(radius, address));
+  }, [address, center.lat, center.lng, onPreview, radius]);
   return (
     <Sheet title="우리 집 반경" onClose={onClose}>
-      <p className="text-sm leading-6 text-slate-500">지도 가운데가 집입니다. 숫자를 바꾸면 파란 원이 바로 커지거나 작아집니다.</p>
+      <p className="text-sm leading-6 text-slate-500">지도 가운데가 집입니다. 숫자를 바꾸면 파란 원이 바로 커지거나 작아집니다. 피관리자가 위치 공유를 허용한 뒤 이 원을 나가면 관리자 화면에 사이렌이 울립니다.</p>
       <label className="mt-4 block text-xs font-bold text-slate-400" htmlFor="home-address">
         주소 또는 이름
       </label>
@@ -525,7 +584,7 @@ function HomeSheet({
         value={address}
         onChange={(event) => {
           setAddress(event.target.value);
-          onPreview(draft(radius, event.target.value, alertPhone, alertOn));
+          onPreview(draft(radius, event.target.value));
         }}
         placeholder="주소 또는 이름"
         className="mt-1 w-full rounded-2xl border border-slate-200 px-3 py-3 outline-none focus:border-[#0084FF]"
@@ -546,35 +605,10 @@ function HomeSheet({
         <span className="text-sm font-bold text-slate-500">미터</span>
       </div>
       <input type="range" min={50} max={2000} step={10} value={radius} onChange={(event) => publish(Number(event.target.value))} className="mt-3 w-full" />
-      <label className="mt-4 flex items-start gap-2 text-sm leading-5 text-slate-600">
-        <input
-          type="checkbox"
-          className="mt-1"
-          checked={alertOn}
-          onChange={(event) => {
-            setAlertOn(event.target.checked);
-            onPreview(draft(radius, address, alertPhone, event.target.checked));
-          }}
-        />
-        이 반경을 나가면 내 번호로 문자 초안을 만듭니다. 피관리자가 위치 공유를 허용한 뒤에만 동작하고, 그 폰의 문자 앱에서 보내기를 눌러야 도착합니다.
-      </label>
-      {alertOn && (
-        <input
-          value={alertPhone}
-          onChange={(event) => {
-            setAlertPhone(event.target.value);
-            onPreview(draft(radius, address, event.target.value, true));
-          }}
-          inputMode="tel"
-          placeholder="받을 번호"
-          className="mt-2 w-full rounded-2xl border border-slate-200 px-3 py-3 outline-none focus:border-[#0084FF]"
-        />
-      )}
       <button
         type="button"
-        disabled={alertOn && alertPhone.replace(/\D/g, '').length < 8}
-        onClick={() => onSave(draft(radius, address, alertPhone, alertOn))}
-        className="mt-4 w-full rounded-full bg-[#ff8a34] py-3.5 font-bold text-white disabled:opacity-40"
+        onClick={() => onSave(draft(radius, address))}
+        className="mt-4 w-full rounded-full bg-[#ff8a34] py-3.5 font-bold text-white"
       >
         저장
       </button>
@@ -647,10 +681,8 @@ function AdminInviteSheet({
       </div>
       {copied && <p className="mt-2 text-center text-xs font-semibold text-[#0084FF]">{copied}</p>}
       <p className="mt-4 text-xs leading-5 text-slate-400">
-        {home?.alertPhone
-          ? `이 링크에는 집 반경 ${home.radiusM}m와 문자 받을 번호가 들어 있습니다. 상대가 위치 공유를 허용한 뒤 그 원을 나가면 문자 앱이 열립니다.`
-          : '집 반경과 문자 받기를 저장한 뒤 링크를 다시 복사하면 이탈 문자가 연결됩니다.'}
-        {' '}상대가 허용하기 전에는 지도에 핀이 없습니다. 두 폰의 좌표를 자동으로 주고받는 서버는 아직 없습니다.
+        {home ? `이 링크에는 집 반경 ${home.radiusM}m가 들어 있습니다. 상대가 위치 공유를 허용한 뒤 그 원을 나가면 관리자 화면에 사이렌이 울립니다.` : '우리 집을 저장한 뒤 링크를 다시 복사하면 집 반경 이탈 사이렌이 연결됩니다.'}
+        {' '}피관리자 폰에서는 이탈 사이렌이 울리지 않습니다. SOS는 양쪽에서 울립니다. 다른 폰까지 전달하려면 서버가 필요합니다.
       </p>
       <button type="button" onClick={onClose} className="mt-4 w-full rounded-full bg-[#0084FF] py-3.5 font-bold text-white">
         완료

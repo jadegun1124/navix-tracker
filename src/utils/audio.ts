@@ -2,6 +2,9 @@
 
 class SoundEffects {
   private ctx: AudioContext | null = null;
+  private sirenOsc: OscillatorNode | null = null;
+  private sirenGain: GainNode | null = null;
+  private sirenTimer: number | null = null;
 
   private getAudioContext(): AudioContext | null {
     if (typeof window === 'undefined') return null;
@@ -76,28 +79,48 @@ class SoundEffects {
 
   // Emergency SOS Alarm sound
   playEmergencySiren() {
+    this.startSiren();
+    window.setTimeout(() => this.stopSiren(), 1600);
+  }
+
+  startSiren() {
     const ctx = this.getAudioContext();
     if (!ctx) return;
+    this.stopSiren();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(680, ctx.currentTime);
+    gain.gain.setValueAtTime(0.55, ctx.currentTime);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    this.sirenOsc = osc;
+    this.sirenGain = gain;
+    let high = false;
+    this.sirenTimer = window.setInterval(() => {
+      const time = ctx.currentTime;
+      high = !high;
+      osc.frequency.cancelScheduledValues(time);
+      osc.frequency.setValueAtTime(high ? 620 : 1380, time);
+      osc.frequency.linearRampToValueAtTime(high ? 1380 : 620, time + 0.42);
+    }, 420);
+  }
 
-    const now = ctx.currentTime;
-    for (let i = 0; i < 3; i++) {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      const start = now + i * 0.25;
-
-      osc.type = 'sawtooth';
-      osc.frequency.setValueAtTime(800, start);
-      osc.frequency.linearRampToValueAtTime(1400, start + 0.12);
-      osc.frequency.linearRampToValueAtTime(800, start + 0.24);
-
-      gain.gain.setValueAtTime(0.25, start);
-      gain.gain.exponentialRampToValueAtTime(0.01, start + 0.24);
-
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start(start);
-      osc.stop(start + 0.24);
+  stopSiren() {
+    if (this.sirenTimer != null) {
+      window.clearInterval(this.sirenTimer);
+      this.sirenTimer = null;
     }
+    try {
+      this.sirenOsc?.stop();
+    } catch {
+      /* 이미 멈춘 발진기 */
+    }
+    this.sirenOsc?.disconnect();
+    this.sirenGain?.disconnect();
+    this.sirenOsc = null;
+    this.sirenGain = null;
   }
 }
 

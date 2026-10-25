@@ -30,7 +30,6 @@ export interface Member {
 }
 
 export interface LeaveAlert {
-  phone: string;
   label: string;
   lat: number;
   lng: number;
