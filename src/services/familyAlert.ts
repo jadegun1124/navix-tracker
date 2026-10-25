@@ -1,3 +1,5 @@
+import { publishAlertRemote } from './familySync';
+
 export type FamilyAlertKind = 'sos' | 'leave';
 
 export interface FamilyAlert {
@@ -19,7 +21,7 @@ function isAlert(value: unknown): value is FamilyAlert {
   return typeof alert.id === 'string' && (alert.kind === 'sos' || alert.kind === 'leave') && typeof alert.code === 'string' && typeof alert.at === 'number';
 }
 
-export function publishFamilyAlert(input: Omit<FamilyAlert, 'id' | 'at'>): FamilyAlert {
+export function publishFamilyAlert(input: Omit<FamilyAlert, 'id' | 'at'>, syncToken?: string | null): FamilyAlert {
   const alert: FamilyAlert = { ...input, id: `a-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, at: Date.now() };
   localStorage.setItem(STORAGE_KEY, JSON.stringify(alert));
   try {
@@ -29,6 +31,7 @@ export function publishFamilyAlert(input: Omit<FamilyAlert, 'id' | 'at'>): Famil
   } catch {
     /* BroadcastChannel 이 없는 웹뷰 */
   }
+  publishAlertRemote(alert, syncToken);
   return alert;
 }
 

@@ -44,11 +44,17 @@ export function appendTrail(points: TrailPoint[] | undefined, point: TrailPoint)
   return list.slice(-300);
 }
 
-export function buildInviteLink(code: string, home?: { label: string; lat: number; lng: number; radiusM: number } | null): string {
+export function buildInviteLink(
+  code: string,
+  home?: { label: string; lat: number; lng: number; radiusM: number } | null,
+  syncToken?: string | null,
+): string {
   const url = new URL(window.location.href);
   url.searchParams.set('app', '1');
   url.searchParams.set('invite', code);
   url.searchParams.delete('reset');
+  if (syncToken) url.searchParams.set('sync', syncToken);
+  else url.searchParams.delete('sync');
   if (home && Number.isFinite(home.lat) && Number.isFinite(home.lng) && home.radiusM >= 50) {
     url.searchParams.set('homeLat', String(home.lat));
     url.searchParams.set('homeLng', String(home.lng));
