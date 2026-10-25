@@ -52,6 +52,7 @@ jobs:
           VITE_GOOGLE_CLIENT_ID: ${{ secrets.VITE_GOOGLE_CLIENT_ID }}
           VITE_VWORLD_API_KEY: ${{ secrets.VITE_VWORLD_API_KEY }}
           VWORLD_API_KEY: ${{ secrets.VWORLD_API_KEY }}
+          VITE_FAMILY_SYNC_URL: ${{ secrets.VITE_FAMILY_SYNC_URL }}
         run: |
           if [ -z "${VITE_VWORLD_API_KEY}" ] && [ -n "${VWORLD_API_KEY}" ]; then
             export VITE_VWORLD_API_KEY="${VWORLD_API_KEY}"
@@ -63,6 +64,11 @@ jobs:
             echo "VWorld key is present for this APK build."
           else
             echo "VWorld key is missing. The APK will show the Korean missing-key notice."
+          fi
+          if [ -n "${VITE_FAMILY_SYNC_URL}" ]; then
+            echo "Family sync URL is present for this APK build."
+          else
+            echo "Family sync URL is missing. Cross-device sharing stays in this browser."
           fi
           npm run build
 

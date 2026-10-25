@@ -42,6 +42,7 @@ export interface GuardianLink {
   code: string;
   share: 'accepted' | 'allowed' | 'revoked';
   leaveAlert: LeaveAlert | null;
+  syncToken?: string;
 }
 
 export interface HomeZone {
@@ -90,6 +91,9 @@ export interface Session {
   mode: AppMode | null;
   guardians: GuardianLink[];
   pendingLeaveAlert: LeaveAlert | null;
+  syncWriteKey: string;
+  syncReadKey: string;
+  pendingSyncToken: string | null;
 }
 
 export const DEFAULT_CENTER = { lat: 37.6366, lng: 127.0672 };

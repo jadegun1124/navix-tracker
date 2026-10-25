@@ -3,6 +3,7 @@ import { Bell, Copy, Home, LocateFixed, MapPin, Minus, Plus, Route, UserPlus, X 
 import { buildInviteLink, formatClock, hasLocation, haversineMeters, shouldAlertLeave } from '../../lib/geo';
 import { ackFamilyAlert, isFamilyAlertAcked, publishFamilyAlert, readFamilyAlert, subscribeFamilyAlerts, type FamilyAlert } from '../../services/familyAlert';
 import { publishSharedPlace, readSharedPlaces, subscribeSharedPlaces } from '../../services/familyShare';
+import { currentSyncPhase, familySyncConfigured, splitSyncToken, startAdminRemoteSync, startSyncMonitor, subscribeSyncPhase, syncTokenFor, type SyncPhase } from '../../services/familySync';
 import { sounds } from '../../utils/audio';
 import { DEFAULT_CENTER, type GuardianLink, type HomeZone, type Member } from '../../types/family';
 import { StreetMap, type StreetMapHandle } from './StreetMap';
@@ -32,29 +33,36 @@ export function FamilyMapScreen() {
   });
   const notifyOk = state.permissions.notifications === 'granted';
   const fittedShare = useRef(false);
+  const [syncPhase, setSyncPhase] = useState<SyncPhase>(() => currentSyncPhase());
+  const sharedTokens = useRef<Record<string, string>>({});
 
-  const sharedCodes = useRef<string[]>([]);
+  useEffect(() => subscribeSyncPhase(setSyncPhase), []);
+  useEffect(() => startSyncMonitor(), []);
   useEffect(() => {
     if (state.mode !== 'managed') return;
-    const name = state.profile?.name || self?.name || '가족';
-    const codes = state.guardians.map((link) => link.code);
-    for (const code of sharedCodes.current) {
-      if (codes.includes(code)) continue;
-      publishSharedPlace({ code, name, lat: null, lng: null, accuracyM: 0, at: Date.now(), sharing: false });
+    const name = (state.profile?.name || self?.name || '가족').trim().slice(0, 80) || '가족';
+    const nextTokens: Record<string, string> = {};
+    for (const link of state.guardians) {
+      if (link.syncToken) nextTokens[link.code] = link.syncToken;
     }
-    sharedCodes.current = codes;
+    for (const [code, token] of Object.entries(sharedTokens.current)) {
+      if (nextTokens[code]) continue;
+      publishSharedPlace({ code, name, lat: null, lng: null, accuracyM: 0, at: Date.now(), sharing: false }, token);
+    }
+    sharedTokens.current = nextTokens;
     const located = self && hasLocation(self) ? self : null;
     for (const link of state.guardians) {
       const sharing = link.share === 'allowed';
+      const remote = link.syncToken && (sharing || link.share === 'revoked') ? link.syncToken : null;
       publishSharedPlace({
         code: link.code,
         name,
         lat: sharing && located ? located.lat : null,
         lng: sharing && located ? located.lng : null,
         accuracyM: located?.accuracyM ?? 0,
-        at: located?.updatedAt || Date.now(),
+        at: sharing ? (located?.updatedAt || Date.now()) : Date.now(),
         sharing,
-      });
+      }, remote);
     }
   }, [self, state.guardians, state.mode, state.profile?.name]);
 
@@ -150,7 +158,7 @@ export function FamilyMapScreen() {
           code: link.code,
           from: profileName,
           body: `${profileName} 님이 ${zone.label} 반경 ${zone.radiusM}m 밖으로 나갔습니다.`,
-        });
+        }, link.syncToken);
       }
       insideRef.current[`leave-${link.id}`] = inside;
     }
@@ -177,8 +185,19 @@ export function FamilyMapScreen() {
     };
     const latest = readFamilyAlert();
     if (latest) handle(latest);
-    return subscribeFamilyAlerts(handle);
-  }, [notifyOk, state.inviteCode, state.mode]);
+    const stopLocal = subscribeFamilyAlerts(handle);
+    const stopRemote = startAdminRemoteSync(
+      { code: state.inviteCode, writeKey: state.syncWriteKey, readKey: state.syncReadKey },
+      {
+        onPlace: (place) => familyRef.current.applySharedPlace(place),
+        onAlert: handle,
+      },
+    );
+    return () => {
+      stopLocal();
+      stopRemote();
+    };
+  }, [notifyOk, state.inviteCode, state.mode, state.syncReadKey, state.syncWriteKey]);
 
   const stopIncoming = () => {
     if (incoming) ackFamilyAlert(incoming.id);
@@ -197,7 +216,7 @@ export function FamilyMapScreen() {
       return;
     }
     for (const link of links) {
-      publishFamilyAlert({ kind: 'sos', code: link.code, from: name, body: `${name} 님이 SOS를 눌렀습니다.` });
+      publishFamilyAlert({ kind: 'sos', code: link.code, from: name, body: `${name} 님이 SOS를 눌렀습니다.` }, link.syncToken);
     }
   };
 
@@ -224,6 +243,9 @@ export function FamilyMapScreen() {
     return () => window.clearInterval(timer);
   }, [shareKey, state.members, state.mode]);
   const trail = selected && showTrail && (selected.id === 'self' || selected.share === 'allowed') ? state.tracks[selected.id] ?? [] : [];
+  const missingSyncKey = state.mode === 'managed' && state.guardians.some((link) => (link.share === 'allowed' || link.share === 'revoked') && !link.syncToken);
+  const syncBanner = syncBannerText(syncPhase, missingSyncKey);
+  const remoteLive = syncPhase === 'live';
 
   const focusMember = (member: Member, fitTrail: boolean) => {
     setSelectedId(member.id);
@@ -254,6 +276,7 @@ export function FamilyMapScreen() {
           <div className="pointer-events-none absolute left-3 top-3 z-30 max-w-[230px] rounded-2xl bg-white/95 px-3 py-1.5 text-[11px] font-semibold leading-4 text-slate-600 shadow">
             VWorld 2D · 국토교통부
             <span className="mt-0.5 block text-slate-500">{state.mode === 'admin' ? '내 위치와 공유를 허용한 아이' : '내 위치만 표시'}</span>
+            <span className="mt-0.5 block text-slate-500">{syncPhaseLine(syncPhase)}</span>
             {showTrail && selected && (
               <span className="mt-0.5 block text-slate-500">
                 {selected.name} 경로 {trail.length}점 · 이 기기에만 저장
@@ -296,6 +319,11 @@ export function FamilyMapScreen() {
             </RoundButton>
           </div>
 
+          {syncBanner && (
+            <p className="absolute inset-x-3 bottom-16 z-30 rounded-2xl bg-amber-50 px-3 py-2 text-[11px] font-semibold leading-4 text-amber-950 shadow">
+              {syncBanner}
+            </p>
+          )}
           {state.mode === 'managed' && (
             <button
               type="button"
@@ -309,7 +337,11 @@ export function FamilyMapScreen() {
             <div className="absolute inset-x-4 top-24 z-40 rounded-3xl bg-red-600 px-4 py-4 text-white shadow-xl">
               <p className="text-lg font-black">{incoming.kind === 'sos' ? 'SOS' : '집 반경 이탈'}</p>
               <p className="mt-1 text-sm leading-5">{incoming.body}</p>
-              <p className="mt-1 text-xs leading-5 text-red-100">같은 브라우저에서 열린 관리자 화면만 사이렌이 들립니다. 다른 폰으로 울리려면 서버가 필요합니다.</p>
+              <p className="mt-1 text-xs leading-5 text-red-100">
+                {remoteLive
+                  ? '다른 폰의 관리자 화면에도 사이렌이 전달됩니다. 피관리자 폰에서는 집 이탈 사이렌이 울리지 않습니다.'
+                  : '위치 서버에 연결되지 않아 이 브라우저의 관리자 화면만 사이렌이 들립니다.'}
+              </p>
               <button type="button" onClick={stopIncoming} className="mt-3 w-full rounded-full bg-white py-3 text-sm font-black text-red-600">
                 사이렌 끄기
               </button>
@@ -372,6 +404,7 @@ export function FamilyMapScreen() {
                 <GuardianCard
                   key={link.id}
                   link={link}
+                  remote={familySyncConfigured() && !!link.syncToken}
                   onAllow={() => family.setGuardianShare(link.code, 'allowed')}
                   onRevoke={() => family.setGuardianShare(link.code, 'revoked')}
                   onLeave={() => setConfirm({ kind: 'leave', id: link.id, name: link.label })}
@@ -470,6 +503,8 @@ export function FamilyMapScreen() {
         {sheet === 'invite' && state.mode === 'admin' && (
           <AdminInviteSheet
             code={state.inviteCode}
+            writeKey={state.syncWriteKey}
+            readKey={state.syncReadKey}
             home={state.home}
             onClose={() => setSheet(null)}
             onCreate={(name) => family.addMember(name, state.inviteCode)}
@@ -478,12 +513,13 @@ export function FamilyMapScreen() {
         {sheet === 'accept' && state.mode === 'managed' && (
           <ManagedInviteSheet
             pending={state.pendingInvite}
+            pendingSyncToken={state.pendingSyncToken}
             guardians={state.guardians}
             onClose={() => {
               family.dismissInvite();
               setSheet(null);
             }}
-            onAccept={(label, code) => family.acceptInvite(label, code)}
+            onAccept={(label, code, syncToken) => family.acceptInvite(label, code, syncToken)}
             onShare={(code, share) => family.setGuardianShare(code, share)}
           />
         )}
@@ -562,16 +598,26 @@ function MemberCard({
 
 function GuardianCard({
   link,
+  remote,
   onAllow,
   onRevoke,
   onLeave,
 }: {
   link: GuardianLink;
+  remote: boolean;
   onAllow: () => void;
   onRevoke: () => void;
   onLeave: () => void;
 }) {
-  const status = link.share === 'allowed' ? '이 폰의 내 위치를 보내는 중' : link.share === 'revoked' ? '위치 공유 꺼짐' : '참여함 · 내 위치는 아직 안 보냄';
+  const status = link.share === 'allowed'
+    ? remote
+      ? '이 폰의 내 위치를 다른 폰으로 보내는 중'
+      : link.syncToken
+        ? '이 폰의 내 위치를 보내는 중'
+        : '동기화 키 없음 · 이 브라우저에서만'
+    : link.share === 'revoked'
+      ? '위치 공유 꺼짐'
+      : '참여함 · 내 위치는 아직 안 보냄';
   return (
     <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-3 py-2">
       <div className="flex items-center gap-3">
@@ -682,11 +728,15 @@ function HomeSheet({
 
 function AdminInviteSheet({
   code,
+  writeKey,
+  readKey,
   home,
   onClose,
   onCreate,
 }: {
   code: string;
+  writeKey: string;
+  readKey: string;
   home: HomeZone | null;
   onClose: () => void;
   onCreate: (name: string) => void;
@@ -694,6 +744,18 @@ function AdminInviteSheet({
   const [name, setName] = useState('');
   const [sentName, setSentName] = useState('');
   const [copied, setCopied] = useState('');
+  const [token, setToken] = useState('');
+  const syncReady = familySyncConfigured();
+
+  useEffect(() => {
+    let cancel = false;
+    syncTokenFor(writeKey, readKey).then((value) => {
+      if (!cancel) setToken(value);
+    });
+    return () => {
+      cancel = true;
+    };
+  }, [readKey, writeKey]);
 
   const copy = async (value: string, label: string) => {
     try {
@@ -707,7 +769,7 @@ function AdminInviteSheet({
   if (!sentName) {
     return (
       <Sheet title="1. 누구를 초대할까요?" onClose={onClose}>
-        <p className="text-sm leading-6 text-slate-500">이름만 정합니다. 위치는 상대 폰에서 초대를 수락하고, 위치 공유를 따로 허용해야 보입니다.</p>
+        <p className="text-sm leading-6 text-slate-500">이름만 정합니다. 위치는 상대 폰에서 초대를 수락하고, 위치 공유를 따로 허용해야 보입니다. 전화번호로는 위치를 찾지 않습니다.</p>
         <input value={name} onChange={(event) => setName(event.target.value)} placeholder="표시 이름" className="mt-4 w-full rounded-2xl border border-slate-200 px-3 py-3 outline-none focus:border-[#0084FF]" />
         <button
           type="button"
@@ -727,21 +789,34 @@ function AdminInviteSheet({
 
   return (
     <Sheet title="2. 코드를 보내세요" onClose={onClose}>
-      <p className="text-sm leading-6 text-slate-500">{sentName} 님 폰에서 피관리자 모드로 이 코드를 입력하거나 링크를 엽니다. 수락 다음에 위치 공유를 따로 묻습니다.</p>
+      <p className="text-sm leading-6 text-slate-500">{sentName} 님 폰에서 피관리자 모드로 링크를 엽니다. 수락 다음에 위치 공유를 따로 묻습니다. 전화번호로는 위치를 찾지 않습니다.</p>
       <p className="mt-4 text-center text-4xl font-black tracking-[0.25em] text-[#0084FF]">{code}</p>
+      <label className="mt-4 block text-xs font-bold text-slate-400" htmlFor="sync-token">
+        동기화 키
+      </label>
+      <input id="sync-token" readOnly value={token} aria-label="동기화 키" className="mt-1 w-full break-all rounded-2xl border border-slate-200 px-3 py-2 text-[11px] text-slate-600" />
       <div className="mt-3 grid grid-cols-2 gap-2">
         <button type="button" onClick={() => copy(code, '코드를 복사했습니다')} className="rounded-full bg-slate-100 py-2 text-xs font-bold">
           <Copy className="mr-1 inline h-3.5 w-3.5" />
           코드 복사
         </button>
-        <button type="button" onClick={() => copy(buildInviteLink(code, home), '링크를 복사했습니다')} className="rounded-full bg-slate-100 py-2 text-xs font-bold">
+        <button type="button" disabled={!token} onClick={() => copy(buildInviteLink(code, home, token), '링크를 복사했습니다')} className="rounded-full bg-slate-100 py-2 text-xs font-bold disabled:opacity-40">
           링크 복사
         </button>
       </div>
+      {token && (
+        <button type="button" onClick={() => copy(token, '동기화 키를 복사했습니다')} className="mt-2 w-full rounded-full bg-slate-100 py-2 text-xs font-bold">
+          동기화 키 복사
+        </button>
+      )}
       {copied && <p className="mt-2 text-center text-xs font-semibold text-[#0084FF]">{copied}</p>}
       <p className="mt-4 text-xs leading-5 text-slate-400">
-        {home ? `이 링크에는 집 반경 ${home.radiusM}m가 들어 있습니다. 상대가 위치 공유를 허용한 뒤 그 원을 나가면 관리자 화면에 사이렌이 울립니다.` : '우리 집을 저장한 뒤 링크를 다시 복사하면 집 반경 이탈 사이렌이 연결됩니다.'}
-        {' '}피관리자 폰에서는 이탈 사이렌이 울리지 않습니다. SOS는 양쪽에서 울립니다. 다른 폰까지 전달하려면 서버가 필요합니다.
+        {syncReady
+          ? '링크를 연 폰에서 위치 공유를 허용하면 이 지도에 핀이 나타나고, 공유를 끄면 핀이 곧 사라집니다. 코드만 입력하면 같은 브라우저에서만 공유됩니다.'
+          : '이 빌드에는 위치 서버 주소가 없습니다. 코드는 같은 브라우저 안에서만 공유됩니다.'}
+        {' '}
+        {home ? `링크에는 집 반경 ${home.radiusM}m가 들어 있습니다. 상대가 위치 공유를 허용한 뒤 그 원을 나가면 관리자 화면에 사이렌이 울립니다.` : '우리 집을 저장한 뒤 링크를 다시 복사하면 집 반경 이탈 사이렌이 연결됩니다.'}
+        {' '}피관리자 폰에서는 이탈 사이렌이 울리지 않습니다. SOS는 양쪽에서 울립니다. 위치를 읽는 키는 관리자 폰에만 있습니다.
       </p>
       <button type="button" onClick={onClose} className="mt-4 w-full rounded-full bg-[#0084FF] py-3.5 font-bold text-white">
         완료
@@ -750,20 +825,38 @@ function AdminInviteSheet({
   );
 }
 
+function parseInviteDraft(value: string): { code: string; syncToken: string | null } {
+  const trimmed = value.trim();
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    try {
+      const url = new URL(trimmed);
+      const code = (url.searchParams.get('invite') || '').replace(/\D/g, '').slice(0, 6);
+      const syncToken = splitSyncToken(url.searchParams.get('sync')) ? url.searchParams.get('sync') : null;
+      return { code, syncToken };
+    } catch {
+      /* 링크가 아니면 코드로 봅니다. */
+    }
+  }
+  return { code: trimmed.replace(/\D/g, '').slice(0, 6), syncToken: null };
+}
+
 function ManagedInviteSheet({
   pending,
+  pendingSyncToken,
   guardians,
   onClose,
   onAccept,
   onShare,
 }: {
   pending: string | null;
+  pendingSyncToken: string | null;
   guardians: GuardianLink[];
   onClose: () => void;
-  onAccept: (label: string, code: string) => void;
+  onAccept: (label: string, code: string, syncToken: string | null) => void;
   onShare: (code: string, share: 'allowed' | 'revoked') => void;
 }) {
   const [code, setCode] = useState(pending ?? '');
+  const [syncToken, setSyncToken] = useState(pendingSyncToken ?? '');
   const [label, setLabel] = useState('');
   const [step, setStep] = useState<'join' | 'share'>('join');
   const [joinedCode, setJoinedCode] = useState('');
@@ -773,14 +866,40 @@ function ManagedInviteSheet({
     <Sheet title={step === 'join' ? '1. 초대를 수락할까요?' : '2. 위치를 공유할까요?'} onClose={onClose}>
       {step === 'join' ? (
         <>
-          <p className="text-sm leading-6 text-slate-500">관리자에게 받은 코드를 입력합니다. 수락만으로는 위치가 나가지 않습니다.</p>
+          <p className="text-sm leading-6 text-slate-500">관리자에게 받은 코드를 입력하거나 초대 링크를 붙여 넣습니다. 수락만으로는 위치가 나가지 않습니다. 전화번호는 쓰지 않습니다.</p>
           <input value={label} onChange={(event) => setLabel(event.target.value)} placeholder="관리자 이름 (예: 엄마)" className="mt-4 w-full rounded-2xl border border-slate-200 px-3 py-3 outline-none focus:border-[#0084FF]" />
-          <input value={code} onChange={(event) => setCode(event.target.value.replace(/\D/g, '').slice(0, 6))} placeholder="초대 코드" inputMode="numeric" className="mt-2 w-full rounded-2xl border border-slate-200 px-3 py-3 outline-none focus:border-[#0084FF]" />
+          <input
+            value={code}
+            onChange={(event) => {
+              const next = event.target.value;
+              if (next.trim().startsWith('http://') || next.trim().startsWith('https://')) {
+                const parsed = parseInviteDraft(next);
+                setCode(parsed.code);
+                if (parsed.syncToken) setSyncToken(parsed.syncToken);
+                return;
+              }
+              setCode(next.replace(/\D/g, '').slice(0, 6));
+            }}
+            placeholder="초대 코드 또는 링크"
+            inputMode="text"
+            className="mt-2 w-full rounded-2xl border border-slate-200 px-3 py-3 outline-none focus:border-[#0084FF]"
+          />
+          <label className="mt-3 block text-xs font-bold text-slate-400" htmlFor="managed-sync-token">
+            동기화 키 (다른 폰과 나눌 때)
+          </label>
+          <input
+            id="managed-sync-token"
+            value={syncToken}
+            onChange={(event) => setSyncToken(event.target.value.trim())}
+            placeholder="링크를 열면 채워집니다"
+            className="mt-1 w-full rounded-2xl border border-slate-200 px-3 py-3 text-sm outline-none focus:border-[#0084FF]"
+          />
           <button
             type="button"
             disabled={code.length < 4}
             onClick={() => {
-              onAccept(label, code);
+              const token = splitSyncToken(syncToken) ? syncToken : null;
+              onAccept(label, code, token);
               setJoinedCode(code);
               setStep('share');
             }}
@@ -792,7 +911,7 @@ function ManagedInviteSheet({
       ) : (
         <>
           <p className="text-sm leading-6 text-slate-500">
-            {label.trim() || '관리자'} 님에게 내 위치를 보낼까요? 허용하기 전에는 상대 지도에 표시되지 않습니다. 메뉴의 가족 목록에서 언제든 끌 수 있습니다.
+            {label.trim() || '관리자'} 님에게 내 위치를 보낼까요? 허용하기 전에는 상대 지도에 표시되지 않습니다. 가족 목록에서 언제든 끌 수 있습니다.
           </p>
           <button
             type="button"
@@ -897,4 +1016,18 @@ function locationLabel(value: string): string {
   if (value === 'always') return '항상 허용(선호 저장)';
   if (value === 'denied') return '허용 안 함';
   return '아직 없음';
+}
+
+function syncBannerText(phase: SyncPhase, missingSyncKey: boolean): string | null {
+  if (missingSyncKey) return '이 초대에 동기화 키가 없어 다른 폰으로 위치가 가지 않습니다. 관리자가 보낸 링크를 다시 열어 주세요. 이 브라우저 안에서는 그대로 공유됩니다.';
+  if (phase === 'off') return '위치 서버가 설정되지 않았습니다. 이 브라우저 안에서만 공유됩니다.';
+  if (phase === 'down') return '위치 서버에 연결하지 못했습니다. 이 브라우저 안에서만 공유됩니다.';
+  if (phase === 'rejected') return '동기화 키가 맞지 않습니다. 초대 링크를 다시 확인해 주세요. 이 브라우저 안에서만 공유됩니다.';
+  return null;
+}
+
+function syncPhaseLine(phase: SyncPhase): string {
+  if (phase === 'live') return '다른 폰과 위치를 나누는 중';
+  if (phase === 'connecting') return '위치 서버에 연결하는 중';
+  return '이 브라우저 안에서만 공유';
 }

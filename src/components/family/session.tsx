@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useReducer } from 'react';
 import { appendTrail, hasLocation } from '../../lib/geo';
 import type { SharedPlace } from '../../services/familyShare';
+import { createKeyPart, isKeyPart, splitSyncToken } from '../../services/familySync';
 import {
   DEFAULT_CENTER,
   REQUIRED_TERMS,
@@ -74,6 +75,21 @@ function readInvite(): string | null {
   return new URLSearchParams(window.location.search).get('invite');
 }
 
+function cleanSyncToken(value: unknown): string | null {
+  return typeof value === 'string' && splitSyncToken(value) ? value : null;
+}
+
+function takeSyncTokenFromUrl(): string | null {
+  if (typeof window === 'undefined') return null;
+  const params = new URLSearchParams(window.location.search);
+  if (!params.has('sync')) return null;
+  const token = cleanSyncToken(params.get('sync'));
+  const url = new URL(window.location.href);
+  url.searchParams.delete('sync');
+  window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+  return token;
+}
+
 function shouldReset(): boolean {
   if (typeof window === 'undefined') return false;
   return new URLSearchParams(window.location.search).get('reset') === '1';
@@ -97,6 +113,9 @@ function fresh(stage: Stage = 'splash'): Session {
     mode: null,
     guardians: [],
     pendingLeaveAlert: readLeaveAlert(),
+    syncWriteKey: createKeyPart(),
+    syncReadKey: createKeyPart(),
+    pendingSyncToken: null,
   };
 }
 
@@ -195,12 +214,14 @@ function cleanGuardians(value: unknown): GuardianLink[] {
     const code = typeof link.code === 'string' ? link.code.replace(/\D/g, '').slice(0, 6) : '';
     if (typeof link.id !== 'string' || code.length < 4) continue;
     const share = link.share === 'allowed' || link.share === 'revoked' ? link.share : 'accepted';
+    const syncToken = cleanSyncToken(link.syncToken);
     links.push({
       id: link.id,
       label: (link.label || '관리자').slice(0, 20),
       code,
       share,
       leaveAlert: cleanLeaveAlert(link.leaveAlert),
+      ...(syncToken ? { syncToken } : {}),
     });
   }
   return links;
@@ -242,21 +263,23 @@ function isSession(value: unknown): value is Session {
 }
 
 function load(): Session {
+  const pendingSyncToken = takeSyncTokenFromUrl();
   if (shouldReset()) {
     clearStoredSessions();
     const url = new URL(window.location.href);
     url.searchParams.delete('reset');
     window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
-    return fresh();
+    return { ...fresh(), pendingSyncToken };
   }
   try {
     const raw = newestStoredRaw();
-    if (!raw) return fresh();
+    if (!raw) return { ...fresh(), pendingSyncToken };
     const parsed: unknown = JSON.parse(raw);
-    if (!isSession(parsed)) return fresh();
+    if (!isSession(parsed)) return { ...fresh(), pendingSyncToken };
     const invite = readInvite();
+    const base = fresh();
     const session: Session = {
-      ...fresh(),
+      ...base,
       ...parsed,
       terms: { ...EMPTY_TERMS, ...parsed.terms },
       permissions: { ...EMPTY_PERMISSIONS, ...parsed.permissions },
@@ -266,11 +289,14 @@ function load(): Session {
       mode: parsed.mode === 'admin' || parsed.mode === 'managed' ? parsed.mode : null,
       guardians: cleanGuardians(parsed.guardians),
       pendingLeaveAlert: readLeaveAlert() || cleanLeaveAlert(parsed.pendingLeaveAlert),
+      syncWriteKey: isKeyPart(parsed.syncWriteKey) ? parsed.syncWriteKey : base.syncWriteKey,
+      syncReadKey: isKeyPart(parsed.syncReadKey) ? parsed.syncReadKey : base.syncReadKey,
+      pendingSyncToken: pendingSyncToken || cleanSyncToken(parsed.pendingSyncToken),
     };
     if (session.profile && session.permissions.completed) session.stage = session.mode ? 'map' : 'mode';
     return withoutDemo(session);
   } catch {
-    return fresh();
+    return { ...fresh(), pendingSyncToken };
   }
 }
 
@@ -294,7 +320,7 @@ type Action =
   | { type: 'clear-home' }
   | { type: 'add-member'; name: string; code: string }
   | { type: 'remove-member'; id: string }
-  | { type: 'accept-invite'; label: string; code: string }
+  | { type: 'accept-invite'; label: string; code: string; syncToken: string | null }
   | { type: 'set-guardian-share'; code: string; share: 'allowed' | 'revoked' }
   | { type: 'leave-guardian'; id: string }
   | { type: 'dismiss-invite' }
@@ -415,13 +441,15 @@ function reducer(state: Session, action: Action): Session {
       if (code.length < 4) return state;
       if (state.guardians.some((link) => link.code === code)) return state;
       const leaveAlert = state.pendingInvite === code || readInvite() === code ? state.pendingLeaveAlert : null;
-      const link: GuardianLink = { id: `g-${Date.now()}`, label, code, share: 'accepted', leaveAlert };
+      const syncToken = cleanSyncToken(action.syncToken) || (state.pendingInvite === code ? cleanSyncToken(state.pendingSyncToken) : null);
+      const link: GuardianLink = { id: `g-${Date.now()}`, label, code, share: 'accepted', leaveAlert, ...(syncToken ? { syncToken } : {}) };
       const alertNote = leaveAlert ? ` 위치 공유를 허용한 뒤 집 반경 ${leaveAlert.radiusM}m를 나가면 관리자 화면에 사이렌이 울립니다. 이 폰에서는 울리지 않습니다.` : '';
       return {
         ...state,
         guardians: [...state.guardians, link],
         pendingInvite: null,
         pendingLeaveAlert: null,
+        pendingSyncToken: null,
         notices: [notice('초대를 수락했습니다', `${label} 님의 가족으로 참여했습니다. 위치를 보내려면 다음 화면에서 따로 허용하세요.${alertNote}`), ...state.notices],
       };
     }
@@ -554,7 +582,7 @@ interface FamilyApi {
   clearHome: () => void;
   addMember: (name: string, code: string) => void;
   removeMember: (id: string) => void;
-  acceptInvite: (label: string, code: string) => void;
+  acceptInvite: (label: string, code: string, syncToken?: string | null) => void;
   setGuardianShare: (code: string, share: 'allowed' | 'revoked') => void;
   leaveGuardian: (id: string) => void;
   dismissInvite: () => void;
@@ -607,7 +635,7 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
     clearHome: () => dispatch({ type: 'clear-home' }),
     addMember: (name, code) => dispatch({ type: 'add-member', name, code }),
     removeMember: (id) => dispatch({ type: 'remove-member', id }),
-    acceptInvite: (label, code) => dispatch({ type: 'accept-invite', label, code }),
+    acceptInvite: (label, code, syncToken) => dispatch({ type: 'accept-invite', label, code, syncToken: syncToken ?? null }),
     setGuardianShare: (code, share) => dispatch({ type: 'set-guardian-share', code, share }),
     leaveGuardian: (id) => dispatch({ type: 'leave-guardian', id }),
     dismissInvite: () => dispatch({ type: 'dismiss-invite' }),

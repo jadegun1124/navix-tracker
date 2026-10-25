@@ -1,3 +1,5 @@
+import { publishPlaceRemote } from './familySync';
+
 export interface SharedPlace {
   code: string;
   name: string;
@@ -35,27 +37,28 @@ export function readSharedPlaces(): SharedPlace[] {
   return Object.values(readMap());
 }
 
-export function publishSharedPlace(place: SharedPlace) {
+export function publishSharedPlace(place: SharedPlace, syncToken?: string | null) {
   const places = readMap();
   const current = places[place.code];
-  if (
+  const same =
     current &&
     current.sharing === place.sharing &&
     current.lat === place.lat &&
     current.lng === place.lng &&
     current.name === place.name &&
-    place.at - current.at < 15000
-  ) {
-    return;
-  }
-  places[place.code] = place;
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(places));
-  try {
-    const channel = new BroadcastChannel(CHANNEL);
-    channel.postMessage(place);
-    channel.close();
-  } catch {
-    /* BroadcastChannel 이 없는 웹뷰 */
+    current.accuracyM === place.accuracyM &&
+    place.at - current.at < 7000;
+  if (!same) {
+    places[place.code] = place;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(places));
+    try {
+      const channel = new BroadcastChannel(CHANNEL);
+      channel.postMessage(place);
+      channel.close();
+    } catch {
+      /* BroadcastChannel 이 없는 웹뷰 */
+    }
+    publishPlaceRemote(place, syncToken);
   }
 }
 
