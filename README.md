@@ -41,7 +41,7 @@ Google Play, App Store, TestFlight에는 올리지 않았습니다. iOS는 아�
 
 ## Google 로그인과 지도
 
-키는 환경 변수로만 넣습니다. `.env.example` 을 복사해 `.env.local` 을 만들고, GitHub Actions에는 같은 이름의 secret을 등록합니다.
+키는 환경 변수로만 넣습니다. `.env.example` 을 복사해 `.env.local` 을 만듭니다. 값은 저장소에 커밋하지 않습니다.
 
 ```bash
 VITE_GOOGLE_CLIENT_ID=
@@ -52,11 +52,13 @@ VITE_VWORLD_API_KEY=
 - 로그인: [Google Identity Services](https://developers.google.com/identity/gsi/web/guides/overview) 웹 클라이언트. 승인된 자바스크립트 원본에 사이트 주소와 Capacitor의 `https://localhost` 를 넣습니다.
 - 지도: 국토교통부 [VWorld](https://www.vworld.kr/) 2D Base 한 종류입니다. 위성, CARTO, OpenStreetMap 전환은 없습니다.
   - `https://api.vworld.kr/req/wmts/1.0.0/{API_KEY}/Base/{z}/{y}/{x}.png`
-  - 키는 `VITE_VWORLD_API_KEY` 또는 `VWORLD_API_KEY`. 저장소에 넣지 않습니다. 인증키 도메인에 GitHub Pages와 `https://localhost`를 등록합니다.
-  - 키가 없거나 타일이 실패하면 지도 자리에 한국어 안내를 보여 줍니다.
+  - 키는 `import.meta.env.VITE_VWORLD_API_KEY`만 읽습니다. 인증키 도메인에 GitHub Pages와 `https://localhost`를 등록합니다.
+  - 키가 없거나 타일이 실패하면 지도 자리에 한국어 안내를 보여 줍니다. 다른 바탕 지도로 바꾸지 않습니다.
 - 이동 경로: 구성원을 고르면 이 기기에 쌓인 궤적만 표시됩니다. 내 위치는 앱이 열려 있는 동안 약 12m 이상 움직이면 이 브라우저의 `localStorage`에 최대 300점까지 쌓입니다. 샘플 사람이나 예시 좌표는 없습니다. 초대한 가족의 위치는 그 기기가 공유를 허용한 뒤에만 표시됩니다. 서버로 보내지 않습니다.
 
-클라이언트 ID가 없으면 로그인은 미리보기로 이어집니다. 미리보기라고 화면에 적습니다. `VITE_GOOGLE_MAPS_API_KEY`는 가족 지도에서 쓰지 않습니다. `VITE_VWORLD_API_KEY`가 GitHub Actions secret에 없으면 빌드는 되고, 배포된 지도는 키 없음 안내를 보여 줍니다.
+클라이언트 ID가 없으면 로그인은 미리보기로 이어집니다. 미리보기라고 화면에 적습니다. `VITE_GOOGLE_MAPS_API_KEY`는 가족 지도에서 쓰지 않습니다.
+
+`VITE_VWORLD_API_KEY` GitHub Actions secret은 아직 없습니다. 소유자가 저장소 Settings → Secrets and variables → Actions에 같은 이름으로 한 번 추가하면 Pages와 APK 빌드에 들어갑니다. secret이 비어 있어도 워크플로는 실패하지 않고, 배포된 지도는 키 없음 안내를 보여 줍니다.
 
 ## 아이콘
 

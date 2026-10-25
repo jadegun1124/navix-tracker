@@ -1,7 +1,5 @@
 export function vworldApiKey(): string {
-  const fromVite = import.meta.env.VITE_VWORLD_API_KEY ?? '';
-  const fromPlain = import.meta.env.VWORLD_API_KEY ?? '';
-  return (fromVite || fromPlain).trim();
+  return (import.meta.env.VITE_VWORLD_API_KEY ?? '').trim();
 }
 
 export function vworldBaseTileUrl(key: string): string {

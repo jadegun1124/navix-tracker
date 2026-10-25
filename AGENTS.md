@@ -4,7 +4,7 @@
 
 - React 19, TypeScript, Vite, Tailwind CSS v4
 - 웹: 회사 홈페이지. 가족 지도는 `?app=1` 또는 Capacitor 네이티브에서만 연다.
-- 지도: Leaflet. 바탕은 국토교통부 VWorld 2D Base 한 종류. 키는 `VITE_VWORLD_API_KEY`(또는 `VWORLD_API_KEY`). 키가 없으면 한국어 안내를 보여 주고 타일을 요청하지 않는다. 위성·CARTO·OSM 전환은 없다. 이동 경로는 `localStorage` 세션에 두고 선택한 구성원만 선으로 보여 준다. 샘플 사람·예시 궤적은 넣지 않는다.
+- 지도: Leaflet. 바탕은 국토교통부 VWorld 2D Base 한 종류. 키는 `import.meta.env.VITE_VWORLD_API_KEY`만 읽는다. 키가 없으면 한국어 안내를 보여 주고 타일을 요청하지 않는다. 위성·CARTO·OSM 전환은 없다. Actions secret `VITE_VWORLD_API_KEY`는 아직 없고, 소유자가 한 번 추가한다. 없어도 빌드는 통과한다. 이동 경로는 `localStorage` 세션에 두고 선택한 구성원만 선으로 보여 준다. 샘플 사람·예시 궤적은 넣지 않는다.
 - 로그인: Google Identity Services. 키는 `VITE_GOOGLE_CLIENT_ID`.
 - 앱 셸: Capacitor Android. 표시 이름 Umap. 패키지 `kr.co.umap.tracker`.
 - 아이콘: `python3 scripts/render-umap-icon.py` 가 파란 타일, 흰 핀, 빨간 하트 마크를 런처와 스플래시에 넣는다.
