@@ -24,9 +24,8 @@ export const StreetMap = forwardRef<StreetMapHandle, {
   trail: TrackPoint[];
   trailColor: string;
   selectedId?: string;
-  onTileProblem: () => void;
   onSelect: (id: string) => void;
-}>(function StreetMap({ center, zoom, members, home, trail, trailColor, selectedId, onTileProblem, onSelect }, ref) {
+}>(function StreetMap({ center, zoom, members, home, trail, trailColor, selectedId, onSelect }, ref) {
   const nodeRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
   const layersRef = useRef<L.LayerGroup | null>(null);
@@ -35,10 +34,8 @@ export const StreetMap = forwardRef<StreetMapHandle, {
   const key = vworldApiKey();
   const initialRef = useRef({ center, zoom });
   const onSelectRef = useRef(onSelect);
-  const onTileProblemRef = useRef(onTileProblem);
   useEffect(() => {
     onSelectRef.current = onSelect;
-    onTileProblemRef.current = onTileProblem;
   });
 
   useImperativeHandle(ref, () => ({
@@ -74,6 +71,7 @@ export const StreetMap = forwardRef<StreetMapHandle, {
       zoom: start.zoom,
       zoomControl: false,
       attributionControl: true,
+      minZoom: 6,
       maxZoom: 19,
     });
     map.attributionControl.setPosition('bottomleft');
@@ -100,27 +98,23 @@ export const StreetMap = forwardRef<StreetMapHandle, {
     if (!ready || !map || !key) return;
     const tiles = L.tileLayer(vworldBaseTileUrl(key), {
       attribution: VWORLD_ATTRIBUTION,
+      minZoom: 6,
       maxZoom: 19,
+      // 브이월드 Base는 한국 영역만 제공한다. 영역 밖 404가 키 오류로 남지 않게 한다.
+      bounds: L.latLngBounds([32.8, 124.0], [39.8, 132.1]),
     });
     tiles.addTo(map);
     let loads = 0;
-    let reported = false;
-    const report = (message: string) => {
-      if (reported || loads > 0) return;
-      reported = true;
-      setTileNote(message);
-      onTileProblemRef.current();
+    const report = () => {
+      if (loads > 0) return;
+      const origin = window.location.origin;
+      setTileNote(`브이월드 지도를 불러오지 못했습니다. 키는 이 빌드에 있습니다. 인증키 도메인에 ${origin} 을 등록해 주세요.`);
     };
     tiles.on('tileload', () => {
       loads += 1;
       setTileNote('');
     });
-    tiles.on('tileerror', () => {
-      if (loads === 0) report('브이월드 지도를 불러오지 못했습니다. 키와 허용 도메인을 확인해 주세요.');
-    });
-    const watchdog = window.setTimeout(() => {
-      if (loads === 0) report('브이월드 지도를 불러오지 못했습니다. 키와 허용 도메인을 확인해 주세요.');
-    }, 8000);
+    const watchdog = window.setTimeout(report, 8000);
     return () => {
       window.clearTimeout(watchdog);
       tiles.off();
@@ -208,7 +202,7 @@ export const StreetMap = forwardRef<StreetMapHandle, {
       {(missingKey || tileNote) && (
         <div className="pointer-events-none absolute inset-x-4 top-16 z-20 rounded-2xl bg-white/95 px-4 py-3 text-center text-sm font-semibold leading-6 text-slate-700 shadow">
           {missingKey
-            ? 'VWorld 지도 키가 없습니다. VITE_VWORLD_API_KEY를 넣으면 국토교통부 2D 기본도가 표시됩니다.'
+            ? 'VWorld 지도 키가 이 빌드에 없습니다. APK와 Pages는 빌드 시 VITE_VWORLD_API_KEY가 있어야 타일을 받습니다.'
             : tileNote}
         </div>
       )}

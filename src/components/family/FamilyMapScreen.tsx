@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Bell, Copy, Home, LocateFixed, MapPin, Minus, Plus, Route, UserPlus, X } from 'lucide-react';
 import { buildInviteLink, formatClock, hasLocation, haversineMeters, shouldAlertLeave } from '../../lib/geo';
 import { ackFamilyAlert, isFamilyAlertAcked, publishFamilyAlert, readFamilyAlert, subscribeFamilyAlerts, type FamilyAlert } from '../../services/familyAlert';
+import { publishSharedPlace, readSharedPlaces, subscribeSharedPlaces } from '../../services/familyShare';
 import { sounds } from '../../utils/audio';
 import { DEFAULT_CENTER, type GuardianLink, type HomeZone, type Member } from '../../types/family';
 import { StreetMap, type StreetMapHandle } from './StreetMap';
@@ -14,7 +15,6 @@ export function FamilyMapScreen() {
   const center = DEFAULT_CENTER;
   const [showZone, setShowZone] = useState(true);
   const [showTrail, setShowTrail] = useState(true);
-  const [mapNote, setMapNote] = useState('');
   const [homeCenter, setHomeCenter] = useState(DEFAULT_CENTER);
   const [draftHome, setDraftHome] = useState<HomeZone | null>(null);
   const mapRef = useRef<StreetMapHandle>(null);
@@ -31,6 +31,41 @@ export function FamilyMapScreen() {
     familyRef.current = family;
   });
   const notifyOk = state.permissions.notifications === 'granted';
+  const fittedShare = useRef(false);
+
+  const sharedCodes = useRef<string[]>([]);
+  useEffect(() => {
+    if (state.mode !== 'managed') return;
+    const name = state.profile?.name || self?.name || '가족';
+    const codes = state.guardians.map((link) => link.code);
+    for (const code of sharedCodes.current) {
+      if (codes.includes(code)) continue;
+      publishSharedPlace({ code, name, lat: null, lng: null, accuracyM: 0, at: Date.now(), sharing: false });
+    }
+    sharedCodes.current = codes;
+    const located = self && hasLocation(self) ? self : null;
+    for (const link of state.guardians) {
+      const sharing = link.share === 'allowed';
+      publishSharedPlace({
+        code: link.code,
+        name,
+        lat: sharing && located ? located.lat : null,
+        lng: sharing && located ? located.lng : null,
+        accuracyM: located?.accuracyM ?? 0,
+        at: located?.updatedAt || Date.now(),
+        sharing,
+      });
+    }
+  }, [self, state.guardians, state.mode, state.profile?.name]);
+
+  useEffect(() => {
+    if (state.mode !== 'admin') return;
+    const apply = (place: Parameters<typeof familyRef.current.applySharedPlace>[0]) => {
+      familyRef.current.applySharedPlace(place);
+    };
+    for (const place of readSharedPlaces()) apply(place);
+    return subscribeSharedPlaces(apply);
+  }, [state.mode]);
 
   useEffect(() => {
     if (state.permissions.locationMode === 'denied' || state.permissions.locationMode === 'unknown') return;
@@ -166,8 +201,28 @@ export function FamilyMapScreen() {
     }
   };
 
-  const selected = state.members.find((member) => member.id === selectedId) ?? state.members[0];
-  const visibleMembers = state.members.filter((member) => member.id === 'self' || (state.mode === 'admin' && member.share === 'allowed' && hasLocation(member)));
+  const selected = state.members.find((member) => member.id === selectedId) ?? state.members.find((member) => member.id === 'self');
+  const visibleMembers = state.members.filter((member) => {
+    if (member.role === 'guardian') return false;
+    if (member.id === 'self') return true;
+    return state.mode === 'admin' && member.share === 'allowed' && hasLocation(member);
+  });
+  const shareKey = visibleMembers
+    .filter(hasLocation)
+    .map((member) => `${member.id}:${member.lat.toFixed(5)},${member.lng.toFixed(5)}`)
+    .join('|');
+  useEffect(() => {
+    if (state.mode !== 'admin' || fittedShare.current) return;
+    const points = state.members.filter((member) => member.role !== 'guardian' && hasLocation(member) && (member.id === 'self' || member.share === 'allowed'));
+    if (points.length < 2) return;
+    const timer = window.setInterval(() => {
+      if (!mapRef.current) return;
+      fittedShare.current = true;
+      mapRef.current.fit(points.flatMap((member) => (hasLocation(member) ? [{ lat: member.lat, lng: member.lng }] : [])));
+      window.clearInterval(timer);
+    }, 200);
+    return () => window.clearInterval(timer);
+  }, [shareKey, state.members, state.mode]);
   const trail = selected && showTrail && (selected.id === 'self' || selected.share === 'allowed') ? state.tracks[selected.id] ?? [] : [];
 
   const focusMember = (member: Member, fitTrail: boolean) => {
@@ -190,9 +245,6 @@ export function FamilyMapScreen() {
             trail={trail}
             trailColor="#0084FF"
             selectedId={selected?.id}
-            onTileProblem={() => {
-              setMapNote('브이월드 지도를 불러오지 못했습니다. 키와 허용 도메인을 확인해 주세요.');
-            }}
             onSelect={(id) => {
               const member = state.members.find((item) => item.id === id);
               if (member) focusMember(member, true);
@@ -201,7 +253,7 @@ export function FamilyMapScreen() {
 
           <div className="pointer-events-none absolute left-3 top-3 z-30 max-w-[230px] rounded-2xl bg-white/95 px-3 py-1.5 text-[11px] font-semibold leading-4 text-slate-600 shadow">
             VWorld 2D · 국토교통부
-            {mapNote && <span className="mt-0.5 block text-amber-700">{mapNote}</span>}
+            <span className="mt-0.5 block text-slate-500">{state.mode === 'admin' ? '내 위치와 공유를 허용한 아이' : '내 위치만 표시'}</span>
             {showTrail && selected && (
               <span className="mt-0.5 block text-slate-500">
                 {selected.name} 경로 {trail.length}점 · 이 기기에만 저장
@@ -303,7 +355,7 @@ export function FamilyMapScreen() {
             </div>
             {state.profile?.preview && <p className="mb-2 text-xs font-semibold text-amber-600">미리보기 세션 · Google 계정으로 연결되지 않았습니다.</p>}
             <div className="max-h-48 space-y-2 overflow-y-auto pb-2">
-              {(state.mode === 'managed' ? state.members.filter((member) => member.id === 'self') : state.members).map((member) => (
+              {(state.mode === 'managed' ? state.members.filter((member) => member.id === 'self') : state.members.filter((member) => member.role !== 'guardian')).map((member) => (
                 <MemberCard
                   key={member.id}
                   member={member}
@@ -313,6 +365,9 @@ export function FamilyMapScreen() {
                   onRemove={state.mode === 'admin' && member.id !== 'self' ? () => setConfirm({ kind: 'remove', id: member.id, name: member.name }) : undefined}
                 />
               ))}
+              {state.mode === 'managed' && state.guardians.length > 0 && (
+                <p className="px-1 pt-1 text-[11px] font-bold text-slate-400">관리자에게 내 위치 보내기 · 관리자 위치는 지도에 없습니다</p>
+              )}
               {state.mode === 'managed' && state.guardians.map((link) => (
                 <GuardianCard
                   key={link.id}
@@ -454,7 +509,11 @@ export function FamilyMapScreen() {
 
 function memberStatus(member: Member, home: HomeZone | null): string {
   if (member.id !== 'self') {
-    if (member.share === 'allowed') return '공유 허용 · 좌표는 아직 없음';
+    if (member.share === 'allowed' && hasLocation(member)) {
+      const place = home && haversineMeters(member, home) <= home.radiusM ? '우리 집 안' : home ? '집 밖' : '위치 공유 중';
+      return `${place} · ±${Math.round(member.accuracyM)}m`;
+    }
+    if (member.share === 'allowed') return '공유 허용 · 이 화면으로 위치 오는 중';
     if (member.share === 'revoked') return '위치 공유 꺼짐';
     if (member.share === 'accepted') return '수락함 · 위치 공유 전';
     return '초대 보냄 · 위치 공유 전';
@@ -512,11 +571,11 @@ function GuardianCard({
   onRevoke: () => void;
   onLeave: () => void;
 }) {
-  const status = link.share === 'allowed' ? '내 위치 공유 중' : link.share === 'revoked' ? '위치 공유 꺼짐' : '참여함 · 위치는 아직 안 보냄';
+  const status = link.share === 'allowed' ? '이 폰의 내 위치를 보내는 중' : link.share === 'revoked' ? '위치 공유 꺼짐' : '참여함 · 내 위치는 아직 안 보냄';
   return (
-    <div className="rounded-2xl bg-slate-50 px-3 py-2">
+    <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-3 py-2">
       <div className="flex items-center gap-3">
-        <span className="flex h-10 w-10 items-center justify-center rounded-full bg-[#ff8a34] font-black text-white">{link.label.slice(0, 1)}</span>
+        <span className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-200 text-xs font-black text-slate-600">공유</span>
         <span className="min-w-0 flex-1">
           <span className="block font-bold">{link.label}</span>
           <span className="block text-xs text-slate-500">{status} · 코드 {link.code}</span>

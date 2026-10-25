@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useReducer } from 'react';
 import { appendTrail, hasLocation } from '../../lib/geo';
+import type { SharedPlace } from '../../services/familyShare';
 import {
   DEFAULT_CENTER,
   REQUIRED_TERMS,
@@ -19,6 +20,36 @@ import {
 } from '../../types/family';
 
 const STORAGE_KEY = 'umap_family_v1';
+const SESSION_KEYS = [STORAGE_KEY, `${STORAGE_KEY}:admin`, `${STORAGE_KEY}:managed`] as const;
+
+function storageKey(mode: AppMode | null): string {
+  return mode ? `${STORAGE_KEY}:${mode}` : STORAGE_KEY;
+}
+
+function clearStoredSessions() {
+  sessionStorage.removeItem(STORAGE_KEY);
+  for (const key of SESSION_KEYS) {
+    localStorage.removeItem(key);
+    localStorage.removeItem(`${key}:at`);
+  }
+}
+
+function newestStoredRaw(): string | null {
+  const tab = sessionStorage.getItem(STORAGE_KEY);
+  if (tab) return tab;
+  let best: string | null = null;
+  let bestAt = -1;
+  for (const key of SESSION_KEYS) {
+    const raw = localStorage.getItem(key);
+    if (!raw) continue;
+    const at = Number(localStorage.getItem(`${key}:at`) || 0);
+    if (at >= bestAt) {
+      best = raw;
+      bestAt = at;
+    }
+  }
+  return best;
+}
 
 const EMPTY_TERMS: Record<string, boolean> = {
   terms: false,
@@ -175,27 +206,30 @@ function cleanGuardians(value: unknown): GuardianLink[] {
   return links;
 }
 
+function scrubSeed(member: Member, share: ShareState): Member {
+  if (hasLocation(member) && isSeedLocation(member.lat, member.lng) && member.accuracyM === 18) {
+    return { ...member, share, lat: null, lng: null };
+  }
+  return { ...member, share };
+}
+
 function withoutDemo(session: Session): Session {
   const previewAlias = session.profile?.preview && (session.profile.name === '부건' || session.profile.name === 'Bukeon');
   const profile = previewAlias && session.profile ? { ...session.profile, name: '나' } : session.profile;
   const members = session.members
-    .filter((member) => member.id !== 'sample' && member.name !== '샘플' && !('isSample' in member && (member as { isSample?: boolean }).isSample))
+    .filter((member) => member.id !== 'sample' && member.name !== '샘플' && member.role !== 'guardian' && !('isSample' in member && (member as { isSample?: boolean }).isSample))
     .map((member) => {
       const renamed = member.id === 'self' && previewAlias ? { ...member, name: '나' } : member;
       const share = asShare(renamed.share, renamed.id === 'self');
-      if (renamed.id !== 'self') return { ...renamed, share, lat: null, lng: null };
-      if (hasLocation(renamed) && isSeedLocation(renamed.lat, renamed.lng) && renamed.accuracyM === 18) {
-        return { ...renamed, share, lat: null, lng: null };
-      }
-      return { ...renamed, share };
+      if (renamed.id !== 'self' && share !== 'allowed') return { ...renamed, share, lat: null, lng: null };
+      return scrubSeed(renamed, share);
     });
-  const ids = new Set(members.map((member) => member.id));
+  const kept = new Set(members.filter((member) => member.id === 'self' || hasLocation(member)).map((member) => member.id));
   const tracks: Record<string, TrackPoint[]> = {};
   for (const [id, points] of Object.entries(session.tracks)) {
-    if (!ids.has(id) || id !== 'self') continue;
-    const self = members.find((member) => member.id === 'self');
-    if (!self || !hasLocation(self)) continue;
-    tracks[id] = points.filter((point) => !isSeedLocation(point.lat, point.lng));
+    if (!kept.has(id)) continue;
+    const clean = points.filter((point) => !isSeedLocation(point.lat, point.lng));
+    if (clean.length > 0) tracks[id] = clean;
   }
   const mode = session.mode === 'admin' || session.mode === 'managed' ? session.mode : null;
   return { ...session, profile, members, tracks, mode, guardians: cleanGuardians(session.guardians) };
@@ -209,14 +243,14 @@ function isSession(value: unknown): value is Session {
 
 function load(): Session {
   if (shouldReset()) {
-    localStorage.removeItem(STORAGE_KEY);
+    clearStoredSessions();
     const url = new URL(window.location.href);
     url.searchParams.delete('reset');
     window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
     return fresh();
   }
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = newestStoredRaw();
     if (!raw) return fresh();
     const parsed: unknown = JSON.parse(raw);
     if (!isSession(parsed)) return fresh();
@@ -266,6 +300,7 @@ type Action =
   | { type: 'dismiss-invite' }
   | { type: 'mark-alerts-read' }
   | { type: 'update-self'; lat: number; lng: number; accuracyM: number }
+  | { type: 'apply-shared-place'; place: SharedPlace }
   | { type: 'set-motion'; moving: boolean }
   | { type: 'notice'; notice: FamilyNotice }
   | { type: 'logout' }
@@ -436,6 +471,52 @@ function reducer(state: Session, action: Action): Session {
         },
       };
     }
+    case 'apply-shared-place': {
+      if (state.mode !== 'admin') return state;
+      const place = action.place;
+      const children = state.members.filter((member) => member.id !== 'self' && member.role !== 'guardian' && member.inviteCode === place.code);
+      const member = children.find((item) => item.name === place.name) ?? (children.length === 1 ? children[0] : undefined);
+      if (!member) return state;
+      if (!place.sharing) {
+        if (member.share !== 'allowed' && !hasLocation(member)) return state;
+        const tracks = { ...state.tracks };
+        delete tracks[member.id];
+        return {
+          ...state,
+          members: state.members.map((item) => (item.id === member.id ? { ...item, share: 'revoked', lat: null, lng: null, updatedAt: place.at } : item)),
+          tracks,
+        };
+      }
+      if (place.lat == null || place.lng == null || !Number.isFinite(place.lat) || !Number.isFinite(place.lng)) {
+        if (member.share === 'allowed' && !hasLocation(member)) return state;
+        return {
+          ...state,
+          members: state.members.map((item) => (item.id === member.id ? { ...item, share: 'allowed', lat: null, lng: null } : item)),
+        };
+      }
+      if (isSeedLocation(place.lat, place.lng) && place.accuracyM === 18) return state;
+      if (member.share === 'allowed' && member.lat === place.lat && member.lng === place.lng) return state;
+      if (member.updatedAt > place.at && hasLocation(member)) return state;
+      return {
+        ...state,
+        members: state.members.map((item) =>
+          item.id === member.id
+            ? {
+                ...item,
+                share: 'allowed',
+                lat: place.lat,
+                lng: place.lng,
+                accuracyM: Math.max(1, Math.round(place.accuracyM || item.accuracyM || 1)),
+                updatedAt: place.at,
+              }
+            : item,
+        ),
+        tracks: {
+          ...state.tracks,
+          [member.id]: appendTrail(state.tracks[member.id], { lat: place.lat, lng: place.lng, at: place.at }),
+        },
+      };
+    }
     case 'set-motion':
       return {
         ...state,
@@ -479,6 +560,7 @@ interface FamilyApi {
   dismissInvite: () => void;
   markAlertsRead: () => void;
   updateSelf: (lat: number, lng: number, accuracyM: number) => void;
+  applySharedPlace: (place: SharedPlace) => void;
   setMotion: (moving: boolean) => void;
   pushNotice: (title: string, body: string) => void;
   logout: () => void;
@@ -491,7 +573,17 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
   const [state, dispatch] = useReducer(reducer, undefined, load);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    const raw = JSON.stringify(state);
+    const key = storageKey(state.mode);
+    sessionStorage.setItem(STORAGE_KEY, raw);
+    localStorage.setItem(key, raw);
+    localStorage.setItem(`${key}:at`, String(Date.now()));
+    if (!state.profile) {
+      localStorage.removeItem(`${STORAGE_KEY}:admin`);
+      localStorage.removeItem(`${STORAGE_KEY}:managed`);
+      localStorage.removeItem(`${STORAGE_KEY}:admin:at`);
+      localStorage.removeItem(`${STORAGE_KEY}:managed:at`);
+    }
   }, [state]);
 
   const api: FamilyApi = {
@@ -521,6 +613,7 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
     dismissInvite: () => dispatch({ type: 'dismiss-invite' }),
     markAlertsRead: () => dispatch({ type: 'mark-alerts-read' }),
     updateSelf: (lat, lng, accuracyM) => dispatch({ type: 'update-self', lat, lng, accuracyM }),
+    applySharedPlace: (place) => dispatch({ type: 'apply-shared-place', place }),
     setMotion: (moving) => dispatch({ type: 'set-motion', moving }),
     pushNotice: (title, body) => dispatch({ type: 'notice', notice: notice(title, body) }),
     logout: () => dispatch({ type: 'logout' }),
