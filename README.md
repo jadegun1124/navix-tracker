@@ -113,13 +113,15 @@ npm run dev
 
 클라이언트에 넣는 값은 Worker 주소 하나입니다. API 비밀이 아니고, 빌드 결과물에 들어갑니다. 읽기 키와 Cloudflare 토큰은 넣지 않습니다.
 
-```bash
-VITE_FAMILY_SYNC_URL=https://umap-family-sync.<계정>.workers.dev
+공개 Worker는 이미 올라가 있습니다. Pages와 APK 빌드는 secret이 없어도 이 주소를 넣습니다.
+
+```text
+https://umap-family-sync.umap-jadegun.workers.dev
 ```
 
-로컬은 gitignore된 `.env`. GitHub Actions secret 이름도 `VITE_FAMILY_SYNC_URL` 입니다. `deploy.yml`과 `build-apk.yml`이 이 값을 `npm run build`에 넘깁니다. 비어 있으면 위치 서버 없이 빌드되고, 같은 브라우저 공유만 됩니다. 로그에는 주소가 있는지만 남깁니다. secret을 바꾼 뒤에는 `main`에 푸시해 Pages와 APK를 다시 만들어야 반영됩니다.
+`deploy.yml`과 `build-apk.yml`은 Actions secret `VITE_FAMILY_SYNC_URL`이 있을 때만 그 값으로 바꿉니다. secret은 필수가 아닙니다. 로그에는 기본 주소인지, secret으로 바꿨는지만 남기고 다른 주소 문자열은 찍지 않습니다. 로컬 `npm run dev`는 gitignore된 `.env`의 `VITE_FAMILY_SYNC_URL`을 읽습니다. 그 값이 없으면 개발 서버는 같은 브라우저 공유만 합니다.
 
-Worker는 Cloudflare에 따로 배포합니다. 계정 토큰은 저장소에 커밋하지 않습니다.
+Worker를 다시 올릴 때만 Cloudflare에 배포합니다. 계정 토큰은 저장소에 커밋하지 않습니다.
 
 ```bash
 cd sync
@@ -131,7 +133,7 @@ npx wrangler@4 deploy
 
 ### 두 기기로 확인
 
-1. Worker를 배포하고, 폰 A와 폰 B의 빌드에 같은 `VITE_FAMILY_SYNC_URL`을 넣습니다.
+1. 폰 A와 폰 B에 같은 주소가 들어간 빌드를 설치합니다. `main`의 Pages와 APK는 `https://umap-family-sync.umap-jadegun.workers.dev` 를 기본으로 넣습니다.
 2. 폰 A에서 관리자로 가족을 초대하고 **링크**를 보냅니다. 다섯 자리 코드만 보내면 같은 브라우저에서만 공유됩니다.
 3. 폰 B에서 링크를 열고 피관리자로 수락한 뒤 **위치 공유 허용**을 누릅니다. 위치 권한도 허용합니다.
 4. 폰 A에 B의 핀이 나타나고, 위에 "다른 폰과 위치를 나누는 중"이 보입니다.
