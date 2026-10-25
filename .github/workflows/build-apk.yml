@@ -50,9 +50,13 @@ jobs:
         env:
           VITE_GOOGLE_MAPS_API_KEY: ${{ secrets.VITE_GOOGLE_MAPS_API_KEY }}
           VITE_GOOGLE_CLIENT_ID: ${{ secrets.VITE_GOOGLE_CLIENT_ID }}
-          # Owner adds repository secret VITE_VWORLD_API_KEY once. A missing secret is empty and the build still succeeds.
           VITE_VWORLD_API_KEY: ${{ secrets.VITE_VWORLD_API_KEY }}
-        run: npm run build
+          VWORLD_API_KEY: ${{ secrets.VWORLD_API_KEY }}
+        run: |
+          if [ -z "${VITE_VWORLD_API_KEY}" ] && [ -n "${VWORLD_API_KEY}" ]; then
+            export VITE_VWORLD_API_KEY="${VWORLD_API_KEY}"
+          fi
+          npm run build
 
       - name: Copy Web Assets into Native Android Assets
         run: |

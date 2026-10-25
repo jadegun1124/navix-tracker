@@ -41,7 +41,7 @@ Google Play, App Store, TestFlight에는 올리지 않았습니다. iOS는 아�
 
 ## Google 로그인과 지도
 
-키는 환경 변수로만 넣습니다. `.env.example` 을 복사해 `.env.local` 을 만듭니다. 값은 저장소에 커밋하지 않습니다.
+키는 환경 변수로만 넣습니다. 로컬에서는 `.env.example` 을 복사해 `.env` 를 만들고 `VITE_VWORLD_API_KEY=` 뒤에 키를 적습니다. `.env` 는 gitignore 되어 있어 커밋되지 않습니다.
 
 ```bash
 VITE_GOOGLE_CLIENT_ID=
@@ -58,7 +58,7 @@ VITE_VWORLD_API_KEY=
 
 클라이언트 ID가 없으면 로그인은 미리보기로 이어집니다. 미리보기라고 화면에 적습니다. `VITE_GOOGLE_MAPS_API_KEY`는 가족 지도에서 쓰지 않습니다.
 
-`VITE_VWORLD_API_KEY` GitHub Actions secret은 아직 없습니다. 소유자가 저장소 Settings → Secrets and variables → Actions에 같은 이름으로 한 번 추가하면 Pages와 APK 빌드에 들어갑니다. secret이 비어 있어도 워크플로는 실패하지 않고, 배포된 지도는 키 없음 안내를 보여 줍니다.
+GitHub Actions에는 `VITE_VWORLD_API_KEY`와 `VWORLD_API_KEY`가 같은 값으로 등록되어 있습니다. APK 빌드와 Pages 배포는 `VITE_VWORLD_API_KEY`를 Vite 빌드에 넘겨 지도 키를 결과물에 넣습니다. `VITE_VWORLD_API_KEY`가 비어 있으면 `VWORLD_API_KEY`를 그 이름으로 넘깁니다. 키 문자열은 로그에 찍지 않습니다.
 
 ## 아이콘
 
