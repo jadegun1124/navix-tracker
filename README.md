@@ -46,16 +46,17 @@ Google Play, App Store, TestFlight에는 올리지 않았습니다. iOS는 아�
 ```bash
 VITE_GOOGLE_CLIENT_ID=
 VITE_GOOGLE_MAPS_API_KEY=
+VITE_VWORLD_API_KEY=
 ```
 
 - 로그인: [Google Identity Services](https://developers.google.com/identity/gsi/web/guides/overview) 웹 클라이언트. 승인된 자바스크립트 원본에 사이트 주소와 Capacitor의 `https://localhost` 를 넣습니다.
-- 지도: 기본은 Esri World Imagery 위성 사진입니다. API 키는 없습니다. 오른쪽 위성 버튼으로 CARTO Voyager 일반 지도와 바꿉니다. 위성 타일이 실패하면 일반 지도로 한 번 바꿉니다. 둘 다 실패해도 핀과 경로는 남습니다.
-  - 위성: `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}`
-  - 위성 지명: `https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}`
-  - 일반: `https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png` (OpenStreetMap, CARTO)
-- 이동 경로: 구성원을 고르면 지도에 궤적이 표시됩니다. 내 위치는 앱이 열려 있는 동안 약 12m 이상 움직이면 이 브라우저의 `localStorage`에 최대 300점까지 쌓입니다. 샘플 구성원에는 하계동 근처의 예시 경로가 들어 있습니다. 서버로 보내지 않습니다.
+- 지도: 국토교통부 [VWorld](https://www.vworld.kr/) 2D Base 한 종류입니다. 위성, CARTO, OpenStreetMap 전환은 없습니다.
+  - `https://api.vworld.kr/req/wmts/1.0.0/{API_KEY}/Base/{z}/{y}/{x}.png`
+  - 키는 `VITE_VWORLD_API_KEY` 또는 `VWORLD_API_KEY`. 저장소에 넣지 않습니다. 인증키 도메인에 GitHub Pages와 `https://localhost`를 등록합니다.
+  - 키가 없거나 타일이 실패하면 지도 자리에 한국어 안내를 보여 줍니다.
+- 이동 경로: 구성원을 고르면 이 기기에 쌓인 궤적만 표시됩니다. 내 위치는 앱이 열려 있는 동안 약 12m 이상 움직이면 이 브라우저의 `localStorage`에 최대 300점까지 쌓입니다. 샘플 사람이나 예시 좌표는 없습니다. 초대한 가족의 위치는 그 기기가 공유를 허용한 뒤에만 표시됩니다. 서버로 보내지 않습니다.
 
-클라이언트 ID가 없으면 로그인은 미리보기로 이어집니다. 미리보기라고 화면에 적습니다. `VITE_GOOGLE_MAPS_API_KEY`는 가족 지도에서 쓰지 않습니다.
+클라이언트 ID가 없으면 로그인은 미리보기로 이어집니다. 미리보기라고 화면에 적습니다. `VITE_GOOGLE_MAPS_API_KEY`는 가족 지도에서 쓰지 않습니다. `VITE_VWORLD_API_KEY`가 GitHub Actions secret에 없으면 빌드는 되고, 배포된 지도는 키 없음 안내를 보여 줍니다.
 
 ## 아이콘
 

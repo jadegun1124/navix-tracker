@@ -11,7 +11,7 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
   const url = event.request.url;
-  const tile = url.includes('arcgisonline.com') || url.includes('cartocdn.com') || url.includes('openstreetmap.org');
+  const tile = url.includes('api.vworld.kr');
   if (tile || event.request.destination === 'image') return;
   event.respondWith(fetch(event.request).catch(() => caches.match(event.request)));
 });

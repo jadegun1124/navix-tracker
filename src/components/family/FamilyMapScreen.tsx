@@ -1,24 +1,22 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Bell, Copy, Home, LocateFixed, MapPin, Minus, Plus, Route, Satellite, UserPlus, X } from 'lucide-react';
-import { buildInviteLink, formatClock, haversineMeters } from '../../lib/geo';
+import { Bell, Copy, Home, LocateFixed, MapPin, Minus, Plus, Route, UserPlus, X } from 'lucide-react';
+import { buildInviteLink, formatClock, hasLocation, haversineMeters } from '../../lib/geo';
 import { DEFAULT_CENTER, type HomeZone, type Member } from '../../types/family';
-import { BASEMAPS, StreetMap, type BasemapStyle, type StreetMapHandle } from './StreetMap';
+import { StreetMap, type StreetMapHandle } from './StreetMap';
 import { useFamily } from './session';
 
 export function FamilyMapScreen() {
   const family = useFamily();
   const { state } = family;
   const self = state.members.find((member) => member.id === 'self');
-  const [center] = useState(self ?? DEFAULT_CENTER);
+  const center = DEFAULT_CENTER;
   const [showZone, setShowZone] = useState(true);
   const [showTrail, setShowTrail] = useState(true);
-  const [basemap, setBasemap] = useState<BasemapStyle>('satellite');
   const [mapNote, setMapNote] = useState('');
-  const tileFallback = useRef(false);
-  const [homeCenter, setHomeCenter] = useState(self ?? DEFAULT_CENTER);
+  const [homeCenter, setHomeCenter] = useState(DEFAULT_CENTER);
   const mapRef = useRef<StreetMapHandle>(null);
   const [sheet, setSheet] = useState<'home' | 'invite' | null>(state.pendingInvite && state.pendingInvite !== state.inviteCode ? 'invite' : null);
-  const [selectedId, setSelectedId] = useState(state.members.find((member) => member.isSample)?.id ?? 'self');
+  const [selectedId, setSelectedId] = useState('self');
   const insideRef = useRef<Record<string, boolean>>({});
   const lastFix = useRef<{ lat: number; lng: number; at: number } | null>(null);
   const centeredFix = useRef(false);
@@ -73,6 +71,7 @@ export function FamilyMapScreen() {
   useEffect(() => {
     if (!state.home) return;
     for (const member of state.members) {
+      if (!hasLocation(member)) continue;
       const inside = haversineMeters(member, state.home) <= state.home.radiusM;
       const previous = insideRef.current[member.id];
       if (previous !== undefined && previous !== inside) {
@@ -93,13 +92,12 @@ export function FamilyMapScreen() {
 
   const selected = state.members.find((member) => member.id === selectedId) ?? state.members[0];
   const trail = selected && showTrail ? state.tracks[selected.id] ?? [] : [];
-  const trailColor = selected?.isSample ? '#ff8a34' : '#0084FF';
 
   const focusMember = (member: Member, fitTrail: boolean) => {
     setSelectedId(member.id);
     const points = state.tracks[member.id] ?? [];
     if (fitTrail && showTrail && points.length >= 2) mapRef.current?.fit(points);
-    else mapRef.current?.panTo(member.lat, member.lng);
+    else if (hasLocation(member)) mapRef.current?.panTo(member.lat, member.lng);
   };
 
   return (
@@ -113,17 +111,10 @@ export function FamilyMapScreen() {
             members={state.members}
             home={showZone ? state.home : null}
             trail={trail}
-            trailColor={trailColor}
+            trailColor="#0084FF"
             selectedId={selected?.id}
-            basemap={basemap}
             onTileProblem={() => {
-              if (!tileFallback.current && basemap === 'satellite') {
-                tileFallback.current = true;
-                setBasemap('street');
-                setMapNote('위성 사진을 불러오지 못해 일반 지도로 바꿨습니다.');
-                return;
-              }
-              setMapNote('지도 타일을 불러오지 못했습니다. 핀과 경로는 이 화면에 남아 있습니다.');
+              setMapNote('브이월드 지도를 불러오지 못했습니다. 키와 허용 도메인을 확인해 주세요.');
             }}
             onSelect={(id) => {
               const member = state.members.find((item) => item.id === id);
@@ -132,7 +123,7 @@ export function FamilyMapScreen() {
           />
 
           <div className="pointer-events-none absolute left-3 top-3 z-30 max-w-[230px] rounded-2xl bg-white/95 px-3 py-1.5 text-[11px] font-semibold leading-4 text-slate-600 shadow">
-            {BASEMAPS[basemap].label}
+            VWorld 2D · 국토교통부
             {mapNote && <span className="mt-0.5 block text-amber-700">{mapNote}</span>}
             {showTrail && selected && (
               <span className="mt-0.5 block text-slate-500">
@@ -142,16 +133,6 @@ export function FamilyMapScreen() {
           </div>
 
           <div className="absolute right-3 top-14 z-30 flex flex-col gap-2">
-            <RoundButton
-              label={basemap === 'satellite' ? '일반 지도로 전환' : '위성 지도로 전환'}
-              onClick={() => {
-                tileFallback.current = true;
-                setMapNote('');
-                setBasemap((value) => (value === 'satellite' ? 'street' : 'satellite'));
-              }}
-            >
-              <Satellite className={`h-5 w-5 ${basemap === 'satellite' ? 'text-[#0084FF]' : 'text-slate-400'}`} />
-            </RoundButton>
             <RoundButton label="안심존 표시" onClick={() => setShowZone((value) => !value)}>
               <Home className={`h-5 w-5 ${showZone ? 'text-[#0084FF]' : 'text-slate-400'}`} />
             </RoundButton>
@@ -179,7 +160,7 @@ export function FamilyMapScreen() {
             <RoundButton
               label="내 위치"
               onClick={() => {
-                if (self) focusMember(self, false);
+                if (self && hasLocation(self)) focusMember(self, false);
               }}
             >
               <LocateFixed className="h-5 w-5 text-[#0084FF]" />
@@ -220,7 +201,6 @@ export function FamilyMapScreen() {
                   home={state.home}
                   selected={member.id === selected?.id}
                   onSelect={() => focusMember(member, true)}
-                  onRemove={member.isSample ? () => family.removeMember(member.id) : undefined}
                 />
               ))}
             </div>
@@ -324,38 +304,34 @@ function MemberCard({
   home,
   selected,
   onSelect,
-  onRemove,
 }: {
   member: Member;
   home: HomeZone | null;
   selected: boolean;
   onSelect: () => void;
-  onRemove?: () => void;
 }) {
-  const place = home && haversineMeters(member, home) <= home.radiusM ? '우리 집 안' : '집 밖';
+  const located = hasLocation(member);
+  const place = located && home && haversineMeters(member, home) <= home.radiusM ? '우리 집 안' : '집 밖';
+  const status = !located
+    ? member.id === 'self'
+      ? '위치 기다리는 중'
+      : '위치 없음'
+    : `${home ? place : '위치 공유 중'} · ±${Math.round(member.accuracyM)}m`;
   return (
     <div className={`flex w-full items-center gap-3 rounded-2xl px-3 py-2 text-left ${selected ? 'bg-blue-50' : 'bg-slate-50'}`}>
-      <span className={`flex h-10 w-10 items-center justify-center rounded-full font-black text-white ${member.isSample ? 'bg-[#ff8a34]' : 'bg-[#0084FF]'}`}>
+      <span className="flex h-10 w-10 items-center justify-center rounded-full bg-[#0084FF] font-black text-white">
         {member.name.slice(0, 1)}
       </span>
       <button type="button" onClick={onSelect} className="flex min-w-0 flex-1 items-center gap-3 text-left">
-      <span className="min-w-0 flex-1">
-        <span className="flex items-center gap-2">
-          <span className="font-bold">{member.name}</span>
-          {member.isSample && <span className="rounded-full bg-orange-100 px-1.5 text-[10px] font-bold text-orange-600">샘플</span>}
+        <span className="min-w-0 flex-1">
+          <span className="block font-bold">{member.name}</span>
+          <span className="block text-xs text-slate-500">
+            {status}
+            {member.battery != null ? ` · 배터리 ${member.battery}%` : ''}
+            {member.moving === true ? ' · 이동 중' : member.moving === false ? ' · 머무름' : ''}
+          </span>
         </span>
-        <span className="block text-xs text-slate-500">
-          {home ? place : '위치 공유 중'} · ±{Math.round(member.accuracyM)}m
-          {member.battery != null ? ` · 배터리 ${member.battery}%` : ''}
-          {member.moving === true ? ' · 이동 중' : member.moving === false ? ' · 머무름' : ''}
-        </span>
-      </span>
-    </button>
-      {onRemove && (
-        <button type="button" onClick={onRemove} className="text-[11px] font-bold text-slate-400">
-          지우기
-        </button>
-      )}
+      </button>
     </div>
   );
 }
@@ -385,7 +361,7 @@ function HomeSheet({
         id="home-address"
         value={address}
         onChange={(event) => setAddress(event.target.value)}
-        placeholder="예: 서울 노원구 하계동"
+        placeholder="주소 또는 이름"
         className="mt-1 w-full rounded-2xl border border-slate-200 px-3 py-3 outline-none focus:border-[#0084FF]"
       />
       <p className="mt-4 text-xs font-bold text-slate-400">반경 {radius}m</p>

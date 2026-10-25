@@ -253,7 +253,7 @@ const TERM_COPY: { id: string; title: string; required: boolean; body: string }[
     id: 'overseas',
     title: '개인정보 국외 이전 동의',
     required: false,
-    body: 'Google 로그인을 쓰면 계정 식별자가 Google로 전달됩니다. 지도는 Esri 위성 사진과 CARTO 일반 지도를 키 없이 불러옵니다.',
+    body: 'Google 로그인을 쓰면 계정 식별자가 Google로 전달됩니다. 지도 타일은 국토교통부 VWorld에서 불러옵니다.',
   },
 ];
 
