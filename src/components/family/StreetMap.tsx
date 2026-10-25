@@ -1,34 +1,9 @@
 import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import { VWORLD_ATTRIBUTION, vworldApiKey, vworldBaseTileUrl } from '../../services/vworld';
 import type { HomeZone, Member, TrackPoint } from '../../types/family';
-
-export type BasemapStyle = 'satellite' | 'street';
-
-export const BASEMAPS: Record<BasemapStyle, {
-  label: string;
-  url: string;
-  labels: string;
-  attribution: string;
-  subdomains?: string;
-  maxZoom: number;
-}> = {
-  satellite: {
-    label: '위성 지도 · Esri',
-    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-    labels: 'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
-    attribution: 'Tiles &copy; Esri — Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community',
-    maxZoom: 19,
-  },
-  street: {
-    label: '일반 지도 · OpenStreetMap / CARTO',
-    url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png',
-    labels: '',
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
-    subdomains: 'abcd',
-    maxZoom: 20,
-  },
-};
+import { hasLocation } from '../../lib/geo';
 
 export interface StreetMapHandle {
   panTo: (lat: number, lng: number) => void;
@@ -49,14 +24,15 @@ export const StreetMap = forwardRef<StreetMapHandle, {
   trail: TrackPoint[];
   trailColor: string;
   selectedId?: string;
-  basemap: BasemapStyle;
   onTileProblem: () => void;
   onSelect: (id: string) => void;
-}>(function StreetMap({ center, zoom, members, home, trail, trailColor, selectedId, basemap, onTileProblem, onSelect }, ref) {
+}>(function StreetMap({ center, zoom, members, home, trail, trailColor, selectedId, onTileProblem, onSelect }, ref) {
   const nodeRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
   const layersRef = useRef<L.LayerGroup | null>(null);
   const [ready, setReady] = useState(false);
+  const [tileNote, setTileNote] = useState('');
+  const key = vworldApiKey();
   const initialRef = useRef({ center, zoom });
   const onSelectRef = useRef(onSelect);
   const onTileProblemRef = useRef(onTileProblem);
@@ -72,15 +48,14 @@ export const StreetMap = forwardRef<StreetMapHandle, {
     zoomBy(delta) {
       const map = mapRef.current;
       if (!map) return;
-      const maxZoom = BASEMAPS[basemap].maxZoom;
-      map.setZoom(Math.min(maxZoom, Math.max(12, map.getZoom() + delta)));
+      map.setZoom(Math.min(19, Math.max(7, map.getZoom() + delta)));
     },
     fit(points) {
       const map = mapRef.current;
       if (!map || points.length < 2) return;
       map.fitBounds(L.latLngBounds(points.map((point) => [point.lat, point.lng])), {
         padding: [48, 48],
-        maxZoom: Math.min(17, BASEMAPS[basemap].maxZoom),
+        maxZoom: 17,
         animate: true,
       });
     },
@@ -99,6 +74,7 @@ export const StreetMap = forwardRef<StreetMapHandle, {
       zoom: start.zoom,
       zoomControl: false,
       attributionControl: true,
+      maxZoom: 19,
     });
     map.attributionControl.setPosition('bottomleft');
     layersRef.current = L.layerGroup().addTo(map);
@@ -121,47 +97,36 @@ export const StreetMap = forwardRef<StreetMapHandle, {
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!ready || !map) return;
-    const spec = BASEMAPS[basemap];
-    const control = map.attributionControl as L.Control.Attribution & { _attributions?: Record<string, number> };
-    for (const key of Object.keys(control._attributions ?? {})) control.removeAttribution(key);
-    const tileOptions: L.TileLayerOptions = {
-      attribution: spec.attribution,
-      maxZoom: spec.maxZoom,
-    };
-    if (spec.subdomains) tileOptions.subdomains = spec.subdomains;
-    const tiles = L.tileLayer(spec.url, tileOptions);
-    const labels = spec.labels
-      ? L.tileLayer(spec.labels, { maxZoom: spec.maxZoom, opacity: 0.92 })
-      : null;
+    if (!ready || !map || !key) return;
+    const tiles = L.tileLayer(vworldBaseTileUrl(key), {
+      attribution: VWORLD_ATTRIBUTION,
+      maxZoom: 19,
+    });
     tiles.addTo(map);
-    labels?.addTo(map);
     let loads = 0;
-    let errors = 0;
     let reported = false;
-    const report = () => {
+    const report = (message: string) => {
       if (reported || loads > 0) return;
       reported = true;
+      setTileNote(message);
       onTileProblemRef.current();
-    };
-    const onError = () => {
-      errors += 1;
-      if (errors >= 3) report();
     };
     tiles.on('tileload', () => {
       loads += 1;
+      setTileNote('');
     });
-    tiles.on('tileerror', onError);
+    tiles.on('tileerror', () => {
+      if (loads === 0) report('브이월드 지도를 불러오지 못했습니다. 키와 허용 도메인을 확인해 주세요.');
+    });
     const watchdog = window.setTimeout(() => {
-      if (loads === 0) report();
+      if (loads === 0) report('브이월드 지도를 불러오지 못했습니다. 키와 허용 도메인을 확인해 주세요.');
     }, 8000);
     return () => {
       window.clearTimeout(watchdog);
       tiles.off();
       map.removeLayer(tiles);
-      if (labels) map.removeLayer(labels);
     };
-  }, [basemap, ready]);
+  }, [key, ready]);
 
   useEffect(() => {
     const group = layersRef.current;
@@ -213,8 +178,9 @@ export const StreetMap = forwardRef<StreetMapHandle, {
     }
 
     for (const member of members) {
+      if (!hasLocation(member)) continue;
       const selected = member.id === selectedId;
-      const color = member.isSample ? '#ff8a34' : '#0084FF';
+      const color = '#0084FF';
       const label = escapeHtml(member.name);
       const initial = escapeHtml(member.name.slice(0, 1));
       const marker = L.marker([member.lat, member.lng], {
@@ -234,5 +200,18 @@ export const StreetMap = forwardRef<StreetMapHandle, {
     }
   }, [home, members, ready, selectedId, trail, trailColor]);
 
-  return <div ref={nodeRef} className="umap-street-map h-full min-h-[240px] w-full" />;
+  const missingKey = !key;
+
+  return (
+    <div className="relative h-full min-h-[240px] w-full">
+      <div ref={nodeRef} className="umap-street-map h-full min-h-[240px] w-full" />
+      {(missingKey || tileNote) && (
+        <div className="pointer-events-none absolute inset-x-4 top-16 z-20 rounded-2xl bg-white/95 px-4 py-3 text-center text-sm font-semibold leading-6 text-slate-700 shadow">
+          {missingKey
+            ? 'VWorld 지도 키가 없습니다. VITE_VWORLD_API_KEY를 넣으면 국토교통부 2D 기본도가 표시됩니다.'
+            : tileNote}
+        </div>
+      )}
+    </div>
+  );
 });

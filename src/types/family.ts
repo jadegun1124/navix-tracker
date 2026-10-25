@@ -16,13 +16,12 @@ export interface Member {
   id: string;
   name: string;
   role: 'self' | 'child' | 'guardian';
-  lat: number;
-  lng: number;
+  lat: number | null;
+  lng: number | null;
   accuracyM: number;
   battery: number | null;
   updatedAt: number;
   moving: boolean | null;
-  isSample?: boolean;
   inviteCode?: string;
 }
 

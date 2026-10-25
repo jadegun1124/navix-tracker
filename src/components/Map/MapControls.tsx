@@ -2,7 +2,6 @@ import React from 'react';
 import {
   Crosshair,
   Shield,
-  Layers,
   Play,
   Pause,
   FastForward,
@@ -17,8 +16,6 @@ interface MapControlsProps {
   showGeofences: boolean;
   onToggleGeofences: () => void;
   onCenterDevice: () => void;
-  mapStyle: 'voyager' | 'osm' | 'satellite';
-  onChangeMapStyle: (style: 'voyager' | 'osm' | 'satellite') => void;
   isSimulating: boolean;
   simSpeed: number;
   onToggleSimulation: () => void;
@@ -33,8 +30,6 @@ export const MapControls: React.FC<MapControlsProps> = ({
   showGeofences,
   onToggleGeofences,
   onCenterDevice,
-  mapStyle,
-  onChangeMapStyle,
   isSimulating,
   simSpeed,
   onToggleSimulation,
@@ -135,20 +130,6 @@ export const MapControls: React.FC<MapControlsProps> = ({
           <Shield className="w-5 h-5" />
         </button>
 
-        {/* Toggle Map Tiles: Voyager -> OSM -> Satellite */}
-        <button
-          onClick={() => {
-            const next = mapStyle === 'voyager' ? 'satellite' : mapStyle === 'satellite' ? 'osm' : 'voyager';
-            onChangeMapStyle(next);
-          }}
-          className="p-3 bg-white hover:bg-slate-50 text-slate-700 hover:text-sky-600 rounded-2xl shadow-lg border border-slate-200 backdrop-blur-md transition-all active:scale-95 cursor-pointer flex flex-col items-center"
-          title={`지도 레이어 전환 (현재: ${mapStyle === 'satellite' ? '위성 지도' : mapStyle === 'osm' ? '오픈스트리트맵' : '일반 로드맵'})`}
-        >
-          <Layers className="w-5 h-5" />
-          <span className="text-[9px] font-bold mt-0.5 text-slate-500">
-            {mapStyle === 'satellite' ? '위성' : mapStyle === 'osm' ? 'OSM' : '일반'}
-          </span>
-        </button>
       </div>
     </div>
   );

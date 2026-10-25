@@ -51,7 +51,7 @@ export function decodeGoogleCredential(credential: string): Profile | null {
 export function previewProfile(): Profile {
   return {
     sub: 'preview',
-    name: '부건',
+    name: '나',
     email: '',
     picture: null,
     preview: true,

@@ -30,23 +30,10 @@ export interface TrailPoint {
   at: number;
 }
 
-const SAMPLE_STEPS: [number, number][] = [
-  [-0.0036, -0.0022],
-  [-0.0028, -0.0011],
-  [-0.0021, -0.0001],
-  [-0.0014, 0.0006],
-  [-0.0007, 0.0009],
-  [-0.0002, 0.0004],
-  [0, 0],
-];
-
-export function sampleTrail(end: { lat: number; lng: number }, at: number): TrailPoint[] {
-  const span = 45 * 60 * 1000;
-  return SAMPLE_STEPS.map(([dLat, dLng], index) => ({
-    lat: end.lat + dLat,
-    lng: end.lng + dLng,
-    at: at - span + Math.round((span * index) / (SAMPLE_STEPS.length - 1)),
-  }));
+export function hasLocation<T extends { lat: number | null; lng: number | null }>(
+  point: T,
+): point is T & { lat: number; lng: number } {
+  return point.lat != null && point.lng != null && Number.isFinite(point.lat) && Number.isFinite(point.lng);
 }
 
 export function appendTrail(points: TrailPoint[] | undefined, point: TrailPoint): TrailPoint[] {

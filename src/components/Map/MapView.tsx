@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import L from 'leaflet';
+import { VWORLD_ATTRIBUTION, vworldApiKey, vworldBaseTileUrl } from '../../services/vworld';
 import { Device, Geofence } from '../../types';
 
 interface MapViewProps {
@@ -8,7 +9,6 @@ interface MapViewProps {
   geofences: Geofence[];
   showGeofences: boolean;
   onSelectDevice: (device: Device) => void;
-  mapStyle?: 'voyager' | 'osm' | 'satellite';
 }
 
 export const MapView: React.FC<MapViewProps> = ({
@@ -17,7 +17,6 @@ export const MapView: React.FC<MapViewProps> = ({
   geofences,
   showGeofences,
   onSelectDevice,
-  mapStyle = 'voyager',
 }) => {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
@@ -25,8 +24,7 @@ export const MapView: React.FC<MapViewProps> = ({
   const polylinesRef = useRef<Record<string, { recent: L.Polyline; history: L.Polyline }>>({});
   const waypointMarkersRef = useRef<Record<string, L.LayerGroup>>({});
   const geofenceLayersRef = useRef<L.LayerGroup | null>(null);
-  const tileLayerRef = useRef<L.TileLayer | null>(null);
-  const labelsLayerRef = useRef<L.TileLayer | null>(null);
+  const vworldKey = vworldApiKey();
 
   // Initialize Map
   useEffect(() => {
@@ -44,17 +42,13 @@ export const MapView: React.FC<MapViewProps> = ({
     // Add zoom control at bottom-right
     L.control.zoom({ position: 'bottomright' }).addTo(map);
 
-    // Initial tile layer (CartoDB Voyager - Clean Bright White Vector Map, No API Key needed)
-    const tileLayer = L.tileLayer(
-      'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
-      {
-        attribution: '&copy; OpenStreetMap &copy; CARTO (API 키 필요 없음)',
+    const key = vworldApiKey();
+    if (key) {
+      L.tileLayer(vworldBaseTileUrl(key), {
+        attribution: VWORLD_ATTRIBUTION,
         maxZoom: 19,
-        subdomains: 'abcd',
-      }
-    ).addTo(map);
-
-    tileLayerRef.current = tileLayer;
+      }).addTo(map);
+    }
     geofenceLayersRef.current = L.layerGroup().addTo(map);
     mapInstanceRef.current = map;
 
@@ -63,39 +57,6 @@ export const MapView: React.FC<MapViewProps> = ({
       mapInstanceRef.current = null;
     };
   }, []);
-
-  // Update Tile Layer if mapStyle changes (All Free & 0 API Key)
-  useEffect(() => {
-    const map = mapInstanceRef.current;
-    if (!map || !tileLayerRef.current) return;
-
-    // Clean up label layer if exists
-    if (labelsLayerRef.current) {
-      map.removeLayer(labelsLayerRef.current);
-      labelsLayerRef.current = null;
-    }
-
-    if (mapStyle === 'satellite') {
-      // Esri World Imagery (Same as awakening-map, 0 API Key)
-      tileLayerRef.current.setUrl(
-        'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
-      );
-      // Reference label overlay
-      const labels = L.tileLayer(
-        'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
-        { maxZoom: 19 }
-      ).addTo(map);
-      labelsLayerRef.current = labels;
-    } else if (mapStyle === 'osm') {
-      // Standard OpenStreetMap (0 API Key)
-      tileLayerRef.current.setUrl('https://tile.openstreetmap.org/{z}/{x}/{y}.png');
-    } else {
-      // CartoDB Voyager Bright White (0 API Key)
-      tileLayerRef.current.setUrl(
-        'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png'
-      );
-    }
-  }, [mapStyle]);
 
   // Center on selected device when changed
   useEffect(() => {
@@ -282,8 +243,12 @@ export const MapView: React.FC<MapViewProps> = ({
 
       {/* No API Key Required Indicator Badge (Bright White Mode) */}
       <div className="absolute bottom-3 left-4 z-[450] px-3.5 py-1.5 rounded-xl bg-white/95 backdrop-blur-md border border-slate-200 text-xs text-slate-700 font-bold flex items-center gap-2 shadow-md pointer-events-none">
-        <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-        <span>umap 오픈 지도 서비스 (API 키 불필요 • 실시간 궤적 출력)</span>
+        <span className={`w-2 h-2 rounded-full ${vworldKey ? 'bg-emerald-500' : 'bg-amber-500'}`}></span>
+        <span>
+          {vworldKey
+            ? 'VWorld 2D · 국토교통부'
+            : 'VWorld 지도 키가 없습니다. VITE_VWORLD_API_KEY를 넣어 주세요.'}
+        </span>
       </div>
     </div>
   );

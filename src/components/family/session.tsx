@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useReducer } from 'react';
-import { appendTrail, haversineMeters, sampleTrail } from '../../lib/geo';
+import { appendTrail, hasLocation } from '../../lib/geo';
 import {
   DEFAULT_CENTER,
   REQUIRED_TERMS,
@@ -63,32 +63,23 @@ function fresh(stage: Stage = 'splash'): Session {
 }
 
 function membersFor(profile: Profile): Member[] {
-  const now = Date.now();
   return [
     {
       id: 'self',
       name: profile.name,
       role: 'self',
-      lat: DEFAULT_CENTER.lat,
-      lng: DEFAULT_CENTER.lng,
-      accuracyM: 18,
+      lat: null,
+      lng: null,
+      accuracyM: 0,
       battery: null,
-      updatedAt: now,
+      updatedAt: Date.now(),
       moving: null,
     },
-    {
-      id: 'sample',
-      name: '샘플',
-      role: 'child',
-      isSample: true,
-      lat: DEFAULT_CENTER.lat + 0.00115,
-      lng: DEFAULT_CENTER.lng + 0.00105,
-      accuracyM: 10,
-      battery: 50,
-      updatedAt: now,
-      moving: false,
-    },
   ];
+}
+
+function isSeedLocation(lat: number, lng: number): boolean {
+  return Math.abs(lat - DEFAULT_CENTER.lat) < 1e-8 && Math.abs(lng - DEFAULT_CENTER.lng) < 1e-8;
 }
 
 function isPoint(value: unknown): value is TrackPoint {
@@ -108,15 +99,28 @@ function cleanTracks(value: unknown): Record<string, TrackPoint[]> {
   return tracks;
 }
 
-function withTracks(session: Session): Session {
-  const tracks = { ...session.tracks };
-  for (const member of session.members) {
-    if (tracks[member.id]?.length) continue;
-    tracks[member.id] = member.isSample
-      ? sampleTrail(member, member.updatedAt)
-      : [{ lat: member.lat, lng: member.lng, at: member.updatedAt }];
+function withoutDemo(session: Session): Session {
+  const previewAlias = session.profile?.preview && (session.profile.name === '부건' || session.profile.name === 'Bukeon');
+  const profile = previewAlias && session.profile ? { ...session.profile, name: '나' } : session.profile;
+  const members = session.members
+    .filter((member) => member.id !== 'sample' && member.name !== '샘플' && !('isSample' in member && (member as { isSample?: boolean }).isSample))
+    .map((member) => {
+      const renamed = member.id === 'self' && previewAlias ? { ...member, name: '나' } : member;
+      if (renamed.id !== 'self') return { ...renamed, lat: null, lng: null };
+      if (hasLocation(renamed) && isSeedLocation(renamed.lat, renamed.lng) && renamed.accuracyM === 18) {
+        return { ...renamed, lat: null, lng: null };
+      }
+      return renamed;
+    });
+  const ids = new Set(members.map((member) => member.id));
+  const tracks: Record<string, TrackPoint[]> = {};
+  for (const [id, points] of Object.entries(session.tracks)) {
+    if (!ids.has(id) || id !== 'self') continue;
+    const self = members.find((member) => member.id === 'self');
+    if (!self || !hasLocation(self)) continue;
+    tracks[id] = points.filter((point) => !isSeedLocation(point.lat, point.lng));
   }
-  return { ...session, tracks };
+  return { ...session, profile, members, tracks };
 }
 
 function isSession(value: unknown): value is Session {
@@ -148,7 +152,7 @@ function load(): Session {
       pendingInvite: invite || parsed.pendingInvite,
     };
     if (session.profile && session.permissions.completed) session.stage = 'map';
-    return withTracks(session);
+    return withoutDemo(session);
   } catch {
     return fresh();
   }
@@ -191,7 +195,7 @@ function reducer(state: Session, action: Action): Session {
       const members = state.members.length > 0
         ? state.members.map((member) => (member.id === 'self' ? { ...member, name: action.profile.name } : member))
         : membersFor(action.profile);
-      return withTracks({ ...state, profile: action.profile, members, stage: 'survey' });
+      return withoutDemo({ ...state, profile: action.profile, members, stage: 'survey' });
     }
     case 'skip-survey':
       return { ...state, stage: 'terms' };
@@ -222,28 +226,19 @@ function reducer(state: Session, action: Action): Session {
     case 'set-tab':
       return { ...state, tab: action.tab };
     case 'save-home': {
-      const sample = state.members.find((member) => member.isSample);
-      const inside = sample ? haversineMeters(sample, action.home) <= action.home.radiusM : false;
-      const created = notice(
-        inside ? '샘플이 우리 집 안에 있습니다' : '우리 집을 저장했습니다',
-        inside
-          ? '안심존 안에 샘플이 있습니다. 들어오거나 나가면 다시 알려 드립니다.'
-          : '가족이 이 원에 들어오거나 나가면 알림에 기록됩니다.',
-      );
+      const created = notice('우리 집을 저장했습니다', '가족이 이 원에 들어오거나 나가면 알림에 기록됩니다.');
       return { ...state, home: action.home, notices: [created, ...state.notices], tab: 'map' };
     }
     case 'clear-home':
       return { ...state, home: null };
     case 'add-member': {
-      const anchor = state.home ?? state.members.find((member) => member.id === 'self') ?? DEFAULT_CENTER;
-      const offset = state.members.filter((member) => member.role !== 'self').length + 1;
       const member: Member = {
         id: `m-${Date.now()}`,
         name: action.name.trim(),
         role: 'child',
-        lat: anchor.lat + 0.00045 * offset,
-        lng: anchor.lng - 0.0004 * offset,
-        accuracyM: 15,
+        lat: null,
+        lng: null,
+        accuracyM: 0,
         battery: null,
         updatedAt: Date.now(),
         moving: null,
@@ -252,12 +247,8 @@ function reducer(state: Session, action: Action): Session {
       return {
         ...state,
         members: [...state.members, member],
-        tracks: {
-          ...state.tracks,
-          [member.id]: [{ lat: member.lat, lng: member.lng, at: member.updatedAt }],
-        },
         pendingInvite: null,
-        notices: [notice('가족을 추가했습니다', `${member.name} 님이 이 기기의 가족 목록에 표시됩니다.`), ...state.notices],
+        notices: [notice('가족을 추가했습니다', `${member.name} 님이 이 기기의 가족 목록에 표시됩니다. 위치는 그 기기에서 공유를 허용한 뒤에만 보입니다.`), ...state.notices],
       };
     }
     case 'remove-member': {
