@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Bell, Copy, Home, LocateFixed, MapPin, Minus, Plus, Route, UserPlus, X } from 'lucide-react';
-import { buildInviteLink, formatClock, hasLocation, haversineMeters } from '../../lib/geo';
-import { DEFAULT_CENTER, type HomeZone, type Member } from '../../types/family';
+import { buildInviteLink, formatClock, hasLocation, haversineMeters, shouldAlertLeave } from '../../lib/geo';
+import { openSmsComposer } from '../../services/sms';
+import { DEFAULT_CENTER, type GuardianLink, type HomeZone, type Member } from '../../types/family';
 import { StreetMap, type StreetMapHandle } from './StreetMap';
 import { useFamily } from './session';
 
@@ -14,8 +15,10 @@ export function FamilyMapScreen() {
   const [showTrail, setShowTrail] = useState(true);
   const [mapNote, setMapNote] = useState('');
   const [homeCenter, setHomeCenter] = useState(DEFAULT_CENTER);
+  const [draftHome, setDraftHome] = useState<HomeZone | null>(null);
   const mapRef = useRef<StreetMapHandle>(null);
-  const [sheet, setSheet] = useState<'home' | 'invite' | null>(state.pendingInvite && state.pendingInvite !== state.inviteCode ? 'invite' : null);
+  const [sheet, setSheet] = useState<'home' | 'invite' | 'accept' | null>(state.mode === 'managed' && state.pendingInvite ? 'accept' : null);
+  const [confirm, setConfirm] = useState<{ kind: 'remove' | 'leave'; id: string; name: string } | null>(null);
   const [selectedId, setSelectedId] = useState('self');
   const insideRef = useRef<Record<string, boolean>>({});
   const lastFix = useRef<{ lat: number; lng: number; at: number } | null>(null);
@@ -72,11 +75,14 @@ export function FamilyMapScreen() {
     if (!state.home) return;
     for (const member of state.members) {
       if (!hasLocation(member)) continue;
+      if (member.id !== 'self' && member.share !== 'allowed') continue;
       const inside = haversineMeters(member, state.home) <= state.home.radiusM;
       const previous = insideRef.current[member.id];
       if (previous !== undefined && previous !== inside) {
-        const title = inside ? `${member.name} 님이 집에 도착했습니다` : `${member.name} 님이 집을 나갔습니다`;
-        const body = state.home.label || '우리 집 안심존';
+        const title = inside ? `${member.name} 님이 집에 도착했습니다` : `${member.name} 님이 집 반경 ${state.home.radiusM}m 밖으로 나갔습니다`;
+        const body = inside
+          ? (state.home.label || '우리 집 안심존')
+          : '이 폰의 알림에 기록했습니다. 피관리자가 공유 중이고 문자 받기가 켜져 있으면 그 폰에서 문자 앱이 열립니다. 자동 전송은 하지 않습니다.';
         familyRef.current.pushNotice(title, body);
         if (notifyOk && 'Notification' in window && Notification.permission === 'granted') {
           try {
@@ -90,8 +96,34 @@ export function FamilyMapScreen() {
     }
   }, [notifyOk, state.home, state.members]);
 
+  useEffect(() => {
+    if (state.mode !== 'managed' || !self || !hasLocation(self)) return;
+    const profileName = state.profile?.name || '가족';
+    for (const link of state.guardians) {
+      const zone = link.leaveAlert;
+      if (!zone) continue;
+      const inside = haversineMeters(self, zone) <= zone.radiusM;
+      const previous = insideRef.current[`leave-${link.id}`];
+      if (shouldAlertLeave(previous, inside, link.share === 'allowed')) {
+        const title = `${zone.label} 반경 ${zone.radiusM}m 밖으로 나갔습니다`;
+        const body = `${profileName} 님이 ${zone.label} 반경 ${zone.radiusM}m 밖으로 나갔습니다.`;
+        familyRef.current.pushNotice(title, '문자 앱이 열립니다. 보내기를 눌러야 관리자에게 도착합니다. 자동으로 전송하지 않습니다.');
+        if (notifyOk && 'Notification' in window && Notification.permission === 'granted') {
+          try {
+            new Notification(title, { body });
+          } catch {
+            /* 알림 표시만 거절된 경우 */
+          }
+        }
+        openSmsComposer(zone.phone, body);
+      }
+      insideRef.current[`leave-${link.id}`] = inside;
+    }
+  }, [notifyOk, self, state.guardians, state.mode, state.profile?.name]);
+
   const selected = state.members.find((member) => member.id === selectedId) ?? state.members[0];
-  const trail = selected && showTrail ? state.tracks[selected.id] ?? [] : [];
+  const visibleMembers = state.members.filter((member) => member.id === 'self' || (state.mode === 'admin' && member.share === 'allowed' && hasLocation(member)));
+  const trail = selected && showTrail && (selected.id === 'self' || selected.share === 'allowed') ? state.tracks[selected.id] ?? [] : [];
 
   const focusMember = (member: Member, fitTrail: boolean) => {
     setSelectedId(member.id);
@@ -108,8 +140,8 @@ export function FamilyMapScreen() {
             ref={mapRef}
             center={center}
             zoom={16}
-            members={state.members}
-            home={showZone ? state.home : null}
+            members={visibleMembers}
+            home={draftHome ?? (showZone ? state.home : null)}
             trail={trail}
             trailColor="#0084FF"
             selectedId={selected?.id}
@@ -167,42 +199,68 @@ export function FamilyMapScreen() {
             </RoundButton>
           </div>
 
-          <button
-            type="button"
-            onClick={() => setSheet('invite')}
-            className="absolute bottom-3 right-3 flex items-center gap-1 rounded-full bg-[#0084FF] px-3 py-2 text-xs font-bold text-white shadow-lg"
-          >
-            <UserPlus className="h-4 w-4" />
-            가족 추가
-          </button>
+          {state.mode === 'admin' ? (
+            <button
+              type="button"
+              onClick={() => setSheet('invite')}
+              className="absolute bottom-3 right-3 flex items-center gap-1 rounded-full bg-[#0084FF] px-3 py-2 text-xs font-bold text-white shadow-lg"
+            >
+              <UserPlus className="h-4 w-4" />
+              가족 초대
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setSheet('accept')}
+              className="absolute bottom-3 right-3 flex items-center gap-1 rounded-full bg-[#0084FF] px-3 py-2 text-xs font-bold text-white shadow-lg"
+            >
+              <UserPlus className="h-4 w-4" />
+              초대 수락
+            </button>
+          )}
         </div>
 
         {state.tab === 'map' && (
           <section className="rounded-t-3xl bg-white px-4 pb-2 pt-3 shadow-[0_-8px_30px_rgba(15,23,42,0.08)]">
             <div className="mb-2 flex items-center justify-between">
               <h2 className="text-lg font-black">우리 가족</h2>
-              <button
-                type="button"
-                onClick={() => {
-                  setHomeCenter(mapRef.current?.getCenter() ?? center);
-                  setSheet('home');
-                }}
-                className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-bold text-slate-700"
-              >
-                {state.home ? '우리 집 수정' : '우리 집 추가'}
-              </button>
+              {state.mode === 'admin' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setHomeCenter(mapRef.current?.getCenter() ?? center);
+                    setSheet('home');
+                  }}
+                  className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-bold text-slate-700"
+                >
+                  {state.home ? '우리 집 수정' : '우리 집 추가'}
+                </button>
+              )}
             </div>
             {state.profile?.preview && <p className="mb-2 text-xs font-semibold text-amber-600">미리보기 세션 · Google 계정으로 연결되지 않았습니다.</p>}
-            <div className="max-h-36 space-y-2 overflow-y-auto pb-2">
-              {state.members.map((member) => (
+            <div className="max-h-48 space-y-2 overflow-y-auto pb-2">
+              {(state.mode === 'managed' ? state.members.filter((member) => member.id === 'self') : state.members).map((member) => (
                 <MemberCard
                   key={member.id}
                   member={member}
-                  home={state.home}
+                  home={state.mode === 'admin' ? state.home : null}
                   selected={member.id === selected?.id}
                   onSelect={() => focusMember(member, true)}
+                  onRemove={state.mode === 'admin' && member.id !== 'self' ? () => setConfirm({ kind: 'remove', id: member.id, name: member.name }) : undefined}
                 />
               ))}
+              {state.mode === 'managed' && state.guardians.map((link) => (
+                <GuardianCard
+                  key={link.id}
+                  link={link}
+                  onAllow={() => family.setGuardianShare(link.code, 'allowed')}
+                  onRevoke={() => family.setGuardianShare(link.code, 'revoked')}
+                  onLeave={() => setConfirm({ kind: 'leave', id: link.id, name: link.label })}
+                />
+              ))}
+              {state.mode === 'managed' && state.guardians.length === 0 && (
+                <p className="rounded-2xl bg-slate-50 px-3 py-3 text-xs leading-5 text-slate-500">아직 수락한 초대가 없습니다. 관리자에게 받은 코드로 참여한 뒤, 위치를 따로 허용하세요.</p>
+              )}
             </div>
           </section>
         )}
@@ -234,7 +292,8 @@ export function FamilyMapScreen() {
         {state.tab === 'menu' && (
           <section className="min-h-[52%] overflow-y-auto bg-white px-4 py-4 text-sm">
             <h2 className="text-lg font-black">메뉴</h2>
-            <p className="mt-3 font-bold">{state.profile?.name}</p>
+            <p className="mt-3 text-xs font-bold text-[#0084FF]">{state.mode === 'admin' ? '관리자 모드' : '피관리자 모드'}</p>
+            <p className="mt-1 font-bold">{state.profile?.name}</p>
             <p className="text-slate-500">{state.profile?.email || (state.profile?.preview ? '미리보기 계정' : 'Google 계정')}</p>
             {state.phone && <p className="mt-1 text-slate-500">연락처 {state.phone}</p>}
             <dl className="mt-4 space-y-2 rounded-2xl bg-slate-50 p-3 text-slate-600">
@@ -248,6 +307,9 @@ export function FamilyMapScreen() {
               항상 허용은 선호로 저장됩니다. 이 버전은 앱이 열려 있는 동안 위치를 갱신하고, 권한을 몰래 올리지 않습니다.
             </p>
             <div className="mt-4 space-y-2">
+              <button type="button" onClick={family.reopenMode} className="w-full rounded-full bg-slate-100 py-3 font-bold">
+                모드 다시 고르기
+              </button>
               <button type="button" onClick={family.revisitPermissions} className="w-full rounded-full bg-slate-100 py-3 font-bold">
                 권한 안내 다시 보기
               </button>
@@ -267,30 +329,58 @@ export function FamilyMapScreen() {
         {sheet === 'home' && (
           <HomeSheet
             initial={state.home}
+            phone={state.phone}
             center={homeCenter}
-            onClose={() => setSheet(null)}
+            onPreview={setDraftHome}
+            onClose={() => {
+              setDraftHome(null);
+              setSheet(null);
+            }}
             onSave={(home) => {
               family.saveHome(home);
               mapRef.current?.panTo(home.lat, home.lng);
+              setDraftHome(null);
               setSheet(null);
             }}
             onClear={() => {
               family.clearHome();
+              setDraftHome(null);
               setSheet(null);
             }}
           />
         )}
-        {sheet === 'invite' && (
-          <InviteSheet
+        {sheet === 'invite' && state.mode === 'admin' && (
+          <AdminInviteSheet
             code={state.inviteCode}
+            home={state.home}
+            onClose={() => setSheet(null)}
+            onCreate={(name) => family.addMember(name, state.inviteCode)}
+          />
+        )}
+        {sheet === 'accept' && state.mode === 'managed' && (
+          <ManagedInviteSheet
             pending={state.pendingInvite}
+            guardians={state.guardians}
             onClose={() => {
               family.dismissInvite();
               setSheet(null);
             }}
-            onAdd={(name, code) => {
-              family.addMember(name, code);
-              setSheet(null);
+            onAccept={(label, code) => family.acceptInvite(label, code)}
+            onShare={(code, share) => family.setGuardianShare(code, share)}
+          />
+        )}
+        {confirm && (
+          <ConfirmSheet
+            title={confirm.kind === 'remove' ? '가족에서 지울까요?' : '연결을 끊을까요?'}
+            body={confirm.kind === 'remove'
+              ? `${confirm.name} 님을 이 기기의 목록과 지도에서 지웁니다. 상대 폰의 공유 허용은 그 폰에서 꺼야 합니다.`
+              : `${confirm.name} 님과의 초대와 위치 공유를 이 폰에서 지웁니다.`}
+            confirmLabel={confirm.kind === 'remove' ? '지우기' : '연결 끊기'}
+            onClose={() => setConfirm(null)}
+            onConfirm={() => {
+              if (confirm.kind === 'remove') family.removeMember(confirm.id);
+              else family.leaveGuardian(confirm.id);
+              setConfirm(null);
             }}
           />
         )}
@@ -299,24 +389,31 @@ export function FamilyMapScreen() {
   );
 }
 
+function memberStatus(member: Member, home: HomeZone | null): string {
+  if (member.id !== 'self') {
+    if (member.share === 'allowed') return '공유 허용 · 좌표는 아직 없음';
+    if (member.share === 'revoked') return '위치 공유 꺼짐';
+    if (member.share === 'accepted') return '수락함 · 위치 공유 전';
+    return '초대 보냄 · 위치 공유 전';
+  }
+  if (!hasLocation(member)) return '위치 기다리는 중';
+  const place = home && haversineMeters(member, home) <= home.radiusM ? '우리 집 안' : home ? '집 밖' : '내 위치';
+  return `${place} · ±${Math.round(member.accuracyM)}m`;
+}
+
 function MemberCard({
   member,
   home,
   selected,
   onSelect,
+  onRemove,
 }: {
   member: Member;
   home: HomeZone | null;
   selected: boolean;
   onSelect: () => void;
+  onRemove?: () => void;
 }) {
-  const located = hasLocation(member);
-  const place = located && home && haversineMeters(member, home) <= home.radiusM ? '우리 집 안' : '집 밖';
-  const status = !located
-    ? member.id === 'self'
-      ? '위치 기다리는 중'
-      : '위치 없음'
-    : `${home ? place : '위치 공유 중'} · ±${Math.round(member.accuracyM)}m`;
   return (
     <div className={`flex w-full items-center gap-3 rounded-2xl px-3 py-2 text-left ${selected ? 'bg-blue-50' : 'bg-slate-50'}`}>
       <span className="flex h-10 w-10 items-center justify-center rounded-full bg-[#0084FF] font-black text-white">
@@ -326,58 +423,158 @@ function MemberCard({
         <span className="min-w-0 flex-1">
           <span className="block font-bold">{member.name}</span>
           <span className="block text-xs text-slate-500">
-            {status}
+            {memberStatus(member, home)}
             {member.battery != null ? ` · 배터리 ${member.battery}%` : ''}
             {member.moving === true ? ' · 이동 중' : member.moving === false ? ' · 머무름' : ''}
           </span>
         </span>
       </button>
+      {onRemove && (
+        <button type="button" onClick={onRemove} className="shrink-0 rounded-full bg-white px-2.5 py-1 text-[11px] font-bold text-slate-500">
+          지우기
+        </button>
+      )}
+    </div>
+  );
+}
+
+function GuardianCard({
+  link,
+  onAllow,
+  onRevoke,
+  onLeave,
+}: {
+  link: GuardianLink;
+  onAllow: () => void;
+  onRevoke: () => void;
+  onLeave: () => void;
+}) {
+  const status = link.share === 'allowed' ? '내 위치 공유 중' : link.share === 'revoked' ? '위치 공유 꺼짐' : '참여함 · 위치는 아직 안 보냄';
+  return (
+    <div className="rounded-2xl bg-slate-50 px-3 py-2">
+      <div className="flex items-center gap-3">
+        <span className="flex h-10 w-10 items-center justify-center rounded-full bg-[#ff8a34] font-black text-white">{link.label.slice(0, 1)}</span>
+        <span className="min-w-0 flex-1">
+          <span className="block font-bold">{link.label}</span>
+          <span className="block text-xs text-slate-500">{status} · 코드 {link.code}</span>
+        </span>
+      </div>
+      <div className="mt-2 flex gap-2">
+        {link.share === 'allowed' ? (
+          <button type="button" onClick={onRevoke} className="flex-1 rounded-full bg-white py-2 text-[11px] font-bold text-slate-600">
+            공유 끄기
+          </button>
+        ) : (
+          <button type="button" onClick={onAllow} className="flex-1 rounded-full bg-[#0084FF] py-2 text-[11px] font-bold text-white">
+            위치 공유 허용
+          </button>
+        )}
+        <button type="button" onClick={onLeave} className="rounded-full bg-white px-3 py-2 text-[11px] font-bold text-slate-500">
+          연결 끊기
+        </button>
+      </div>
     </div>
   );
 }
 
 function HomeSheet({
   initial,
+  phone,
   center,
+  onPreview,
   onClose,
   onSave,
   onClear,
 }: {
   initial: HomeZone | null;
+  phone: string;
   center: { lat: number; lng: number };
+  onPreview: (home: HomeZone) => void;
   onClose: () => void;
   onSave: (home: HomeZone) => void;
   onClear: () => void;
 }) {
   const [address, setAddress] = useState(initial?.address ?? '');
   const [radius, setRadius] = useState(initial?.radiusM ?? 200);
+  const [alertOn, setAlertOn] = useState(Boolean(initial?.alertPhone));
+  const [alertPhone, setAlertPhone] = useState(initial?.alertPhone || phone);
+  const draft = (nextRadius: number, nextAddress: string, nextPhone: string, sms: boolean): HomeZone => ({
+    label: nextAddress.trim() || '우리 집',
+    address: nextAddress.trim(),
+    lat: center.lat,
+    lng: center.lng,
+    radiusM: nextRadius,
+    alertPhone: sms ? nextPhone.replace(/[^\d+]/g, '').slice(0, 16) : '',
+  });
+  const publish = (nextRadius: number, nextAddress = address, nextPhone = alertPhone, sms = alertOn) => {
+    const clamped = Math.min(2000, Math.max(50, Math.round(nextRadius) || 50));
+    setRadius(clamped);
+    onPreview(draft(clamped, nextAddress, nextPhone, sms));
+  };
+  useEffect(() => {
+    onPreview(draft(radius, address, alertPhone, alertOn));
+  }, [address, alertOn, alertPhone, center.lat, center.lng, onPreview, radius]);
   return (
-    <Sheet title="우리 집 추가" onClose={onClose}>
-      <p className="text-sm leading-6 text-slate-500">지도 가운데를 집으로 저장합니다. 주소는 가족에게 보여 줄 이름입니다.</p>
+    <Sheet title="우리 집 반경" onClose={onClose}>
+      <p className="text-sm leading-6 text-slate-500">지도 가운데가 집입니다. 숫자를 바꾸면 파란 원이 바로 커지거나 작아집니다.</p>
       <label className="mt-4 block text-xs font-bold text-slate-400" htmlFor="home-address">
-        주소
+        주소 또는 이름
       </label>
       <input
         id="home-address"
         value={address}
-        onChange={(event) => setAddress(event.target.value)}
+        onChange={(event) => {
+          setAddress(event.target.value);
+          onPreview(draft(radius, event.target.value, alertPhone, alertOn));
+        }}
         placeholder="주소 또는 이름"
         className="mt-1 w-full rounded-2xl border border-slate-200 px-3 py-3 outline-none focus:border-[#0084FF]"
       />
-      <p className="mt-4 text-xs font-bold text-slate-400">반경 {radius}m</p>
-      <input type="range" min={100} max={500} step={50} value={radius} onChange={(event) => setRadius(Number(event.target.value))} className="mt-2 w-full" />
+      <label className="mt-4 block text-xs font-bold text-slate-400" htmlFor="home-radius">
+        반경 {radius}m
+      </label>
+      <div className="mt-2 flex items-center gap-3">
+        <input
+          id="home-radius"
+          type="number"
+          min={50}
+          max={2000}
+          value={radius}
+          onChange={(event) => publish(Number(event.target.value))}
+          className="w-24 rounded-2xl border border-slate-200 px-3 py-2 outline-none focus:border-[#0084FF]"
+        />
+        <span className="text-sm font-bold text-slate-500">미터</span>
+      </div>
+      <input type="range" min={50} max={2000} step={10} value={radius} onChange={(event) => publish(Number(event.target.value))} className="mt-3 w-full" />
+      <label className="mt-4 flex items-start gap-2 text-sm leading-5 text-slate-600">
+        <input
+          type="checkbox"
+          className="mt-1"
+          checked={alertOn}
+          onChange={(event) => {
+            setAlertOn(event.target.checked);
+            onPreview(draft(radius, address, alertPhone, event.target.checked));
+          }}
+        />
+        이 반경을 나가면 내 번호로 문자 초안을 만듭니다. 피관리자가 위치 공유를 허용한 뒤에만 동작하고, 그 폰의 문자 앱에서 보내기를 눌러야 도착합니다.
+      </label>
+      {alertOn && (
+        <input
+          value={alertPhone}
+          onChange={(event) => {
+            setAlertPhone(event.target.value);
+            onPreview(draft(radius, address, event.target.value, true));
+          }}
+          inputMode="tel"
+          placeholder="받을 번호"
+          className="mt-2 w-full rounded-2xl border border-slate-200 px-3 py-3 outline-none focus:border-[#0084FF]"
+        />
+      )}
       <button
         type="button"
-        onClick={() =>
-          onSave({
-            label: address.trim() || '우리 집',
-            address: address.trim(),
-            lat: center.lat,
-            lng: center.lng,
-            radiusM: radius,
-          })
-        }
-        className="mt-4 w-full rounded-full bg-[#ff8a34] py-3.5 font-bold text-white"
+        disabled={alertOn && alertPhone.replace(/\D/g, '').length < 8}
+        onClick={() => onSave(draft(radius, address, alertPhone, alertOn))}
+        className="mt-4 w-full rounded-full bg-[#ff8a34] py-3.5 font-bold text-white disabled:opacity-40"
       >
         저장
       </button>
@@ -390,19 +587,19 @@ function HomeSheet({
   );
 }
 
-function InviteSheet({
+function AdminInviteSheet({
   code,
-  pending,
+  home,
   onClose,
-  onAdd,
+  onCreate,
 }: {
   code: string;
-  pending: string | null;
+  home: HomeZone | null;
   onClose: () => void;
-  onAdd: (name: string, code: string) => void;
+  onCreate: (name: string) => void;
 }) {
   const [name, setName] = useState('');
-  const [joinCode, setJoinCode] = useState(pending && pending !== code ? pending : '');
+  const [sentName, setSentName] = useState('');
   const [copied, setCopied] = useState('');
 
   const copy = async (value: string, label: string) => {
@@ -414,33 +611,141 @@ function InviteSheet({
     }
   };
 
+  if (!sentName) {
+    return (
+      <Sheet title="1. 누구를 초대할까요?" onClose={onClose}>
+        <p className="text-sm leading-6 text-slate-500">이름만 정합니다. 위치는 상대 폰에서 초대를 수락하고, 위치 공유를 따로 허용해야 보입니다.</p>
+        <input value={name} onChange={(event) => setName(event.target.value)} placeholder="표시 이름" className="mt-4 w-full rounded-2xl border border-slate-200 px-3 py-3 outline-none focus:border-[#0084FF]" />
+        <button
+          type="button"
+          disabled={name.trim().length < 1}
+          onClick={() => {
+            const next = name.trim();
+            onCreate(next);
+            setSentName(next);
+          }}
+          className="mt-3 w-full rounded-full bg-[#ff8a34] py-3.5 font-bold text-white disabled:opacity-40"
+        >
+          초대 코드 만들기
+        </button>
+      </Sheet>
+    );
+  }
+
   return (
-    <Sheet title="가족 추가" onClose={onClose}>
-      <p className="text-sm leading-6 text-slate-500">가족의 휴대폰에 Umap을 설치한 뒤 이 코드를 입력합니다. 코드를 아는 사람만 목록에 추가됩니다.</p>
+    <Sheet title="2. 코드를 보내세요" onClose={onClose}>
+      <p className="text-sm leading-6 text-slate-500">{sentName} 님 폰에서 피관리자 모드로 이 코드를 입력하거나 링크를 엽니다. 수락 다음에 위치 공유를 따로 묻습니다.</p>
       <p className="mt-4 text-center text-4xl font-black tracking-[0.25em] text-[#0084FF]">{code}</p>
       <div className="mt-3 grid grid-cols-2 gap-2">
         <button type="button" onClick={() => copy(code, '코드를 복사했습니다')} className="rounded-full bg-slate-100 py-2 text-xs font-bold">
           <Copy className="mr-1 inline h-3.5 w-3.5" />
           코드 복사
         </button>
-        <button type="button" onClick={() => copy(buildInviteLink(code), '링크를 복사했습니다')} className="rounded-full bg-slate-100 py-2 text-xs font-bold">
+        <button type="button" onClick={() => copy(buildInviteLink(code, home), '링크를 복사했습니다')} className="rounded-full bg-slate-100 py-2 text-xs font-bold">
           링크 복사
         </button>
       </div>
       {copied && <p className="mt-2 text-center text-xs font-semibold text-[#0084FF]">{copied}</p>}
-      <div className="mt-5 border-t border-slate-100 pt-4">
-        <p className="text-sm font-bold">코드로 합류</p>
-        <input value={name} onChange={(event) => setName(event.target.value)} placeholder="표시 이름" className="mt-2 w-full rounded-2xl border border-slate-200 px-3 py-3 outline-none focus:border-[#0084FF]" />
-        <input value={joinCode} onChange={(event) => setJoinCode(event.target.value.replace(/\D/g, '').slice(0, 6))} placeholder="초대 코드" inputMode="numeric" className="mt-2 w-full rounded-2xl border border-slate-200 px-3 py-3 outline-none focus:border-[#0084FF]" />
-        <button
-          type="button"
-          disabled={name.trim().length < 1 || joinCode.length < 4}
-          onClick={() => onAdd(name, joinCode)}
-          className="mt-3 w-full rounded-full bg-[#ff8a34] py-3.5 font-bold text-white disabled:opacity-40"
-        >
-          가족 목록에 추가
-        </button>
-      </div>
+      <p className="mt-4 text-xs leading-5 text-slate-400">
+        {home?.alertPhone
+          ? `이 링크에는 집 반경 ${home.radiusM}m와 문자 받을 번호가 들어 있습니다. 상대가 위치 공유를 허용한 뒤 그 원을 나가면 문자 앱이 열립니다.`
+          : '집 반경과 문자 받기를 저장한 뒤 링크를 다시 복사하면 이탈 문자가 연결됩니다.'}
+        {' '}상대가 허용하기 전에는 지도에 핀이 없습니다. 두 폰의 좌표를 자동으로 주고받는 서버는 아직 없습니다.
+      </p>
+      <button type="button" onClick={onClose} className="mt-4 w-full rounded-full bg-[#0084FF] py-3.5 font-bold text-white">
+        완료
+      </button>
+    </Sheet>
+  );
+}
+
+function ManagedInviteSheet({
+  pending,
+  guardians,
+  onClose,
+  onAccept,
+  onShare,
+}: {
+  pending: string | null;
+  guardians: GuardianLink[];
+  onClose: () => void;
+  onAccept: (label: string, code: string) => void;
+  onShare: (code: string, share: 'allowed' | 'revoked') => void;
+}) {
+  const [code, setCode] = useState(pending ?? '');
+  const [label, setLabel] = useState('');
+  const [step, setStep] = useState<'join' | 'share'>('join');
+  const [joinedCode, setJoinedCode] = useState('');
+  const joined = guardians.find((link) => link.code === joinedCode);
+
+  return (
+    <Sheet title={step === 'join' ? '1. 초대를 수락할까요?' : '2. 위치를 공유할까요?'} onClose={onClose}>
+      {step === 'join' ? (
+        <>
+          <p className="text-sm leading-6 text-slate-500">관리자에게 받은 코드를 입력합니다. 수락만으로는 위치가 나가지 않습니다.</p>
+          <input value={label} onChange={(event) => setLabel(event.target.value)} placeholder="관리자 이름 (예: 엄마)" className="mt-4 w-full rounded-2xl border border-slate-200 px-3 py-3 outline-none focus:border-[#0084FF]" />
+          <input value={code} onChange={(event) => setCode(event.target.value.replace(/\D/g, '').slice(0, 6))} placeholder="초대 코드" inputMode="numeric" className="mt-2 w-full rounded-2xl border border-slate-200 px-3 py-3 outline-none focus:border-[#0084FF]" />
+          <button
+            type="button"
+            disabled={code.length < 4}
+            onClick={() => {
+              onAccept(label, code);
+              setJoinedCode(code);
+              setStep('share');
+            }}
+            className="mt-3 w-full rounded-full bg-[#ff8a34] py-3.5 font-bold text-white disabled:opacity-40"
+          >
+            초대 수락
+          </button>
+        </>
+      ) : (
+        <>
+          <p className="text-sm leading-6 text-slate-500">
+            {label.trim() || '관리자'} 님에게 내 위치를 보낼까요? 허용하기 전에는 상대 지도에 표시되지 않습니다. 메뉴의 가족 목록에서 언제든 끌 수 있습니다.
+          </p>
+          <button
+            type="button"
+            onClick={() => {
+              if (!joined) return;
+              onShare(joined.code, 'allowed');
+              onClose();
+            }}
+            disabled={!joined}
+            className="mt-4 w-full rounded-full bg-[#0084FF] py-3.5 font-bold text-white disabled:opacity-40"
+          >
+            위치 공유 허용
+          </button>
+          <button type="button" onClick={onClose} className="mt-2 w-full py-2 text-sm font-bold text-slate-400">
+            나중에
+          </button>
+        </>
+      )}
+    </Sheet>
+  );
+}
+
+function ConfirmSheet({
+  title,
+  body,
+  confirmLabel,
+  onClose,
+  onConfirm,
+}: {
+  title: string;
+  body: string;
+  confirmLabel: string;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <Sheet title={title} onClose={onClose}>
+      <p className="text-sm leading-6 text-slate-500">{body}</p>
+      <button type="button" onClick={onConfirm} className="mt-4 w-full rounded-full bg-[#ff8a34] py-3.5 font-bold text-white">
+        {confirmLabel}
+      </button>
+      <button type="button" onClick={onClose} className="mt-2 w-full py-2 text-sm font-bold text-slate-400">
+        취소
+      </button>
     </Sheet>
   );
 }
