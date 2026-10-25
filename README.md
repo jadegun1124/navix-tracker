@@ -22,7 +22,7 @@ Google Play, App Store, TestFlight에는 올리지 않았습니다. iOS는 아�
 - 웹(GitHub Pages): 회사 홈페이지. 관제 콘솔은 없습니다.
 - 앱: Capacitor 안드로이드 앱이 가족 위치 화면을 엽니다. 브라우저에서 같은 화면을 보려면 `?app=1` 을 붙입니다.
 
-흐름은 Google 로그인 → 권한 안내 → 가족 지도 → 우리 집 → 초대 코드입니다.
+흐름은 Google 로그인 → 관리자/피관리자 선택 → 권한 안내 → 가족 지도입니다. 관리자만 가족을 초대하고 지웁니다. 피관리자는 코드를 수락한 뒤 위치 공유를 따로 허용합니다.
 
 ## 권한
 
@@ -52,13 +52,14 @@ VITE_VWORLD_API_KEY=
 - 로그인: [Google Identity Services](https://developers.google.com/identity/gsi/web/guides/overview) 웹 클라이언트. 승인된 자바스크립트 원본에 사이트 주소와 Capacitor의 `https://localhost` 를 넣습니다.
 - 지도: 국토교통부 [VWorld](https://www.vworld.kr/) 2D Base 한 종류입니다. 위성, CARTO, OpenStreetMap 전환은 없습니다.
   - `https://api.vworld.kr/req/wmts/1.0.0/{API_KEY}/Base/{z}/{y}/{x}.png`
-  - 키는 `import.meta.env.VITE_VWORLD_API_KEY`만 읽습니다. 인증키 도메인에 GitHub Pages와 `https://localhost`를 등록합니다.
-  - 키가 없거나 타일이 실패하면 지도 자리에 한국어 안내를 보여 줍니다. 다른 바탕 지도로 바꾸지 않습니다.
-- 이동 경로: 구성원을 고르면 이 기기에 쌓인 궤적만 표시됩니다. 내 위치는 앱이 열려 있는 동안 약 12m 이상 움직이면 이 브라우저의 `localStorage`에 최대 300점까지 쌓입니다. 샘플 사람이나 예시 좌표는 없습니다. 초대한 가족의 위치는 그 기기가 공유를 허용한 뒤에만 표시됩니다. 서버로 보내지 않습니다.
+  - 키는 `import.meta.env.VITE_VWORLD_API_KEY`만 읽습니다. 빌드 시점에 JS 안에 들어갑니다.
+  - 키가 없으면 "키가 이 빌드에 없습니다"만 보여 주고 타일을 요청하지 않습니다. 키가 있는데 타일이 실패하면, 그 페이지의 주소(origin)를 인증키 도메인에 넣으라는 안내가 나옵니다. 타일이 한 장이라도 오면 안내는 사라집니다.
+  - 인증키 서비스 URL: `https://jadegun1124.github.io`, 앱 `https://localhost`, 로컬 개발 `http://localhost:5173`.
+- 이동 경로: 내 위치는 앱이 열려 있는 동안 약 12m 이상 움직이면 이 브라우저에 최대 300점까지 쌓입니다. 샘플 사람이나 예시 좌표는 없습니다.
 
 클라이언트 ID가 없으면 로그인은 미리보기로 이어집니다. 미리보기라고 화면에 적습니다. `VITE_GOOGLE_MAPS_API_KEY`는 가족 지도에서 쓰지 않습니다.
 
-GitHub Actions에는 `VITE_VWORLD_API_KEY`와 `VWORLD_API_KEY`가 같은 값으로 등록되어 있습니다. APK 빌드와 Pages 배포는 `VITE_VWORLD_API_KEY`를 Vite 빌드에 넘겨 지도 키를 결과물에 넣습니다. `VITE_VWORLD_API_KEY`가 비어 있으면 `VWORLD_API_KEY`를 그 이름으로 넘깁니다. 키 문자열은 로그에 찍지 않습니다.
+GitHub Actions secret `VITE_VWORLD_API_KEY`와 `VWORLD_API_KEY`는 같은 값입니다. Pages 워크플로(`deploy.yml`)와 APK 워크플로(`build-apk.yml`)가 `npm run build`에 `VITE_VWORLD_API_KEY`를 넘깁니다. Vite용 secret이 비어 있으면 `VWORLD_API_KEY`를 그 이름으로 복사한 뒤 공백을 지웁니다. 로그에는 키가 있는지 여부만 남기고 문자열은 찍지 않습니다. secret을 바꾸면 `main`에 푸시해 두 워크플로를 다시 돌려야 배포된 Pages와 APK에 들어갑니다. PR 검사만으로는 키가 들어가지 않습니다. 로컬은 gitignore된 `.env`에 `VITE_VWORLD_API_KEY=`를 둡니다.
 
 ## 아이콘
 
@@ -88,4 +89,6 @@ npm run dev
 
 ## 데이터
 
-가족, 우리 집, 권한 선택은 이 기기의 `localStorage` 에 있습니다. 초대 코드는 그 기기의 가족 목록에 사람을 더하는 데 쓰입니다. 기기 사이의 실시간 동기화 서버는 이 버전에 없습니다.
+가족, 모드, 우리 집 반경, 권한, 위치 공유 허용은 이 탭의 `sessionStorage`와 모드별 `localStorage`(`umap_family_v1:admin`, `umap_family_v1:managed`)에 있습니다. 관리자 지도는 내 위치와, 위치 공유를 허용한 아이의 핀만 보여 줍니다. 피관리자 지도는 내 위치만 보여 주고, 관리자 카드는 공유 스위치일 뿐 위치 핀이 아닙니다.
+
+같은 브라우저에서 피관리자가 공유를 허용하면 그 좌표가 `umap_family_places_v1`로 관리자 탭의 아이 핀에 붙습니다. 두 폰 사이의 좌표 전달 서버는 아직 없습니다. 집 이탈 사이렌은 관리자 화면에만, SOS 사이렌은 피관리자 폰과 관리자 화면에 울립니다. 다른 폰으로 보내려면 서버가 필요합니다. 문자는 쓰지 않습니다.

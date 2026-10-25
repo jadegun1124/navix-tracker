@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Bell, BatteryCharging, ChevronLeft, Footprints, MapPin, Shield } from 'lucide-react';
+import { Bell, BatteryCharging, ChevronLeft, Footprints, MapPin, Shield, UserRound, Users } from 'lucide-react';
 import { decodeGoogleCredential, googleClientId, loadGoogleIdentity, previewProfile } from '../../services/googleAuth';
-import { REQUIRED_TERMS, type PermissionState, type Profile } from '../../types/family';
+import { REQUIRED_TERMS, type AppMode, type PermissionState, type Profile } from '../../types/family';
 import { useFamily } from './session';
 
 const iconSrc = `${import.meta.env.BASE_URL}umap-icon.png`;
@@ -33,6 +33,13 @@ export function Onboarding() {
     <Shell>
       {stage === 'splash' && <Splash onDone={family.splashDone} />}
       {stage === 'login' && <Login onGoogle={family.login} />}
+      {stage === 'mode' && (
+        <ModeChoice
+          chosen={family.state.mode}
+          onChoose={family.chooseMode}
+          onBack={family.state.mode ? family.closeMode : family.back}
+        />
+      )}
       {stage === 'survey' && (
         <Survey onSkip={family.skipSurvey} onNext={family.pickSurvey} onBack={family.back} />
       )}
@@ -78,6 +85,51 @@ function Splash({ onDone }: { onDone: () => void }) {
       </div>
       <p className="text-xs text-slate-400">화면을 누르면 바로 시작합니다.</p>
     </button>
+  );
+}
+
+function ModeChoice({
+  chosen,
+  onChoose,
+  onBack,
+}: {
+  chosen: AppMode | null;
+  onChoose: (mode: AppMode) => void;
+  onBack: () => void;
+}) {
+  return (
+    <div className="flex h-full flex-col px-6 pb-8 pt-6">
+      <button type="button" onClick={onBack} className="mb-6 flex items-center gap-1 text-sm font-bold text-slate-500">
+        <ChevronLeft className="h-4 w-4" />
+        {chosen ? '지도로' : '뒤로'}
+      </button>
+      <h1 className="text-2xl font-black">어떻게 쓸까요?</h1>
+      <p className="mt-2 text-sm leading-6 text-slate-500">이 폰의 역할입니다. 나중에 메뉴에서 바꿀 수 있습니다.</p>
+      <div className="mt-6 space-y-3">
+        <button type="button" onClick={() => onChoose('admin')} className="w-full rounded-3xl bg-white p-4 text-left shadow-sm">
+          <span className="flex items-center gap-3">
+            <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#0084FF] text-white">
+              <Users className="h-5 w-5" />
+            </span>
+            <span>
+              <span className="block font-black">관리자 모드</span>
+              <span className="mt-1 block text-sm leading-5 text-slate-500">가족을 초대하고 지우며, 상대가 허용한 위치만 봅니다.</span>
+            </span>
+          </span>
+        </button>
+        <button type="button" onClick={() => onChoose('managed')} className="w-full rounded-3xl bg-white p-4 text-left shadow-sm">
+          <span className="flex items-center gap-3">
+            <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#ff8a34] text-white">
+              <UserRound className="h-5 w-5" />
+            </span>
+            <span>
+              <span className="block font-black">피관리자 모드</span>
+              <span className="mt-1 block text-sm leading-5 text-slate-500">초대를 수락하고, 원할 때만 내 위치를 공유합니다. 가족을 추가할 수 없습니다.</span>
+            </span>
+          </span>
+        </button>
+      </div>
+    </div>
   );
 }
 

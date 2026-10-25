@@ -56,6 +56,14 @@ jobs:
           if [ -z "${VITE_VWORLD_API_KEY}" ] && [ -n "${VWORLD_API_KEY}" ]; then
             export VITE_VWORLD_API_KEY="${VWORLD_API_KEY}"
           fi
+          # Vite reads VITE_VWORLD_API_KEY only while this build runs and writes it into the APK assets.
+          VITE_VWORLD_API_KEY="$(printf '%s' "${VITE_VWORLD_API_KEY}" | tr -d '[:space:]')"
+          export VITE_VWORLD_API_KEY
+          if [ -n "${VITE_VWORLD_API_KEY}" ]; then
+            echo "VWorld key is present for this APK build."
+          else
+            echo "VWorld key is missing. The APK will show the Korean missing-key notice."
+          fi
           npm run build
 
       - name: Copy Web Assets into Native Android Assets

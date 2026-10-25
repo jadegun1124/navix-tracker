@@ -44,10 +44,20 @@ export function appendTrail(points: TrailPoint[] | undefined, point: TrailPoint)
   return list.slice(-300);
 }
 
-export function buildInviteLink(code: string): string {
+export function buildInviteLink(code: string, home?: { label: string; lat: number; lng: number; radiusM: number } | null): string {
   const url = new URL(window.location.href);
   url.searchParams.set('app', '1');
   url.searchParams.set('invite', code);
   url.searchParams.delete('reset');
+  if (home && Number.isFinite(home.lat) && Number.isFinite(home.lng) && home.radiusM >= 50) {
+    url.searchParams.set('homeLat', String(home.lat));
+    url.searchParams.set('homeLng', String(home.lng));
+    url.searchParams.set('homeRadius', String(home.radiusM));
+    url.searchParams.set('homeLabel', home.label || '우리 집');
+  }
   return url.toString();
+}
+
+export function shouldAlertLeave(previousInside: boolean | undefined, inside: boolean, sharingAllowed: boolean): boolean {
+  return sharingAllowed && previousInside === true && !inside;
 }

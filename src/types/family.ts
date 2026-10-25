@@ -12,6 +12,9 @@ export interface TrackPoint {
   at: number;
 }
 
+export type AppMode = 'admin' | 'managed';
+export type ShareState = 'invited' | 'accepted' | 'allowed' | 'revoked';
+
 export interface Member {
   id: string;
   name: string;
@@ -23,6 +26,22 @@ export interface Member {
   updatedAt: number;
   moving: boolean | null;
   inviteCode?: string;
+  share: ShareState;
+}
+
+export interface LeaveAlert {
+  label: string;
+  lat: number;
+  lng: number;
+  radiusM: number;
+}
+
+export interface GuardianLink {
+  id: string;
+  label: string;
+  code: string;
+  share: 'accepted' | 'allowed' | 'revoked';
+  leaveAlert: LeaveAlert | null;
 }
 
 export interface HomeZone {
@@ -31,6 +50,7 @@ export interface HomeZone {
   lat: number;
   lng: number;
   radiusM: number;
+  alertPhone: string;
 }
 
 export interface FamilyNotice {
@@ -50,7 +70,7 @@ export interface PermissionState {
   completed: boolean;
 }
 
-export type Stage = 'splash' | 'login' | 'survey' | 'terms' | 'phone' | 'permissions' | 'map';
+export type Stage = 'splash' | 'login' | 'mode' | 'survey' | 'terms' | 'phone' | 'permissions' | 'map';
 export type FamilyTab = 'map' | 'alerts' | 'menu';
 
 export interface Session {
@@ -67,6 +87,9 @@ export interface Session {
   notices: FamilyNotice[];
   tab: FamilyTab;
   pendingInvite: string | null;
+  mode: AppMode | null;
+  guardians: GuardianLink[];
+  pendingLeaveAlert: LeaveAlert | null;
 }
 
 export const DEFAULT_CENTER = { lat: 37.6366, lng: 127.0672 };
