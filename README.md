@@ -37,7 +37,7 @@ Google Play, App Store, TestFlight에는 올리지 않았습니다. iOS는 아�
 
 마이크, 문자, 주변 소리, 원격으로 소리를 울리는 기능은 없습니다. 전화번호만으로 다른 사람을 찾지 않습니다.
 
-항상 허용은 선호로 저장됩니다. 이 버전은 앱이 열려 있는 동안 위치를 갱신하고, 권한을 몰래 올리지 않습니다.
+항상 허용은 화면에서 다시 확인한 선호로만 저장됩니다. 앱은 OS 권한을 대신 바꾸지 않고, 설정 화면으로만 안내합니다. 위치 유지 알림을 켜면 알림이 떠 있는 동안 백그라운드에서 위치를 보냅니다. 알림을 끄거나 제조사가 프로세스를 종료하면, 설정에서 위치 항상 허용과 배터리 제한 없음이 있어야 다음 날까지 이어집니다.
 
 ## Google 로그인과 지도
 
@@ -50,13 +50,13 @@ VITE_VWORLD_API_KEY=
 VITE_FAMILY_SYNC_URL=
 ```
 
-- 로그인: [Google Identity Services](https://developers.google.com/identity/gsi/web/guides/overview) 웹 클라이언트. 승인된 자바스크립트 원본에 사이트 주소와 Capacitor의 `https://localhost` 를 넣습니다.
+- 로그인: [Google Identity Services](https://developers.google.com/identity/gsi/web/guides/overview) 웹 클라이언트. 범위는 `openid`, `email`, `profile` 만 사용하고 이름, 이메일, 프로필 사진만 받습니다. 승인된 자바스크립트 원본에 사이트 주소와 Capacitor의 `https://localhost` 를 넣습니다.
 - 지도: 국토교통부 [VWorld](https://www.vworld.kr/) 2D Base 한 종류입니다. 위성, CARTO, OpenStreetMap 전환은 없습니다.
   - `https://api.vworld.kr/req/wmts/1.0.0/{API_KEY}/Base/{z}/{y}/{x}.png`
   - 키는 `import.meta.env.VITE_VWORLD_API_KEY`만 읽습니다. 빌드 시점에 JS 안에 들어갑니다.
   - 키가 없으면 "키가 이 빌드에 없습니다"만 보여 주고 타일을 요청하지 않습니다. 키가 있는데 타일이 실패하면, 그 페이지의 주소(origin)를 인증키 도메인에 넣으라는 안내가 나옵니다. 타일이 한 장이라도 오면 안내는 사라집니다.
   - 인증키 서비스 URL: `https://jadegun1124.github.io`, 앱 `https://localhost`, 로컬 개발 `http://localhost:5173`.
-- 이동 경로: 내 위치는 앱이 열려 있는 동안 약 12m 이상 움직이면 이 브라우저에 최대 300점까지 쌓입니다. 샘플 사람이나 예시 좌표는 없습니다.
+- 이동 경로: 오늘(아시아/서울) 궤적만 이 기기에 남기고, 날짜가 바뀌면 지웁니다. 정지는 반경 50m·3분, 구간은 정지와 정지 사이의 이동 시간입니다. 샘플 사람이나 예시 좌표는 없습니다.
 
 클라이언트 ID가 없으면 로그인은 미리보기로 이어집니다. 미리보기라고 화면에 적습니다. `VITE_GOOGLE_MAPS_API_KEY`는 가족 지도에서 쓰지 않습니다.
 

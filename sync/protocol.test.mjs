@@ -215,6 +215,153 @@ test('health and dev server move a place between two clients', async () => {
   }
 });
 
+test('same coordinates with a newer timestamp refresh the day, and an older replay does not', () => {
+  const room = emptyRoom();
+  const yesterday = Date.UTC(2026, 9, 26, 10, 0);
+  const today = Date.UTC(2026, 9, 27, 1, 0);
+  const first = applyPlace(room, {
+    code: '10001',
+    name: '하나',
+    lat: 37.5,
+    lng: 127,
+    accuracyM: 8,
+    at: yesterday,
+    sharing: true,
+    batteryPct: 70,
+    charging: false,
+    audience: 'admin',
+  });
+  const replay = applyPlace(first.room, {
+    code: '10001',
+    name: '하나',
+    lat: 37.5,
+    lng: 127,
+    accuracyM: 8,
+    at: yesterday,
+    sharing: true,
+    batteryPct: 70,
+    charging: false,
+    audience: 'admin',
+  });
+  assert.equal(replay.ignored, true);
+  const refreshed = applyPlace(first.room, {
+    code: '10001',
+    name: '하나',
+    lat: 37.5,
+    lng: 127,
+    accuracyM: 9,
+    at: today,
+    sharing: true,
+    batteryPct: 40,
+    charging: true,
+    audience: 'admin',
+  });
+  assert.equal(refreshed.ignored, false);
+  assert.equal(refreshed.room.places['하나'].at, today);
+  assert.equal(refreshed.room.places['하나'].batteryPct, 40);
+  assert.equal(refreshed.room.places['하나'].charging, true);
+  const stale = applyPlace(refreshed.room, {
+    code: '10001',
+    name: '하나',
+    lat: 37.6,
+    lng: 127.1,
+    accuracyM: 8,
+    at: yesterday,
+    sharing: true,
+    audience: 'admin',
+  });
+  assert.equal(stale.ignored, true);
+  assert.equal(stale.room.places['하나'].at, today);
+  assert.equal(stale.room.places['하나'].lat, 37.5);
+});
+
+test('alert cursor does not hide places, and family share stays behind the write key', async () => {
+  const store = createMemoryStore();
+  const code = '24680';
+  const writeKey = randomKey();
+  const readKey = randomKey();
+  const token = await syncTokenFor(writeKey, readKey);
+  const at = Date.now();
+  const child = await call(store, 'PUT', `/v1/rooms/${code}/place`, {
+    token,
+    body: {
+      code,
+      name: '하나',
+      lat: 37.1,
+      lng: 127.1,
+      accuracyM: 6,
+      at,
+      sharing: true,
+      batteryPct: 88,
+      charging: false,
+      phone: '01011112222',
+    },
+  });
+  assert.equal(child.status, 200);
+  const admin = await call(store, 'PUT', `/v1/rooms/${code}/place`, {
+    token,
+    body: {
+      code,
+      name: '하나',
+      lat: 37.2,
+      lng: 127.2,
+      accuracyM: 5,
+      at: at + 5,
+      sharing: true,
+      audience: 'family',
+      batteryPct: 55,
+      charging: true,
+    },
+  });
+  assert.equal(admin.status, 200);
+
+  const reader = await call(store, 'GET', `/v1/rooms/${code}?since=${at + 5}`, { token, readKey });
+  assert.equal(reader.status, 200);
+  assert.equal(reader.body.places.length, 2);
+  assert.equal(reader.body.alerts.length, 0);
+  const childPlace = reader.body.places.find((place) => place.audience !== 'family');
+  const familyPlace = reader.body.places.find((place) => place.audience === 'family');
+  assert.equal(childPlace.lat, 37.1);
+  assert.equal(childPlace.batteryPct, 88);
+  assert.equal(childPlace.phone, undefined);
+  assert.equal(familyPlace.lat, 37.2);
+  assert.equal(familyPlace.charging, true);
+
+  const hidden = await call(store, 'GET', `/v1/rooms/${code}/family`);
+  assert.equal(hidden.status, 401);
+  const managed = await call(store, 'GET', `/v1/rooms/${code}/family`, { token });
+  assert.equal(managed.status, 200);
+  assert.equal(managed.body.places.length, 1);
+  assert.equal(managed.body.places[0].audience, 'family');
+  assert.equal(managed.body.places[0].name, '하나');
+  assert.equal(JSON.stringify(managed.body).includes('37.1'), false);
+
+  const stopped = await call(store, 'PUT', `/v1/rooms/${code}/place`, {
+    token,
+    body: { code, name: '하나', lat: null, lng: null, accuracyM: 0, at: at + 10, sharing: false, audience: 'family' },
+  });
+  assert.equal(stopped.status, 200);
+  const after = await call(store, 'GET', `/v1/rooms/${code}/family`, { token });
+  assert.deepEqual(after.body.places, []);
+  const childStill = await call(store, 'GET', `/v1/rooms/${code}`, { token, readKey });
+  assert.equal(childStill.body.places.find((place) => place.audience !== 'family').lat, 37.1);
+});
+
+test('bad battery and audience are rejected', async () => {
+  const store = createMemoryStore();
+  const token = await syncTokenFor(randomKey(), randomKey());
+  const battery = await call(store, 'PUT', '/v1/rooms/33333/place', {
+    token,
+    body: { code: '33333', name: '하나', lat: 37, lng: 127, accuracyM: 4, at: Date.now(), sharing: true, batteryPct: 140 },
+  });
+  assert.equal(battery.status, 400);
+  const audience = await call(store, 'PUT', '/v1/rooms/33333/place', {
+    token,
+    body: { code: '33333', name: '하나', lat: 37, lng: 127, accuracyM: 4, at: Date.now(), sharing: true, audience: 'world' },
+  });
+  assert.equal(audience.status, 400);
+});
+
 test('older sharing change at the same timestamp is kept when the flag flips', () => {
   const room = emptyRoom();
   const first = applyPlace(room, {

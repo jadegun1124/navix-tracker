@@ -105,7 +105,7 @@ function classify(response: Response) {
   else setPhase('down');
 }
 
-let placeQueue: { place: SharedPlace; token: string } | null = null;
+let placeQueue: { code: string; token: string; body: Record<string, unknown> } | null = null;
 let alertQueue: { alert: FamilyAlert; token: string } | null = null;
 let flushing = false;
 let retryMs = 3000;
@@ -116,18 +116,21 @@ function hasPending() {
 
 export function publishPlaceRemote(place: SharedPlace, syncToken?: string | null) {
   if (!syncToken || !splitSyncToken(syncToken) || !familySyncUrl()) return;
-  placeQueue = {
-    token: syncToken,
-    place: {
-      code: place.code,
-      name: place.name.trim().slice(0, 80),
-      lat: place.sharing ? place.lat : null,
-      lng: place.sharing ? place.lng : null,
-      accuracyM: place.accuracyM,
-      at: place.at,
-      sharing: place.sharing,
-    },
+  const body: Record<string, unknown> = {
+    code: place.code,
+    name: place.name.trim().slice(0, 80),
+    lat: place.sharing ? place.lat : null,
+    lng: place.sharing ? place.lng : null,
+    accuracyM: place.accuracyM,
+    at: place.at,
+    sharing: place.sharing,
   };
+  if (place.sharing && typeof place.batteryPct === 'number' && place.batteryPct >= 0 && place.batteryPct <= 100) {
+    body.batteryPct = Math.round(place.batteryPct);
+  }
+  if (place.sharing && typeof place.charging === 'boolean') body.charging = place.charging;
+  if (place.audience === 'family') body.audience = 'family';
+  placeQueue = { code: place.code, token: syncToken, body };
   void flushQueues();
 }
 
@@ -155,7 +158,7 @@ async function flushQueues() {
   try {
     const place = placeQueue;
     if (place) {
-      const ok = await sendQueued(`/v1/rooms/${place.place.code}/place`, place.token, place.place, () => {
+      const ok = await sendQueued(`/v1/rooms/${place.code}/place`, place.token, place.body, () => {
         if (placeQueue === place) placeQueue = null;
       });
       if (!ok) failed = true;
@@ -218,6 +221,7 @@ export interface RemoteLink {
 function isSharedPlace(value: unknown): value is SharedPlace {
   if (!value || typeof value !== 'object') return false;
   const place = value as SharedPlace;
+  if (place.audience != null && place.audience !== 'admin' && place.audience !== 'family') return false;
   return typeof place.code === 'string' && place.code.length >= 4 && typeof place.name === 'string' && typeof place.at === 'number' && typeof place.sharing === 'boolean';
 }
 
@@ -249,6 +253,8 @@ export function startAdminRemoteSync(
     let delay = 2500;
     try {
       const token = await syncTokenFor(link.writeKey, link.readKey);
+      // `since` filters alerts only. Places are always the latest consented points,
+      // so a cursor from yesterday cannot skip a managed member's new fix.
       const response = await request(`/v1/rooms/${link.code}?since=${since}`, {
         method: 'GET',
         headers: {
@@ -279,6 +285,85 @@ export function startAdminRemoteSync(
     if (stopped) return;
     if (document.visibilityState === 'hidden') delay = Math.max(delay, 12000);
     schedule(delay);
+  };
+
+  void tick();
+  const onVisible = () => {
+    if (document.visibilityState !== 'visible' || stopped) return;
+    window.clearTimeout(timer);
+    void tick();
+  };
+  document.addEventListener('visibilitychange', onVisible);
+  return () => {
+    stopped = true;
+    window.clearTimeout(timer);
+    document.removeEventListener('visibilitychange', onVisible);
+  };
+}
+
+const familyEndpointReady = new Map<string, boolean>();
+
+/** True only when this worker serves GET /family. A 404 is the previous worker, which stores places by name and would let an admin self-share overwrite a child. */
+export async function familyEndpointAvailable(code: string, token: string): Promise<boolean> {
+  const cached = familyEndpointReady.get(code);
+  if (cached != null) return cached;
+  if (!familySyncUrl() || !splitSyncToken(token) || !/^\d{4,6}$/.test(code)) return false;
+  try {
+    const response = await request(`/v1/rooms/${code}/family`, {
+      method: 'GET',
+      headers: { 'x-umap-sync-key': token },
+    });
+    if (response.status === 404) {
+      familyEndpointReady.set(code, false);
+      return false;
+    }
+    if (response.ok) {
+      familyEndpointReady.set(code, true);
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+export function startManagedFamilySync(
+  links: { code: string; token: string }[],
+  onRoom: (code: string, places: SharedPlace[]) => void,
+): () => void {
+  const usable = links.filter((link) => splitSyncToken(link.token) && /^\d{4,6}$/.test(link.code));
+  if (!familySyncUrl() || usable.length === 0) return () => {};
+  let stopped = false;
+  let timer = 0;
+
+  const tick = async () => {
+    if (stopped) return;
+    let delay = 4000;
+    try {
+      for (const link of usable) {
+        if (stopped) return;
+        const response = await request(`/v1/rooms/${link.code}/family`, {
+          method: 'GET',
+          headers: { 'x-umap-sync-key': link.token },
+        });
+        if (response.status === 404) continue;
+        classify(response);
+        if (!response.ok) {
+          delay = 12000;
+          continue;
+        }
+        const body: unknown = await response.json();
+        const raw = body && typeof body === 'object' && Array.isArray((body as { places?: unknown[] }).places) ? (body as { places: unknown[] }).places : [];
+        const places = raw.filter((place): place is SharedPlace => isSharedPlace(place) && place.audience === 'family' && place.sharing);
+        onRoom(link.code, places);
+      }
+    } catch {
+      if (!stopped && familySyncUrl()) setPhase('down');
+      delay = 12000;
+    }
+    if (stopped) return;
+    if (document.visibilityState === 'hidden') delay = Math.max(delay, 20000);
+    timer = window.setTimeout(() => void tick(), delay);
   };
 
   void tick();

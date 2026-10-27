@@ -1,5 +1,7 @@
 import type { Profile } from '../types/family';
 
+export { GOOGLE_SIGN_IN_SCOPES } from '../lib/authScopes.mjs';
+
 export function googleClientId(): string {
   return (import.meta.env.VITE_GOOGLE_CLIENT_ID ?? '').trim();
 }

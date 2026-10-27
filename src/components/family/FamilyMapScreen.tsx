@@ -1,12 +1,17 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Bell, Copy, Home, LocateFixed, MapPin, Minus, Plus, Route, UserPlus, X } from 'lucide-react';
-import { buildInviteLink, formatClock, hasLocation, haversineMeters, shouldAlertLeave } from '../../lib/geo';
+import { buildInviteLink, formatAgo, formatClock, hasLocation, haversineMeters, shouldAlertLeave } from '../../lib/geo';
+import { buildDayRecord, formatDurationMs, modeLabel, seoulDayKey } from '../../lib/tracking.mjs';
 import { ackFamilyAlert, isFamilyAlertAcked, publishFamilyAlert, readFamilyAlert, subscribeFamilyAlerts, type FamilyAlert } from '../../services/familyAlert';
-import { publishSharedPlace, readSharedPlaces, subscribeSharedPlaces } from '../../services/familyShare';
+import { readSharedPlaces, subscribeSharedPlaces } from '../../services/familyShare';
 import { currentSyncPhase, familySyncConfigured, splitSyncToken, startAdminRemoteSync, startSyncMonitor, subscribeSyncPhase, syncTokenFor, type SyncPhase } from '../../services/familySync';
 import { sounds } from '../../utils/audio';
 import { DEFAULT_CENTER, type GuardianLink, type HomeZone, type Member } from '../../types/family';
+import { AlwaysAllowNotice } from './AlwaysAllowNotice';
+import { InviteQrImage, InviteQrScan } from './InviteQr';
 import { StreetMap, type StreetMapHandle } from './StreetMap';
+import { TodayRecord } from './TodayRecord';
+import { useFamilyTracking } from './useFamilyTracking';
 import { useFamily } from './session';
 
 export function FamilyMapScreen() {
@@ -19,14 +24,12 @@ export function FamilyMapScreen() {
   const [homeCenter, setHomeCenter] = useState(DEFAULT_CENTER);
   const [draftHome, setDraftHome] = useState<HomeZone | null>(null);
   const mapRef = useRef<StreetMapHandle>(null);
-  const [sheet, setSheet] = useState<'home' | 'invite' | 'accept' | null>(state.mode === 'managed' && state.pendingInvite ? 'accept' : null);
+  const [sheet, setSheet] = useState<'home' | 'invite' | 'accept' | 'today' | null>(state.mode === 'managed' && state.pendingInvite ? 'accept' : null);
   const [confirm, setConfirm] = useState<{ kind: 'remove' | 'leave'; id: string; name: string } | null>(null);
   const [incoming, setIncoming] = useState<FamilyAlert | null>(null);
   const [sirenOn, setSirenOn] = useState(false);
   const [selectedId, setSelectedId] = useState('self');
   const insideRef = useRef<Record<string, boolean>>({});
-  const lastFix = useRef<{ lat: number; lng: number; at: number } | null>(null);
-  const centeredFix = useRef(false);
   const familyRef = useRef(family);
   useEffect(() => {
     familyRef.current = family;
@@ -34,37 +37,15 @@ export function FamilyMapScreen() {
   const notifyOk = state.permissions.notifications === 'granted';
   const fittedShare = useRef(false);
   const [syncPhase, setSyncPhase] = useState<SyncPhase>(() => currentSyncPhase());
-  const sharedTokens = useRef<Record<string, string>>({});
+  const [now, setNow] = useState(() => Date.now());
+  const tracking = useFamilyTracking((lat, lng) => mapRef.current?.panTo(lat, lng));
 
   useEffect(() => subscribeSyncPhase(setSyncPhase), []);
   useEffect(() => startSyncMonitor(), []);
   useEffect(() => {
-    if (state.mode !== 'managed') return;
-    const name = (state.profile?.name || self?.name || '가족').trim().slice(0, 80) || '가족';
-    const nextTokens: Record<string, string> = {};
-    for (const link of state.guardians) {
-      if (link.syncToken) nextTokens[link.code] = link.syncToken;
-    }
-    for (const [code, token] of Object.entries(sharedTokens.current)) {
-      if (nextTokens[code]) continue;
-      publishSharedPlace({ code, name, lat: null, lng: null, accuracyM: 0, at: Date.now(), sharing: false }, token);
-    }
-    sharedTokens.current = nextTokens;
-    const located = self && hasLocation(self) ? self : null;
-    for (const link of state.guardians) {
-      const sharing = link.share === 'allowed';
-      const remote = link.syncToken && (sharing || link.share === 'revoked') ? link.syncToken : null;
-      publishSharedPlace({
-        code: link.code,
-        name,
-        lat: sharing && located ? located.lat : null,
-        lng: sharing && located ? located.lng : null,
-        accuracyM: located?.accuracyM ?? 0,
-        at: sharing ? (located?.updatedAt || Date.now()) : Date.now(),
-        sharing,
-      }, remote);
-    }
-  }, [self, state.guardians, state.mode, state.profile?.name]);
+    const timer = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     if (state.mode !== 'admin') return;
@@ -74,29 +55,6 @@ export function FamilyMapScreen() {
     for (const place of readSharedPlaces()) apply(place);
     return subscribeSharedPlaces(apply);
   }, [state.mode]);
-
-  useEffect(() => {
-    if (state.permissions.locationMode === 'denied' || state.permissions.locationMode === 'unknown') return;
-    if (!navigator.geolocation) return;
-    const watch = navigator.geolocation.watchPosition(
-      (position) => {
-        const next = { lat: position.coords.latitude, lng: position.coords.longitude, at: Date.now() };
-        if (lastFix.current) {
-          const moved = haversineMeters(lastFix.current, next);
-          if (moved < 8 && next.at - lastFix.current.at < 8000) return;
-        }
-        lastFix.current = next;
-        familyRef.current.updateSelf(next.lat, next.lng, position.coords.accuracy);
-        if (!centeredFix.current) {
-          centeredFix.current = true;
-          mapRef.current?.panTo(next.lat, next.lng);
-        }
-      },
-      () => undefined,
-      { enableHighAccuracy: state.permissions.accuracy === 'precise', maximumAge: 4000, timeout: 12000 },
-    );
-    return () => navigator.geolocation.clearWatch(watch);
-  }, [state.permissions.accuracy, state.permissions.locationMode]);
 
   useEffect(() => {
     if (state.permissions.motion !== 'granted') return;
@@ -222,8 +180,9 @@ export function FamilyMapScreen() {
 
   const selected = state.members.find((member) => member.id === selectedId) ?? state.members.find((member) => member.id === 'self');
   const visibleMembers = state.members.filter((member) => {
-    if (member.role === 'guardian') return false;
     if (member.id === 'self') return true;
+    if (member.role === 'admin-share') return state.mode === 'managed' && hasLocation(member);
+    if (member.role === 'guardian') return false;
     return state.mode === 'admin' && member.share === 'allowed' && hasLocation(member);
   });
   const shareKey = visibleMembers
@@ -242,7 +201,9 @@ export function FamilyMapScreen() {
     }, 200);
     return () => window.clearInterval(timer);
   }, [shareKey, state.members, state.mode]);
-  const trail = selected && showTrail && (selected.id === 'self' || selected.share === 'allowed') ? state.tracks[selected.id] ?? [] : [];
+  const trail = selected && showTrail && (selected.id === 'self' || selected.share === 'allowed' || selected.role === 'admin-share') ? state.tracks[selected.id] ?? [] : [];
+  const todayRecord = buildDayRecord(selected ? state.tracks[selected.id] ?? [] : [], now);
+  const todayVisits = selected ? state.visits[selected.id] ?? [] : [];
   const missingSyncKey = state.mode === 'managed' && state.guardians.some((link) => (link.share === 'allowed' || link.share === 'revoked') && !link.syncToken);
   const syncBanner = syncBannerText(syncPhase, missingSyncKey);
   const remoteLive = syncPhase === 'live';
@@ -275,7 +236,13 @@ export function FamilyMapScreen() {
 
           <div className="pointer-events-none absolute left-3 top-3 z-30 max-w-[230px] rounded-2xl bg-white/95 px-3 py-1.5 text-[11px] font-semibold leading-4 text-slate-600 shadow">
             VWorld 2D · 국토교통부
-            <span className="mt-0.5 block text-slate-500">{state.mode === 'admin' ? '내 위치와 공유를 허용한 아이' : '내 위치만 표시'}</span>
+            <span className="mt-0.5 block text-slate-500">
+              {state.mode === 'admin' ? '내 위치와 공유를 허용한 아이' : state.members.some((member) => member.role === 'admin-share' && hasLocation(member)) ? '내 위치와 공유한 관리자' : '내 위치 · 관리자 위치는 상대가 공유할 때만'}
+            </span>
+            {self?.battery != null && (
+              <span className="mt-0.5 block text-slate-500">배터리 {self.battery}%{self.charging ? ' · 충전 중' : ''}</span>
+            )}
+            {tracking.waiting && <span className="mt-0.5 block text-amber-700">{tracking.waiting}</span>}
             <span className="mt-0.5 block text-slate-500">{syncPhaseLine(syncPhase)}</span>
             {showTrail && selected && (
               <span className="mt-0.5 block text-slate-500">
@@ -370,35 +337,64 @@ export function FamilyMapScreen() {
 
         {state.tab === 'map' && (
           <section className="rounded-t-3xl bg-white px-4 pb-2 pt-3 shadow-[0_-8px_30px_rgba(15,23,42,0.08)]">
+            <AlwaysAllowNotice
+              locationMode={state.permissions.locationMode}
+              keepAlive={state.backgroundKeepAlive}
+              native={tracking.native}
+              onOpenSettings={() => void tracking.openSettings()}
+              onReview={family.revisitPermissions}
+              onStart={() => family.setKeepAlive(true)}
+              onStop={() => family.setKeepAlive(false)}
+            />
             <div className="mb-2 flex items-center justify-between">
               <h2 className="text-lg font-black">우리 가족</h2>
-              {state.mode === 'admin' && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setHomeCenter(mapRef.current?.getCenter() ?? center);
-                    setSheet('home');
-                  }}
-                  className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-bold text-slate-700"
-                >
-                  {state.home ? '우리 집 수정' : '우리 집 추가'}
+              <div className="flex gap-2">
+                <button type="button" onClick={() => setSheet('today')} className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-bold text-slate-700">
+                  오늘 이동{todayRecord.segments.length > 0 ? ` ${todayRecord.segments.length}` : ''}
                 </button>
-              )}
+                {state.mode === 'admin' && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setHomeCenter(mapRef.current?.getCenter() ?? center);
+                      setSheet('home');
+                    }}
+                    className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-bold text-slate-700"
+                  >
+                    {state.home ? '우리 집 수정' : '우리 집 추가'}
+                  </button>
+                )}
+              </div>
             </div>
             {state.profile?.preview && <p className="mb-2 text-xs font-semibold text-amber-600">미리보기 세션 · Google 계정으로 연결되지 않았습니다.</p>}
             <div className="max-h-48 space-y-2 overflow-y-auto pb-2">
-              {(state.mode === 'managed' ? state.members.filter((member) => member.id === 'self') : state.members.filter((member) => member.role !== 'guardian')).map((member) => (
+              {(state.mode === 'managed'
+                ? state.members.filter((member) => member.id === 'self' || member.role === 'admin-share')
+                : state.members.filter((member) => member.role !== 'guardian' && member.role !== 'admin-share')).map((member) => (
                 <MemberCard
                   key={member.id}
                   member={member}
+                  now={now}
+                  trip={member.id === selected?.id && todayRecord.segments.length > 0 ? `${modeLabel(todayRecord.segments[todayRecord.segments.length - 1].mode)} · ${formatDurationMs(todayRecord.segments[todayRecord.segments.length - 1].durationMs)}` : undefined}
                   home={state.mode === 'admin' ? state.home : null}
                   selected={member.id === selected?.id}
                   onSelect={() => focusMember(member, true)}
                   onRemove={state.mode === 'admin' && member.id !== 'self' ? () => setConfirm({ kind: 'remove', id: member.id, name: member.name }) : undefined}
                 />
               ))}
+              {state.mode === 'admin' && (
+                <button
+                  type="button"
+                  onClick={() => family.setShareSelf(!state.shareSelfWithFamily)}
+                  className={`w-full rounded-2xl px-3 py-2 text-left text-xs font-bold ${state.shareSelfWithFamily ? 'bg-blue-50 text-[#0084FF]' : 'bg-slate-50 text-slate-600'}`}
+                >
+                  {state.shareSelfWithFamily ? '내 위치를 가족에게 보여주는 중 · 끄기' : '내 위치를 피관리자에게 공유'}
+                  <span className="mt-1 block font-semibold text-slate-500">피관리자는 이 스위치를 켠 뒤에만 관리자 핀을 봅니다. 읽기 키는 보내지 않습니다.</span>
+                  {tracking.familyShareNote && <span className="mt-1 block font-semibold text-amber-700">{tracking.familyShareNote}</span>}
+                </button>
+              )}
               {state.mode === 'managed' && state.guardians.length > 0 && (
-                <p className="px-1 pt-1 text-[11px] font-bold text-slate-400">관리자에게 내 위치 보내기 · 관리자 위치는 지도에 없습니다</p>
+                <p className="px-1 pt-1 text-[11px] font-bold text-slate-400">관리자에게 내 위치 보내기 · 관리자 핀은 상대가 공유할 때만</p>
               )}
               {state.mode === 'managed' && state.guardians.map((link) => (
                 <GuardianCard
@@ -456,7 +452,7 @@ export function FamilyMapScreen() {
               <Line k="배터리 안내" v={state.permissions.battery === 'acknowledged' ? '확인함' : state.permissions.battery === 'skipped' ? '나중에' : '해당 없음'} />
             </dl>
             <p className="mt-3 text-xs leading-5 text-slate-400">
-              항상 허용은 선호로 저장됩니다. 이 버전은 앱이 열려 있는 동안 위치를 갱신하고, 권한을 몰래 올리지 않습니다.
+              항상 허용은 화면에서 다시 확인한 선호입니다. Umap은 OS 권한을 대신 바꾸지 않습니다. 위치 유지 알림을 켜면, 알림이 떠 있는 동안 앱을 닫아도 위치를 보냅니다. 프로세스가 꺼지면 설정에서 위치 항상 허용과 배터리 제한 없음이 있어야 다음 날까지 이어집니다.
             </p>
             <div className="mt-4 space-y-2">
               <button type="button" onClick={family.reopenMode} className="w-full rounded-full bg-slate-100 py-3 font-bold">
@@ -499,6 +495,11 @@ export function FamilyMapScreen() {
               setSheet(null);
             }}
           />
+        )}
+        {sheet === 'today' && (
+          <Sheet title="오늘 이동" onClose={() => setSheet(null)}>
+            <TodayRecord segments={todayRecord.segments} stops={todayRecord.stops} visits={todayVisits} />
+          </Sheet>
         )}
         {sheet === 'invite' && state.mode === 'admin' && (
           <AdminInviteSheet
@@ -544,6 +545,9 @@ export function FamilyMapScreen() {
 }
 
 function memberStatus(member: Member, home: HomeZone | null): string {
+  if (member.role === 'admin-share') {
+    return hasLocation(member) ? `관리자 위치 · ±${Math.round(member.accuracyM)}m` : '관리자 위치 없음';
+  }
   if (member.id !== 'self') {
     if (member.share === 'allowed' && hasLocation(member)) {
       const place = home && haversineMeters(member, home) <= home.radiusM ? '우리 집 안' : home ? '집 밖' : '위치 공유 중';
@@ -563,15 +567,24 @@ function MemberCard({
   member,
   home,
   selected,
+  now,
+  trip,
   onSelect,
   onRemove,
 }: {
   member: Member;
   home: HomeZone | null;
   selected: boolean;
+  now: number;
+  trip?: string;
   onSelect: () => void;
   onRemove?: () => void;
 }) {
+  const when = member.updatedAt
+    ? seoulDayKey(member.updatedAt) === seoulDayKey(now)
+      ? formatAgo(member.updatedAt, now)
+      : `${formatClock(member.updatedAt)} 이전 날짜`
+    : '';
   return (
     <div className={`flex w-full items-center gap-3 rounded-2xl px-3 py-2 text-left ${selected ? 'bg-blue-50' : 'bg-slate-50'}`}>
       <span className="flex h-10 w-10 items-center justify-center rounded-full bg-[#0084FF] font-black text-white">
@@ -582,9 +595,11 @@ function MemberCard({
           <span className="block font-bold">{member.name}</span>
           <span className="block text-xs text-slate-500">
             {memberStatus(member, home)}
-            {member.battery != null ? ` · 배터리 ${member.battery}%` : ''}
+            {member.battery != null ? ` · 배터리 ${member.battery}%${member.charging ? ' 충전 중' : ''}` : ''}
+            {when ? ` · ${when}` : ''}
             {member.moving === true ? ' · 이동 중' : member.moving === false ? ' · 머무름' : ''}
           </span>
+          {trip && <span className="block text-xs font-semibold text-[#0084FF]">{trip}</span>}
         </span>
       </button>
       {onRemove && (
@@ -791,6 +806,8 @@ function AdminInviteSheet({
     <Sheet title="2. 코드를 보내세요" onClose={onClose}>
       <p className="text-sm leading-6 text-slate-500">{sentName} 님 폰에서 피관리자 모드로 링크를 엽니다. 수락 다음에 위치 공유를 따로 묻습니다. 전화번호로는 위치를 찾지 않습니다.</p>
       <p className="mt-4 text-center text-4xl font-black tracking-[0.25em] text-[#0084FF]">{code}</p>
+      {token && <InviteQrImage text={buildInviteLink(code, home, token)} />}
+      {token && <p className="mt-2 text-center text-[11px] leading-5 text-slate-400">QR은 초대 링크와 같습니다. 위치를 읽는 키는 들어 있지 않고, 전화번호도 없습니다.</p>}
       <label className="mt-4 block text-xs font-bold text-slate-400" htmlFor="sync-token">
         동기화 키
       </label>
@@ -883,6 +900,13 @@ function ManagedInviteSheet({
             placeholder="초대 코드 또는 링크"
             inputMode="text"
             className="mt-2 w-full rounded-2xl border border-slate-200 px-3 py-3 outline-none focus:border-[#0084FF]"
+          />
+          <InviteQrScan
+            onText={(value) => {
+              const parsed = parseInviteDraft(value);
+              if (parsed.code) setCode(parsed.code);
+              if (parsed.syncToken) setSyncToken(parsed.syncToken);
+            }}
           />
           <label className="mt-3 block text-xs font-bold text-slate-400" htmlFor="managed-sync-token">
             동기화 키 (다른 폰과 나눌 때)
