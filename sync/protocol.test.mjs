@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { startSyncServer } from './dev-server.mjs';
+import { bytesToBase64Url } from './webpush.mjs';
 import {
   applyPlace,
   createMemoryStore,
   emptyRoom,
   handleSyncRequest,
   randomKey,
+  roomToken,
   sha256Base64Url,
   syncTokenFor,
   withCors,
@@ -384,4 +386,123 @@ test('older sharing change at the same timestamp is kept when the flag flips', (
   });
   assert.equal(revoke.ignored, false);
   assert.equal(revoke.room.places['하나'].sharing, false);
+});
+
+test('a live fix survives an empty heartbeat, replaces a newer placeholder, and keeps battery', () => {
+  const now = Date.UTC(2026, 9, 27, 3, 0);
+  const first = applyPlace(emptyRoom(), {
+    code: '10001',
+    name: '하나',
+    lat: 37.5,
+    lng: 127,
+    accuracyM: 8,
+    at: now,
+    sharing: true,
+    batteryPct: 70,
+    charging: false,
+    audience: 'admin',
+  });
+  const heartbeat = applyPlace(first.room, {
+    code: '10001',
+    name: '하나',
+    lat: null,
+    lng: null,
+    accuracyM: 0,
+    at: now + 60_000,
+    sharing: true,
+    audience: 'admin',
+  });
+  assert.equal(heartbeat.ignored, true);
+  assert.equal(heartbeat.room.places['하나'].lat, 37.5);
+  assert.equal(heartbeat.room.places['하나'].batteryPct, 70);
+  assert.equal(heartbeat.room.places['하나'].at, now);
+
+  const placeholder = applyPlace(emptyRoom(), {
+    code: '10001',
+    name: '하나',
+    lat: null,
+    lng: null,
+    accuracyM: 0,
+    at: now + 60_000,
+    sharing: true,
+    audience: 'admin',
+  });
+  const fix = applyPlace(placeholder.room, {
+    code: '10001',
+    name: '하나',
+    lat: 37.2,
+    lng: 127.2,
+    accuracyM: 9,
+    at: now,
+    sharing: true,
+    batteryPct: 41,
+    charging: true,
+    audience: 'admin',
+  });
+  assert.equal(fix.ignored, false);
+  assert.equal(fix.room.places['하나'].lat, 37.2);
+  assert.equal(fix.room.places['하나'].batteryPct, 41);
+
+  const moved = applyPlace(fix.room, {
+    code: '10001',
+    name: '하나',
+    lat: 37.3,
+    lng: 127.3,
+    accuracyM: 7,
+    at: now + 120_000,
+    sharing: true,
+    audience: 'admin',
+  });
+  assert.equal(moved.room.places['하나'].lat, 37.3);
+  assert.equal(moved.room.places['하나'].batteryPct, 41);
+  assert.equal(moved.room.places['하나'].charging, true);
+
+  const revoked = applyPlace(moved.room, {
+    code: '10001',
+    name: '하나',
+    lat: null,
+    lng: null,
+    accuracyM: 0,
+    at: now + 180_000,
+    sharing: false,
+    audience: 'admin',
+  });
+  assert.equal(revoked.room.places['하나'].sharing, false);
+  assert.equal(revoked.room.places['하나'].lat, null);
+});
+
+test('SOS push subscription is kept for the admin reader and hidden from the room view', async () => {
+  const store = createMemoryStore();
+  const code = '13579';
+  const writeKey = randomKey();
+  const readKey = randomKey();
+  const token = await syncTokenFor(writeKey, readKey);
+  const key = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits']);
+  const publicRaw = new Uint8Array(await crypto.subtle.exportKey('raw', key.publicKey));
+  const auth = crypto.getRandomValues(new Uint8Array(16));
+  const subscription = {
+    endpoint: 'https://fcm.googleapis.com/fcm/send/umap-test-device',
+    p256dh: bytesToBase64Url(publicRaw),
+    auth: bytesToBase64Url(auth),
+    phone: '01012345678',
+  };
+  const denied = await call(store, 'PUT', `/v1/rooms/${code}/push`, { token, body: subscription });
+  assert.equal(denied.status, 403);
+  const saved = await call(store, 'PUT', `/v1/rooms/${code}/push`, { token, readKey, body: subscription });
+  assert.equal(saved.status, 200);
+  const local = await call(store, 'PUT', `/v1/rooms/${code}/push`, {
+    token,
+    readKey,
+    body: { ...subscription, endpoint: 'https://127.0.0.1/push' },
+  });
+  assert.equal(local.status, 400);
+
+  const reader = await call(store, 'GET', `/v1/rooms/${code}`, { token, readKey });
+  assert.equal(JSON.stringify(reader.body).includes('fcm.googleapis.com'), false);
+  assert.equal(JSON.stringify(reader.body).includes('010'), false);
+  const id = await roomToken(code, writeKey, token.split('.')[1]);
+  const room = await store.read(id);
+  assert.equal(room.pushes.length, 1);
+  assert.equal(room.pushes[0].phone, undefined);
+  assert.equal(room.pushes[0].endpoint, subscription.endpoint);
 });

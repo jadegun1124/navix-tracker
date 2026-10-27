@@ -17,7 +17,7 @@ function escapeHtml(value: string): string {
 }
 
 function batteryMarkup(member: Member, selected: boolean): string {
-  if (member.role !== 'self' || member.battery == null) return '';
+  if (member.battery == null) return '';
   const pct = Math.max(0, Math.min(100, Math.round(member.battery)));
   const charging = member.charging === true;
   const color = selected ? '#ffffff' : pct <= 20 ? '#dc2626' : '#334155';

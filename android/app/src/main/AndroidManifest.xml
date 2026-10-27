@@ -54,6 +54,12 @@
             android:exported="false"
             android:foregroundServiceType="location"
             android:stopWithTask="false" />
+
+        <service
+            android:name=".AlertWatchService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync"
+            android:stopWithTask="false" />
     </application>
 
     <!-- ACCESS_BACKGROUND_LOCATION is declared so the location permission screen can offer 항상 허용.
@@ -65,6 +71,7 @@
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
     <!-- Invite QR only. The app asks at the scan button and does not record audio. -->

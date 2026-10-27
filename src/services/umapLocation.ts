@@ -58,6 +58,9 @@ interface UmapLocationPlugin {
   start(options: { config: string }): Promise<{ started: boolean; reason?: string }>;
   stop(): Promise<{ stopped: boolean }>;
   status(): Promise<{ running: boolean; userStopped: boolean; native: boolean; reason?: string }>;
+  startAlertWatch(options: { config: string }): Promise<{ started: boolean; reason?: string }>;
+  stopAlertWatch(): Promise<{ stopped: boolean }>;
+  alertWatchStatus(): Promise<{ running: boolean; userStopped: boolean }>;
   ackStopped(): Promise<void>;
   addListener(eventName: 'fix', listenerFunc: (fix: UmapFix) => void): Promise<PluginListenerHandle>;
 }
@@ -97,6 +100,15 @@ const web: UmapLocationPlugin = {
     return { running: false, userStopped: false, native: false };
   },
   async ackStopped() {},
+  async startAlertWatch() {
+    return { started: false, reason: 'web' };
+  },
+  async stopAlertWatch() {
+    return { stopped: true };
+  },
+  async alertWatchStatus() {
+    return { running: false, userStopped: false };
+  },
   async addListener() {
     return { remove: async () => {} };
   },

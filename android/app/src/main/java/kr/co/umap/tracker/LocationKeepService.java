@@ -45,7 +45,8 @@ import org.json.JSONObject;
 public class LocationKeepService extends Service {
     public static final String ACTION_STOP = "kr.co.umap.tracker.STOP_KEEPALIVE";
     private static final String PREFS = "umap_location_keep";
-    private static final String CHANNEL_ID = "umap_location";
+    private static final String CHANNEL_ID = "umap_location_quiet";
+    private static final String LEGACY_CHANNEL_ID = "umap_location";
     private static final int NOTIFICATION_ID = 4108;
 
     public interface Sink {
@@ -230,24 +231,36 @@ public class LocationKeepService extends Service {
     private void becomeForeground() {
         NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         if (Build.VERSION.SDK_INT >= 26) {
-            NotificationChannel channel = new NotificationChannel(CHANNEL_ID, "위치 공유", NotificationManager.IMPORTANCE_LOW);
-            channel.setDescription("항상 허용을 고른 뒤 가족에게 위치를 보낼 때 표시합니다.");
+            // The previous channel was IMPORTANCE_LOW and already created on devices.
+            // Android will not lower that importance, so delete it and use a new min channel.
+            manager.deleteNotificationChannel(LEGACY_CHANNEL_ID);
+            NotificationChannel channel = new NotificationChannel(CHANNEL_ID, "Umap", NotificationManager.IMPORTANCE_MIN);
+            channel.setDescription("");
+            channel.setSound(null, null);
+            channel.enableVibration(false);
+            channel.enableLights(false);
+            channel.setShowBadge(false);
+            channel.setLockscreenVisibility(Notification.VISIBILITY_SECRET);
             manager.createNotificationChannel(channel);
         }
         Intent open = new Intent(this, MainActivity.class);
         PendingIntent content = PendingIntent.getActivity(this, 1, open, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-        Intent stop = new Intent(this, LocationKeepService.class);
-        stop.setAction(ACTION_STOP);
-        PendingIntent stopAction = PendingIntent.getService(this, 2, stop, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         Notification.Builder builder = Build.VERSION.SDK_INT >= 26 ? new Notification.Builder(this, CHANNEL_ID) : new Notification.Builder(this);
-        builder.setContentTitle("Umap 위치 공유")
-            .setContentText("동의한 가족에게 이 폰의 위치를 보내는 중입니다.")
-            .setSmallIcon(android.R.drawable.ic_menu_mylocation)
+        // Location foreground services still need a notification object. It carries no share text,
+        // makes no sound, and uses the minimum importance so the shade does not list "위치 공유".
+        builder.setSmallIcon(android.R.drawable.ic_menu_mylocation)
+            .setContentTitle("\u2060")
+            .setContentText("\u2060")
             .setContentIntent(content)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
-            .addAction(new Notification.Action.Builder(android.R.drawable.ic_menu_close_clear_cancel, "위치 유지 끄기", stopAction).build());
+            .setShowWhen(false)
+            .setVisibility(Notification.VISIBILITY_SECRET)
+            .setCategory(Notification.CATEGORY_SERVICE)
+            .setPriority(Notification.PRIORITY_MIN);
+        if (Build.VERSION.SDK_INT >= 26) builder.setSilent(true);
         Notification notification = builder.build();
+        notification.flags |= Notification.FLAG_NO_CLEAR;
         if (Build.VERSION.SDK_INT >= 29) startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION);
         else startForeground(NOTIFICATION_ID, notification);
     }

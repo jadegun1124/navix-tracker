@@ -158,16 +158,19 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
     for (const link of state.guardians) {
       const sharing = link.share === 'allowed';
       const remote = link.syncToken && (sharing || link.share === 'revoked') ? link.syncToken : null;
+      // No fix yet: do not publish a newer empty point. That used to replace the native service's coordinates.
+      if (sharing && !located) continue;
+      const publishedName = (link.rosterName || name).trim().slice(0, 80) || name;
       publishSharedPlace({
         code: link.code,
-        name,
+        name: publishedName,
         lat: sharing && located ? located.lat : null,
         lng: sharing && located ? located.lng : null,
         accuracyM: located?.accuracyM ?? 0,
-        at: sharing ? (located?.updatedAt || Date.now()) : Date.now(),
+        at: Date.now(),
         sharing,
-        batteryPct: sharing ? located?.battery ?? null : null,
-        charging: sharing ? located?.charging ?? null : null,
+        batteryPct: sharing ? (self?.battery ?? null) : null,
+        charging: sharing ? (self?.charging ?? null) : null,
       }, remote);
     }
   }, [self, state.guardians, state.mode, state.profile?.name]);
@@ -197,7 +200,7 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
         lat: sending && located ? located.lat : null,
         lng: sending && located ? located.lng : null,
         accuracyM: located?.accuracyM ?? 0,
-        at: sending && located ? located.updatedAt : Date.now(),
+        at: Date.now(),
         sharing: sending,
         audience: 'family',
         batteryPct: sending ? located?.battery ?? null : null,

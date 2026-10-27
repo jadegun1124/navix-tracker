@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useReducer } from 'react';
 import { hasLocation } from '../../lib/geo';
+import { resolveManagedTarget } from '../../lib/managedPlace.mjs';
 import { localProfile } from '../../lib/localProfile.mjs';
 import { HISTORY_DAYS, TRAIL_POINT_CAP, isWithinHistory, seoulDayKey, settleTrailPoint, tracksWithinHistory, visitsWithinHistory } from '../../lib/tracking.mjs';
 import type { DayStop } from '../../lib/tracking.mjs';
@@ -259,6 +260,7 @@ function cleanGuardians(value: unknown): GuardianLink[] {
     if (typeof link.id !== 'string' || code.length < 4) continue;
     const share = link.share === 'allowed' || link.share === 'revoked' ? link.share : 'accepted';
     const syncToken = cleanSyncToken(link.syncToken);
+    const rosterName = typeof link.rosterName === 'string' ? link.rosterName.trim().slice(0, 80) : '';
     links.push({
       id: link.id,
       label: (link.label || '관리자').slice(0, 20),
@@ -266,6 +268,7 @@ function cleanGuardians(value: unknown): GuardianLink[] {
       share,
       leaveAlert: cleanLeaveAlert(link.leaveAlert),
       ...(syncToken ? { syncToken } : {}),
+      ...(rosterName ? { rosterName } : {}),
     });
   }
   return links;
@@ -402,7 +405,7 @@ type Action =
   | { type: 'clear-home' }
   | { type: 'add-member'; name: string; code: string }
   | { type: 'remove-member'; id: string }
-  | { type: 'accept-invite'; label: string; code: string; syncToken: string | null }
+  | { type: 'accept-invite'; label: string; code: string; syncToken: string | null; rosterName: string | null }
   | { type: 'set-guardian-share'; code: string; share: 'allowed' | 'revoked' }
   | { type: 'leave-guardian'; id: string }
   | { type: 'dismiss-invite' }
@@ -540,7 +543,8 @@ function reducer(state: Session, action: Action): Session {
       if (state.guardians.some((link) => link.code === code)) return state;
       const leaveAlert = state.pendingInvite === code || readInvite() === code ? state.pendingLeaveAlert : null;
       const syncToken = cleanSyncToken(action.syncToken) || (state.pendingInvite === code ? cleanSyncToken(state.pendingSyncToken) : null);
-      const link: GuardianLink = { id: `g-${Date.now()}`, label, code, share: 'accepted', leaveAlert, ...(syncToken ? { syncToken } : {}) };
+      const rosterName = typeof action.rosterName === 'string' ? action.rosterName.trim().slice(0, 80) : '';
+      const link: GuardianLink = { id: `g-${Date.now()}`, label, code, share: 'accepted', leaveAlert, ...(syncToken ? { syncToken } : {}), ...(rosterName ? { rosterName } : {}) };
       const alertNote = leaveAlert ? ` 위치 공유를 허용한 뒤 집 반경 ${leaveAlert.radiusM}m를 나가면 관리자 화면에 사이렌이 울립니다. 이 폰에서는 울리지 않습니다.` : '';
       return {
         ...state,
@@ -654,9 +658,13 @@ function reducer(state: Session, action: Action): Session {
       if (state.mode !== 'admin') return state;
       const place = action.place;
       if (place.audience === 'family') return state;
-      const children = state.members.filter((member) => member.id !== 'self' && member.role !== 'guardian' && member.role !== 'admin-share' && member.inviteCode === place.code);
-      const member = children.find((item) => item.name === place.name) ?? (children.length === 1 ? children[0] : undefined);
+      const target = resolveManagedTarget(state.members, place);
+      const liveFix = place.sharing && place.lat != null && place.lng != null && Number.isFinite(place.lat) && Number.isFinite(place.lng);
+      if (target.create && !liveFix) return state;
+      const members = target.create ? [...state.members, target.create] : state.members;
+      const member = members.find((item) => item.id === target.id);
       if (!member) return state;
+      state = { ...state, members };
       if (!place.sharing) {
         if (member.share !== 'allowed' && !hasLocation(member)) return state;
         const tracks = { ...state.tracks };
@@ -668,10 +676,19 @@ function reducer(state: Session, action: Action): Session {
         };
       }
       if (place.lat == null || place.lng == null || !Number.isFinite(place.lat) || !Number.isFinite(place.lng)) {
-        if (member.share === 'allowed' && !hasLocation(member)) return state;
+        const battery = typeof place.batteryPct === 'number' ? Math.round(place.batteryPct) : member.battery;
+        const charging = place.charging === true ? true : place.charging === false ? false : member.charging;
+        if (hasLocation(member)) {
+          if (member.share === 'allowed' && member.battery === battery && member.charging === charging) return state;
+          return {
+            ...state,
+            members: state.members.map((item) => (item.id === member.id ? { ...item, share: 'allowed', battery, charging } : item)),
+          };
+        }
+        if (member.share === 'allowed') return state;
         return {
           ...state,
-          members: state.members.map((item) => (item.id === member.id ? { ...item, share: 'allowed', lat: null, lng: null } : item)),
+          members: state.members.map((item) => (item.id === member.id ? { ...item, share: 'allowed', lat: null, lng: null, battery, charging } : item)),
         };
       }
       if (isSeedLocation(place.lat, place.lng) && place.accuracyM === 18) return state;
@@ -840,7 +857,7 @@ interface FamilyApi {
   clearHome: () => void;
   addMember: (name: string, code: string) => void;
   removeMember: (id: string) => void;
-  acceptInvite: (label: string, code: string, syncToken?: string | null) => void;
+  acceptInvite: (label: string, code: string, syncToken?: string | null, rosterName?: string | null) => void;
   setGuardianShare: (code: string, share: 'allowed' | 'revoked') => void;
   leaveGuardian: (id: string) => void;
   dismissInvite: () => void;
@@ -905,7 +922,7 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
     clearHome: () => dispatch({ type: 'clear-home' }),
     addMember: (name, code) => dispatch({ type: 'add-member', name, code }),
     removeMember: (id) => dispatch({ type: 'remove-member', id }),
-    acceptInvite: (label, code, syncToken) => dispatch({ type: 'accept-invite', label, code, syncToken: syncToken ?? null }),
+    acceptInvite: (label, code, syncToken, rosterName) => dispatch({ type: 'accept-invite', label, code, syncToken: syncToken ?? null, rosterName: rosterName ?? null }),
     setGuardianShare: (code, share) => dispatch({ type: 'set-guardian-share', code, share }),
     leaveGuardian: (id) => dispatch({ type: 'leave-guardian', id }),
     dismissInvite: () => dispatch({ type: 'dismiss-invite' }),

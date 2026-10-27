@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { APP_DETAILS_ACTION, BATTERY_POPUP_ACTION, LOCATION_PERMISSION_ACTION, LOCATION_PERMISSION_GROUP, LOCATION_PERMISSION_LIST_ACTION, alwaysAllowAction, alwaysAllowScreens, batteryAction, keepEntryPrompt, motionAction, notificationAction, whileUsingAction } from './systemSettings.mjs';
 
@@ -30,6 +31,16 @@ test('keep-alive notification is asked at entry until allowed, and started only 
   assert.equal(keepEntryPrompt({ ...base, notifications: 'granted', locationMode: 'always' }), 'start');
   assert.equal(keepEntryPrompt({ ...base, notifications: 'granted', locationMode: 'always', startAsked: true }), 'none');
   assert.equal(keepEntryPrompt({ ...base, notifications: 'granted', locationMode: 'always', keepAlive: true }), 'none');
+});
+
+test('location foreground notification does not post the share banner', () => {
+  const source = readFileSync(new URL('../../android/app/src/main/java/kr/co/umap/tracker/LocationKeepService.java', import.meta.url), 'utf8');
+  assert.equal(source.includes('Umap 위치 공유'), false);
+  assert.equal(source.includes('위치를 보내는 중'), false);
+  assert.equal(source.includes('위치 유지 끄기'), false);
+  assert.match(source, /IMPORTANCE_MIN/);
+  assert.match(source, /deleteNotificationChannel\(LEGACY_CHANNEL_ID\)/);
+  assert.match(source, /umap_location_quiet/);
 });
 
 test('browser permission buttons stay inside the browser prompt', () => {

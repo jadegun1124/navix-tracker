@@ -253,6 +253,32 @@ public class UmapLocationPlugin extends Plugin {
     }
 
     @PluginMethod
+    public void startAlertWatch(PluginCall call) {
+        String config = call.getString("config", "");
+        boolean started = config != null && AlertWatchService.start(getContext(), config);
+        JSObject result = new JSObject();
+        result.put("started", started);
+        if (!started) result.put("reason", AlertWatchService.lastError() == null ? "config" : AlertWatchService.lastError());
+        call.resolve(result);
+    }
+
+    @PluginMethod
+    public void stopAlertWatch(PluginCall call) {
+        AlertWatchService.stop(getContext());
+        JSObject result = new JSObject();
+        result.put("stopped", true);
+        call.resolve(result);
+    }
+
+    @PluginMethod
+    public void alertWatchStatus(PluginCall call) {
+        JSObject result = new JSObject();
+        result.put("running", AlertWatchService.isRunning());
+        result.put("userStopped", AlertWatchService.userStopped(getContext()));
+        call.resolve(result);
+    }
+
+    @PluginMethod
     public void status(PluginCall call) {
         JSObject result = new JSObject();
         result.put("running", LocationKeepService.isRunning());
