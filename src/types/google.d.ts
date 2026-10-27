@@ -64,10 +64,13 @@ declare global {
         id: {
           initialize: (config: {
             client_id: string;
-            callback: (response: { credential: string }) => void;
+            callback: (response: { credential?: string }) => void;
             ux_mode?: 'popup' | 'redirect';
             auto_select?: boolean;
             cancel_on_tap_outside?: boolean;
+            itp_support?: boolean;
+            use_fedcm_for_button?: boolean;
+            context?: 'signin' | 'signup' | 'use';
           }) => void;
           renderButton: (
             parent: HTMLElement,
@@ -78,6 +81,7 @@ declare global {
               shape?: 'rectangular' | 'pill' | 'circle' | 'square';
               width?: number;
               locale?: string;
+              click_listener?: () => void;
             },
           ) => void;
         };

@@ -36,6 +36,18 @@
   max-height: none !important;
 }
 
+.umap-member-pin,
+.umap-home-label,
+.leaflet-marker-icon.umap-member-pin,
+.leaflet-marker-icon.umap-home-label {
+  background: transparent !important;
+  border: none !important;
+}
+
+.umap-street-map .leaflet-top.leaflet-left {
+  display: none;
+}
+
 .leaflet-control-attribution {
   max-width: 68%;
   font-size: 10px;

@@ -106,6 +106,7 @@ function fresh(stage: Stage = 'splash'): Session {
     survey: null,
     terms: { ...EMPTY_TERMS },
     phone: '',
+    phoneVerified: false,
     permissions: { ...EMPTY_PERMISSIONS },
     members: [],
     tracks: {},
@@ -153,7 +154,7 @@ function cleanHome(value: unknown): HomeZone | null {
     lat: home.lat,
     lng: home.lng,
     radiusM: Number.isFinite(radius) ? Math.min(2000, Math.max(50, Math.round(radius))) : 200,
-    alertPhone: typeof home.alertPhone === 'string' ? home.alertPhone.replace(/[^\d+]/g, '').slice(0, 16) : '',
+    alertPhone: '',
   };
 }
 
@@ -342,7 +343,11 @@ function load(): Session {
       visits: cleanVisits(parsed.visits),
       shareSelfWithFamily: parsed.shareSelfWithFamily === true,
       backgroundKeepAlive: parsed.backgroundKeepAlive === true,
+      phoneVerified: parsed.phoneVerified === true && typeof parsed.phone === 'string' && parsed.phone.trim().length >= 8,
+      phone: parsed.phoneVerified === true && typeof parsed.phone === 'string' ? parsed.phone.trim() : '',
     };
+    if (session.stage === 'phone') session.stage = 'permissions';
+    if (session.profile) session.profile = { ...session.profile, verifiedPhone: session.profile.verifiedPhone ?? null };
     if (session.profile && session.permissions.completed) session.stage = session.mode ? 'map' : 'mode';
     const loaded = withoutDemo(session);
     const now = Date.now();
@@ -410,7 +415,15 @@ function reducer(state: Session, action: Action): Session {
       const members = state.members.length > 0
         ? state.members.map((member) => (member.id === 'self' ? { ...member, name: action.profile.name } : member))
         : membersFor(action.profile);
-      return withoutDemo({ ...state, profile: action.profile, members, stage: state.mode ? (state.permissions.completed ? 'map' : 'survey') : 'mode' });
+      const verifiedPhone = action.profile.verifiedPhone;
+      return withoutDemo({
+        ...state,
+        profile: action.profile,
+        members,
+        phone: verifiedPhone ?? '',
+        phoneVerified: Boolean(verifiedPhone),
+        stage: state.mode ? (state.permissions.completed ? 'map' : 'survey') : 'mode',
+      });
     }
     case 'choose-mode':
       return { ...state, mode: action.mode, stage: state.permissions.completed ? 'map' : 'survey' };
@@ -424,7 +437,7 @@ function reducer(state: Session, action: Action): Session {
     case 'pick-survey':
       return { ...state, survey: action.id, stage: 'terms' };
     case 'back': {
-      const order: Stage[] = ['login', 'mode', 'survey', 'terms', 'phone', 'permissions'];
+      const order: Stage[] = ['login', 'mode', 'survey', 'terms', 'permissions'];
       const index = order.indexOf(state.stage);
       if (index <= 0) return state;
       return { ...state, stage: order[index - 1] };
@@ -438,11 +451,10 @@ function reducer(state: Session, action: Action): Session {
       };
     case 'continue-terms':
       if (!REQUIRED_TERMS.every((id) => state.terms[id])) return state;
-      return { ...state, stage: 'phone' };
-    case 'save-phone':
-      return { ...state, phone: action.phone.trim(), stage: 'permissions' };
-    case 'skip-phone':
       return { ...state, stage: 'permissions' };
+    case 'save-phone':
+    case 'skip-phone':
+      return { ...state, phone: state.phoneVerified ? state.phone : '', stage: 'permissions' };
     case 'finish-permissions':
       return { ...state, permissions: { ...action.permissions, completed: true }, stage: 'map', tab: 'map' };
     case 'set-tab':
