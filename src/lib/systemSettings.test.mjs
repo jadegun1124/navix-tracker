@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { APP_DETAILS_ACTION, BATTERY_POPUP_ACTION, LOCATION_PERMISSION_ACTION, LOCATION_PERMISSION_GROUP, LOCATION_PERMISSION_LIST_ACTION, alwaysAllowAction, alwaysAllowScreens, batteryAction, motionAction, notificationAction, whileUsingAction } from './systemSettings.mjs';
+import { APP_DETAILS_ACTION, BATTERY_POPUP_ACTION, LOCATION_PERMISSION_ACTION, LOCATION_PERMISSION_GROUP, LOCATION_PERMISSION_LIST_ACTION, alwaysAllowAction, alwaysAllowScreens, batteryAction, keepEntryPrompt, motionAction, notificationAction, whileUsingAction } from './systemSettings.mjs';
 
 test('android permission buttons open system prompts instead of skipping', () => {
   assert.equal(notificationAction(true), 'post-notifications');
@@ -18,6 +18,18 @@ test('always-allow opens the location radio, then the app permission list, then 
   assert.deepEqual(alwaysAllowScreens(), ['location-radio', 'app-permissions', 'app-details']);
   assert.equal(BATTERY_POPUP_ACTION, 'android.settings.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS');
   assert.equal(BATTERY_POPUP_ACTION.includes('IGNORE_BATTERY_OPTIMIZATION_SETTINGS'), false);
+});
+
+test('keep-alive notification is asked at entry until allowed, and started only after an explicit tap', () => {
+  const base = { notifications: 'unknown', locationMode: 'unknown', keepAlive: false, permissionAsked: false, startAsked: false };
+  assert.equal(keepEntryPrompt(base), 'permission');
+  assert.equal(keepEntryPrompt({ ...base, notifications: 'denied' }), 'permission');
+  assert.equal(keepEntryPrompt({ ...base, notifications: 'denied', permissionAsked: true }), 'none');
+  assert.equal(keepEntryPrompt({ ...base, notifications: 'skipped' }), 'none');
+  assert.equal(keepEntryPrompt({ ...base, notifications: 'granted', locationMode: 'while-using' }), 'none');
+  assert.equal(keepEntryPrompt({ ...base, notifications: 'granted', locationMode: 'always' }), 'start');
+  assert.equal(keepEntryPrompt({ ...base, notifications: 'granted', locationMode: 'always', startAsked: true }), 'none');
+  assert.equal(keepEntryPrompt({ ...base, notifications: 'granted', locationMode: 'always', keepAlive: true }), 'none');
 });
 
 test('browser permission buttons stay inside the browser prompt', () => {

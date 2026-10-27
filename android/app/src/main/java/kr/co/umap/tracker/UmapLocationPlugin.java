@@ -36,6 +36,7 @@ import org.json.JSONObject;
     name = "UmapLocation",
     permissions = {
         @Permission(strings = { android.Manifest.permission.POST_NOTIFICATIONS }, alias = "notifications"),
+        @Permission(strings = { android.Manifest.permission.CAMERA }, alias = "camera"),
         @Permission(strings = { android.Manifest.permission.ACTIVITY_RECOGNITION }, alias = "motion"),
         @Permission(
             strings = {
@@ -101,6 +102,26 @@ public class UmapLocationPlugin extends Plugin {
         }
         boolean showAgain = shouldShow(android.Manifest.permission.POST_NOTIFICATIONS);
         resolvePrompt(call, "denied", !showAgain && openNotificationSettings());
+    }
+
+    @PluginMethod
+    public void requestCamera(PluginCall call) {
+        if (granted(android.Manifest.permission.CAMERA)) {
+            resolvePrompt(call, "granted", false);
+            return;
+        }
+        requestPermissionForAlias("camera", call, "cameraCallback");
+    }
+
+    @PermissionCallback
+    private void cameraCallback(PluginCall call) {
+        if (granted(android.Manifest.permission.CAMERA)) {
+            resolvePrompt(call, "granted", false);
+            return;
+        }
+        boolean showAgain = shouldShow(android.Manifest.permission.CAMERA);
+        boolean opened = !showAgain && openPermissionPage(android.Manifest.permission.CAMERA);
+        resolvePrompt(call, "denied", opened);
     }
 
     @PluginMethod

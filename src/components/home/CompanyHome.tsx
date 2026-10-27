@@ -3,8 +3,8 @@ import React, { useState } from 'react';
 const iconSrc = `${import.meta.env.BASE_URL}umap-icon.png`;
 
 export const COMPANY_HOME_URL = 'https://jadegun1124.github.io/umap/';
-export const ANDROID_RELEASES_URL = 'https://github.com/jadegun1124/umap/releases/tag/v1.4.0';
-export const ANDROID_APK_URL = 'https://github.com/jadegun1124/umap/releases/download/v1.4.0/umap-v1.4.0-tracker.apk';
+export const ANDROID_RELEASES_URL = 'https://github.com/jadegun1124/umap/releases/tag/v1.5.0';
+export const ANDROID_APK_URL = 'https://github.com/jadegun1124/umap/releases/download/v1.5.0/umap-v1.5.0-tracker.apk';
 
 export function CompanyHome() {
   const [sent, setSent] = useState(false);
@@ -70,7 +70,8 @@ export function CompanyHome() {
             <div>
               <h3 className="font-bold">요청하는 것</h3>
               <ul className="mt-2 space-y-2 text-sm leading-6 text-slate-600">
-                <li>알림 — 집 도착과 출발</li>
+                <li>알림 — 집 도착, 출발, 위치 유지. 처음 권한 화면에서 위치와 함께 묻습니다</li>
+                <li>카메라 — 초대 QR을 읽을 때만. 스캔이 끝나면 끄고, 전화번호는 읽지 않습니다</li>
                 <li>위치 — 정확한 위치 또는 대략적인 위치, 앱 사용 중 또는 항상 허용을 직접 선택</li>
                 <li>움직임 — 위치 점을 안정시키고 싶을 때만</li>
                 <li>배터리 안내 — 항상 허용을 고른 경우에만 설정 방법을 알려 줍니다</li>

@@ -35,3 +35,34 @@ export const BATTERY_POPUP_ACTION = 'android.settings.REQUEST_IGNORE_BATTERY_OPT
 export function alwaysAllowScreens() {
   return ['location-radio', 'app-permissions', 'app-details'];
 }
+
+// Set when the keep-alive notification was explained in this WebView session,
+// so the map does not repeat the same prompt immediately after onboarding.
+export const KEEP_PERMISSION_ASKED_KEY = 'umap_keep_permission_asked';
+export const KEEP_START_ASKED_KEY = 'umap_keep_start_asked';
+
+export function readSessionFlag(key) {
+  try {
+    return sessionStorage.getItem(key) === '1';
+  } catch {
+    return false;
+  }
+}
+
+export function markSessionFlag(key) {
+  try {
+    sessionStorage.setItem(key, '1');
+  } catch {
+    /* private mode */
+  }
+}
+
+// 'permission' asks POST_NOTIFICATIONS (or the browser notification prompt).
+// 'start' turns on the foreground notification only after the user taps, and
+// only when location is already 항상 허용. Neither path starts it by itself.
+export function keepEntryPrompt({ notifications, locationMode, keepAlive, permissionAsked, startAsked }) {
+  if (keepAlive) return 'none';
+  if (notifications !== 'granted' && notifications !== 'skipped' && !permissionAsked) return 'permission';
+  if (notifications === 'granted' && locationMode === 'always' && !startAsked) return 'start';
+  return 'none';
+}
