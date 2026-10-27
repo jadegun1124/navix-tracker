@@ -27,10 +27,13 @@ export interface NativePromptResult {
   openedSettings: boolean;
 }
 
+export type AlwaysSettingsScreen = 'location-radio' | 'app-permissions' | 'app-details' | 'none';
+
 export interface AlwaysLocationResult {
   opened: boolean;
   location: 'always' | 'while-using' | 'denied' | 'unavailable';
   native: boolean;
+  screen: AlwaysSettingsScreen;
 }
 
 export interface BatteryOptimizationResult {
@@ -63,7 +66,7 @@ const web: UmapLocationPlugin = {
     return { opened: false };
   },
   async openAlwaysLocation() {
-    return { opened: false, location: 'unavailable', native: false };
+    return { opened: false, location: 'unavailable', native: false, screen: 'none' };
   },
   async requestForeground() {
     return { location: 'unavailable' };
@@ -116,13 +119,19 @@ export async function openAppSettings(): Promise<boolean> {
 }
 
 export async function openAlwaysLocation(): Promise<AlwaysLocationResult> {
-  if (!umapLocationNative()) return { opened: false, location: 'unavailable', native: false };
+  if (!umapLocationNative()) return { opened: false, location: 'unavailable', native: false, screen: 'none' };
   try {
     const result = await plugin.openAlwaysLocation();
     const location = result.location === 'always' || result.location === 'while-using' || result.location === 'denied' ? result.location : 'unavailable';
-    return { opened: result.opened === true, location, native: true };
+    const opened = result.opened === true;
+    const screen = opened && (result.screen === 'app-permissions' || result.screen === 'app-details' || result.screen === 'location-radio')
+      ? result.screen
+      : opened
+        ? 'location-radio'
+        : 'none';
+    return { opened, location, native: true, screen };
   } catch {
-    return { opened: false, location: 'unavailable', native: true };
+    return { opened: false, location: 'unavailable', native: true, screen: 'none' };
   }
 }
 

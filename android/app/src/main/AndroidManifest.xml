@@ -6,6 +6,10 @@
             <action android:name="android.intent.action.MANAGE_APP_PERMISSION" />
             <category android:name="android.intent.category.DEFAULT" />
         </intent>
+        <intent>
+            <action android:name="android.intent.action.MANAGE_APP_PERMISSIONS" />
+            <category android:name="android.intent.category.DEFAULT" />
+        </intent>
         <package android:name="com.samsung.android.permissioncontroller" />
         <package android:name="com.google.android.permissioncontroller" />
         <package android:name="com.android.permissioncontroller" />

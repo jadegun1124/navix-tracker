@@ -14,6 +14,9 @@ export const FIX_PRECISE_ACCURACY_M: number;
 export const FIX_APPROXIMATE_ACCURACY_M: number;
 export const FIX_MAX_JUMP_MPS: number;
 export const FIX_JUMP_WINDOW_MS: number;
+export const TRAIL_POOR_ACCURACY_M: number;
+export const TRAIL_STAY_SPEED_MPS: number;
+export const TRAIL_STILL_CONFIRM_M: number;
 
 export type TravelMode = 'walk' | 'bike' | 'vehicle' | 'plane';
 
@@ -22,7 +25,12 @@ export interface TrailSample {
   lng: number;
   at: number;
   speedMps?: number | null;
+  accuracyM?: number;
+  staying?: boolean;
+  stayEnd?: boolean;
 }
+
+export type TrailDecision = 'keep' | 'snap' | 'drop';
 
 export interface DayStop {
   lat: number;
@@ -59,7 +67,17 @@ export interface AcceptedFix {
 export function modeLabel(mode: TravelMode | string): string;
 export function seoulDayKey(epochMs: number): string;
 export function needsDailyWipe(storedDay: string | null | undefined, now: number): boolean;
+export function trailMoveGate(last: TrailSample | null | undefined, point: TrailSample | null | undefined): number;
+export function trailDecision(last: TrailSample | null | undefined, point: TrailSample | null | undefined): TrailDecision;
 export function shouldKeepTrailPoint(last: TrailSample | null | undefined, point: TrailSample): boolean;
+export function collapseStayTrail(points: TrailSample[] | null | undefined): TrailSample[];
+export function visibleTrail(points: TrailSample[] | null | undefined): TrailSample[];
+export function displayCoordinate<T extends TrailSample>(points: TrailSample[] | null | undefined, point: T): T;
+export function settleTrailPoint(
+  points: TrailSample[] | null | undefined,
+  point: TrailSample,
+  now: number,
+): { points: TrailSample[]; lat: number | null; lng: number | null; decision: TrailDecision };
 export function tracksForSeoulDay(tracks: Record<string, TrailSample[]> | null | undefined, now: number): Record<string, TrailSample[]>;
 export function visitsForSeoulDay<T extends VisitRecord>(visits: Record<string, T[]> | null | undefined, now: number): Record<string, T[]>;
 export function shiftDayKey(dayKey: string, deltaDays: number): string;

@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Bell, Copy, Home, LocateFixed, MapPin, Minus, Plus, Route, UserPlus, X } from 'lucide-react';
 import { buildInviteLink, formatAgo, formatClock, hasLocation, haversineMeters, shouldAlertLeave } from '../../lib/geo';
-import { buildDayRecord, formatDurationMs, historyDayKeys, historyDayLabel, modeLabel, seoulDayEndMs, seoulDayKey } from '../../lib/tracking.mjs';
+import { buildDayRecord, collapseStayTrail, displayCoordinate, formatDurationMs, historyDayKeys, historyDayLabel, modeLabel, seoulDayEndMs, seoulDayKey, visibleTrail } from '../../lib/tracking.mjs';
 import { ackFamilyAlert, isFamilyAlertAcked, publishFamilyAlert, readFamilyAlert, subscribeFamilyAlerts, type FamilyAlert } from '../../services/familyAlert';
 import { readSharedPlaces, subscribeSharedPlaces } from '../../services/familyShare';
 import { currentSyncPhase, familySyncConfigured, splitSyncToken, startAdminRemoteSync, startSyncMonitor, subscribeSyncPhase, syncTokenFor, type SyncPhase } from '../../services/familySync';
@@ -183,11 +183,24 @@ export function FamilyMapScreen() {
   };
 
   const selected = state.members.find((member) => member.id === selectedId) ?? state.members.find((member) => member.id === 'self');
+  const liveDay = seoulDayKey(now);
   const visibleMembers = state.members.filter((member) => {
     if (member.id === 'self') return true;
     if (member.role === 'admin-share') return state.mode === 'managed' && hasLocation(member);
     if (member.role === 'guardian') return false;
     return state.mode === 'admin' && member.share === 'allowed' && hasLocation(member);
+  }).map((member) => {
+    if (!hasLocation(member)) return member;
+    const todayPoints = (state.tracks[member.id] ?? []).filter((point) => seoulDayKey(point.at) === liveDay);
+    const stable = displayCoordinate(todayPoints, {
+      lat: member.lat,
+      lng: member.lng,
+      at: member.updatedAt || now,
+      accuracyM: member.accuracyM,
+      staying: member.moving === false,
+    });
+    if (stable.lat === member.lat && stable.lng === member.lng) return member;
+    return { ...member, lat: stable.lat, lng: stable.lng };
   });
   const shareKey = visibleMembers
     .filter(hasLocation)
@@ -205,7 +218,6 @@ export function FamilyMapScreen() {
     }, 200);
     return () => window.clearInterval(timer);
   }, [shareKey, state.members, state.mode]);
-  const liveDay = seoulDayKey(now);
   const pathDay = state.tab === 'history' ? historyDay : liveDay;
   const memberPoints = selected ? state.tracks[selected.id] ?? [] : [];
   const dayPoints = useMemo(
@@ -213,8 +225,8 @@ export function FamilyMapScreen() {
     [memberPoints, pathDay],
   );
   const showPath = !!selected && (state.tab === 'history' || showTrail) && (selected.id === 'self' || selected.share === 'allowed' || selected.role === 'admin-share');
-  const trail = showPath ? dayPoints : [];
-  const dayRecord = buildDayRecord(dayPoints, pathDay === liveDay ? now : seoulDayEndMs(pathDay));
+  const trail = useMemo(() => (showPath ? visibleTrail(dayPoints) : []), [dayPoints, showPath]);
+  const dayRecord = buildDayRecord(collapseStayTrail(dayPoints), pathDay === liveDay ? now : seoulDayEndMs(pathDay));
   const dayVisits = useMemo(() => {
     const list = selected ? state.visits[selected.id] ?? [] : [];
     return list.filter((visit) => seoulDayKey(visit.arrivedAt) === pathDay);

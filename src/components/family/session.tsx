@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useReducer } from 'react';
 import { hasLocation } from '../../lib/geo';
 import { localProfile } from '../../lib/localProfile.mjs';
-import { HISTORY_DAYS, TRAIL_POINT_CAP, appendHistoryPoint, isWithinHistory, seoulDayKey, tracksWithinHistory, visitsWithinHistory } from '../../lib/tracking.mjs';
+import { HISTORY_DAYS, TRAIL_POINT_CAP, isWithinHistory, seoulDayKey, settleTrailPoint, tracksWithinHistory, visitsWithinHistory } from '../../lib/tracking.mjs';
 import type { DayStop } from '../../lib/tracking.mjs';
 import type { SharedPlace } from '../../services/familyShare';
 import { umapLocation } from '../../services/umapLocation';
@@ -585,15 +585,41 @@ function reducer(state: Session, action: Action): Session {
     case 'update-self': {
       const at = Date.now();
       const speed = typeof action.speedMps === 'number' && Number.isFinite(action.speedMps) ? action.speedMps : null;
-      const selfTrail = appendHistoryPoint(state.tracks.self, { lat: action.lat, lng: action.lng, at, speedMps: speed }, at);
-      const tracks = tracksWithinHistory(selfTrail === state.tracks.self ? state.tracks : { ...state.tracks, self: selfTrail }, at);
+      const self = state.members.find((member) => member.id === 'self');
+      const sample = {
+        lat: action.lat,
+        lng: action.lng,
+        at,
+        speedMps: speed,
+        accuracyM: action.accuracyM,
+        staying: self?.moving === false,
+      };
+      const settled = settleTrailPoint(state.tracks.self, sample, at);
+      if (settled.decision === 'drop') {
+        if (settled.points === state.tracks.self) return state;
+        return {
+          ...state,
+          trailDay: seoulDayKey(at),
+          tracks: tracksWithinHistory({ ...state.tracks, self: settled.points }, at),
+        };
+      }
+      const tracks = tracksWithinHistory(
+        settled.points === state.tracks.self ? state.tracks : { ...state.tracks, self: settled.points },
+        at,
+      );
       return {
         ...state,
         trailDay: seoulDayKey(at),
         visits: visitsWithinHistory(state.visits, at),
         members: state.members.map((member) =>
           member.id === 'self'
-            ? { ...member, lat: action.lat, lng: action.lng, accuracyM: Math.max(1, Math.round(action.accuracyM)), updatedAt: at }
+            ? {
+                ...member,
+                lat: settled.lat ?? action.lat,
+                lng: settled.lng ?? action.lng,
+                accuracyM: Math.max(1, Math.round(action.accuracyM)),
+                updatedAt: at,
+              }
             : member,
         ),
         tracks,
@@ -656,9 +682,17 @@ function reducer(state: Session, action: Action): Session {
       if (sameSpot && member.updatedAt === place.at && member.battery === battery && member.charging === charging && member.share === 'allowed') return state;
       const now = Date.now();
       const keptTracks = tracksWithinHistory(state.tracks, now);
+      const settled = settleTrailPoint(keptTracks[member.id], {
+        lat: place.lat,
+        lng: place.lng,
+        at: place.at,
+        accuracyM: place.accuracyM,
+      }, now);
       const tracks = isWithinHistory(place.at, now)
-        ? { ...keptTracks, [member.id]: appendHistoryPoint(keptTracks[member.id], { lat: place.lat, lng: place.lng, at: place.at }, now) }
+        ? { ...keptTracks, [member.id]: settled.points }
         : keptTracks;
+      const lat = settled.decision === 'drop' && hasLocation(member) ? member.lat : (settled.lat ?? place.lat);
+      const lng = settled.decision === 'drop' && hasLocation(member) ? member.lng : (settled.lng ?? place.lng);
       return {
         ...state,
         trailDay: seoulDayKey(now),
@@ -668,8 +702,8 @@ function reducer(state: Session, action: Action): Session {
             ? {
                 ...item,
                 share: 'allowed',
-                lat: place.lat,
-                lng: place.lng,
+                lat,
+                lng,
                 accuracyM: Math.max(1, Math.round(place.accuracyM || item.accuracyM || 1)),
                 battery,
                 charging,
@@ -715,7 +749,14 @@ function reducer(state: Session, action: Action): Session {
           moving: null,
           share: 'allowed',
         }];
-        if (isWithinHistory(place.at, now)) tracks = { ...tracks, [id]: appendHistoryPoint(tracks[id], { lat: place.lat, lng: place.lng, at: place.at }, now) };
+        if (isWithinHistory(place.at, now)) {
+          const settled = settleTrailPoint(tracks[id], { lat: place.lat, lng: place.lng, at: place.at, accuracyM: place.accuracyM }, now);
+          tracks = { ...tracks, [id]: settled.points };
+          const pinned = members[members.length - 1];
+          if (pinned && settled.decision !== 'keep' && settled.lat != null && settled.lng != null) {
+            members[members.length - 1] = { ...pinned, lat: settled.lat, lng: settled.lng };
+          }
+        }
       }
       for (const member of current) {
         if (!members.some((item) => item.id === member.id)) delete tracks[member.id];

@@ -42,6 +42,12 @@ export const FIX_PRECISE_ACCURACY_M = 80;
 export const FIX_APPROXIMATE_ACCURACY_M = 400;
 export const FIX_MAX_JUMP_MPS = 350;
 export const FIX_JUMP_WINDOW_MS = 180_000;
+/** A later fix worse than this does not move the pin or the line. */
+export const TRAIL_POOR_ACCURACY_M = 40;
+/** Reported speed under this, while still, is not a new vertex. */
+export const TRAIL_STAY_SPEED_MPS = 0.8;
+/** A still phone must clear this before a far multipath spike becomes travel. */
+export const TRAIL_STILL_CONFIRM_M = 80;
 
 const MODE_LABELS = {
   walk: '도보',
@@ -79,15 +85,140 @@ function haversineMeters(a, b) {
   return 2 * radius * Math.asin(Math.min(1, Math.sqrt(h)));
 }
 
-export function shouldKeepTrailPoint(last, point) {
-  if (!last) return true;
+function positiveMeters(value) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? number : 0;
+}
+
+/** Stay bubble, widened when the fix itself says it is uncertain. */
+export function trailMoveGate(last, point) {
+  const accuracy = Math.max(positiveMeters(point?.accuracyM), positiveMeters(last?.accuracyM));
+  return Math.max(STOP_RADIUS_M, accuracy * 2);
+}
+
+/**
+ * keep: the coordinate is travel and may extend the polyline.
+ * snap: still inside the stay, or a still-phone spike. Keep the anchor pin.
+ * drop: the sample is too poor to use.
+ */
+export function trailDecision(last, point) {
+  if (!point || !Number.isFinite(point.lat) || !Number.isFinite(point.lng) || !Number.isFinite(point.at)) return 'drop';
+  if (!last) return 'keep';
+  const accuracy = positiveMeters(point.accuracyM);
+  if (accuracy > TRAIL_POOR_ACCURACY_M) return 'drop';
   const moved = haversineMeters(last, point);
   const dt = point.at - last.at;
-  if (!Number.isFinite(moved) || !Number.isFinite(dt) || dt < 0) return false;
-  if (moved >= 100) return true;
-  if (moved >= 20 && dt >= 8_000) return true;
-  if (dt >= STOP_MIN_MS && moved <= STOP_RADIUS_M) return true;
-  return false;
+  if (!Number.isFinite(moved) || !Number.isFinite(dt) || dt < 0) return 'drop';
+  if (moved === 0 && dt === 0) return 'drop';
+  const gate = trailMoveGate(last, point);
+  if (moved <= gate) return 'snap';
+  const speed = typeof point.speedMps === 'number' && Number.isFinite(point.speedMps) ? point.speedMps : null;
+  const reportedStill = point.staying === true || (speed != null && speed < TRAIL_STAY_SPEED_MPS);
+  // Precise fixes can still leap between towers. With no walking speed, that leap is not a path.
+  const quiet = reportedStill || (speed == null && accuracy > 0 && accuracy <= 25 && moved < TRAIL_STILL_CONFIRM_M);
+  if (quiet) {
+    const implied = dt > 0 ? moved / (dt / 1000) : Infinity;
+    const sustainedWalk = moved >= TRAIL_STILL_CONFIRM_M && dt >= 20_000 && implied >= 0.9 && implied <= 8;
+    if (!sustainedWalk) return 'snap';
+  }
+  const implied = dt > 0 ? moved / (dt / 1000) : Infinity;
+  if (implied > FIX_MAX_JUMP_MPS) return 'drop';
+  return 'keep';
+}
+
+export function shouldKeepTrailPoint(last, point) {
+  return trailDecision(last, point) === 'keep';
+}
+
+function drawnAnchor(points) {
+  if (!Array.isArray(points)) return null;
+  for (let index = points.length - 1; index >= 0; index -= 1) {
+    const point = points[index];
+    if (point && !point.stayEnd) return point;
+  }
+  return null;
+}
+
+/** Drop stay jitter and multipath spurs. A long stay keeps one extra timestamp at the same coordinate. */
+export function collapseStayTrail(points) {
+  if (!Array.isArray(points) || points.length === 0) return [];
+  const kept = [];
+  let changed = false;
+  for (const point of points) {
+    if (!point || !Number.isFinite(point.lat) || !Number.isFinite(point.lng) || !Number.isFinite(point.at)) {
+      changed = true;
+      continue;
+    }
+    const anchor = drawnAnchor(kept);
+    if (!anchor) {
+      if (point.stayEnd) {
+        changed = true;
+        continue;
+      }
+      kept.push(point);
+      continue;
+    }
+    const decision = trailDecision(anchor, point);
+    if (decision === 'drop' || decision === 'snap') {
+      changed = true;
+      if (decision === 'snap' && point.at - anchor.at >= STOP_MIN_MS) {
+        const last = kept[kept.length - 1];
+        if (last && last.stayEnd) kept[kept.length - 1] = { ...last, at: point.at, accuracyM: point.accuracyM ?? last.accuracyM };
+        else kept.push({ lat: anchor.lat, lng: anchor.lng, at: point.at, speedMps: 0, accuracyM: point.accuracyM, stayEnd: true });
+      }
+      continue;
+    }
+    if (point.stayEnd) {
+      changed = true;
+      continue;
+    }
+    kept.push(point);
+  }
+  if (!changed && kept.length === points.length) return points;
+  return kept;
+}
+
+/** Polyline vertices. Stay markers and sub-accuracy wiggles are not drawn. */
+export function visibleTrail(points) {
+  const collapsed = collapseStayTrail(points);
+  const drawn = [];
+  for (const point of collapsed) {
+    if (!point || point.stayEnd) continue;
+    const prev = drawn[drawn.length - 1];
+    if (prev && haversineMeters(prev, point) < 8) continue;
+    drawn.push(point);
+  }
+  return drawn;
+}
+
+export function displayCoordinate(points, point) {
+  if (!point || !Number.isFinite(point.lat) || !Number.isFinite(point.lng)) return point;
+  const anchor = drawnAnchor(visibleTrail(points));
+  if (!anchor) return point;
+  if (trailDecision(anchor, point) === 'keep') return point;
+  return { ...point, lat: anchor.lat, lng: anchor.lng };
+}
+
+export function settleTrailPoint(points, point, now) {
+  const existing = Array.isArray(points) ? points : [];
+  const collapsed = collapseStayTrail(existing);
+  const anchor = drawnAnchor(collapsed);
+  const decision = trailDecision(anchor, point);
+  if (decision !== 'keep') {
+    const next = decision === 'snap' ? appendHistoryPoint(collapsed, point, now) : collapsed;
+    return {
+      points: next,
+      lat: anchor ? anchor.lat : null,
+      lng: anchor ? anchor.lng : null,
+      decision,
+    };
+  }
+  return {
+    points: appendHistoryPoint(collapsed, point, now),
+    lat: point.lat,
+    lng: point.lng,
+    decision: 'keep',
+  };
 }
 
 export function tracksForSeoulDay(tracks, now) {
@@ -199,16 +330,28 @@ export function trimMemberPoints(points, now) {
 }
 
 export function appendHistoryPoint(points, point, now) {
-  const anchor = Number.isFinite(now) ? now : point?.at;
-  const list = Array.isArray(points) ? points : [];
-  const last = list[list.length - 1];
-  if (last && point && !shouldKeepTrailPoint(last, point)) {
-    const trimmed = trimMemberPoints(list, anchor);
-    return trimmed === list ? list : trimmed;
+  const anchorNow = Number.isFinite(now) ? now : point?.at;
+  const base = collapseStayTrail(Array.isArray(points) ? points : []);
+  const anchor = drawnAnchor(base);
+  const decision = trailDecision(anchor, point);
+  if (decision === 'drop' || !point || !Number.isFinite(point.at)) {
+    const trimmed = trimMemberPoints(base, anchorNow);
+    return trimmed === points ? points : trimmed;
   }
-  const next = list.slice();
-  if (point && Number.isFinite(point.at)) next.push(point);
-  return trimMemberPoints(next, anchor);
+  if (decision === 'snap' && anchor) {
+    if (point.at - anchor.at < STOP_MIN_MS) {
+      const trimmed = trimMemberPoints(base, anchorNow);
+      return trimmed === points ? points : trimmed;
+    }
+    const next = base.slice();
+    const last = next[next.length - 1];
+    if (last && last.stayEnd) next[next.length - 1] = { ...last, at: point.at, accuracyM: point.accuracyM ?? last.accuracyM };
+    else next.push({ lat: anchor.lat, lng: anchor.lng, at: point.at, speedMps: 0, accuracyM: point.accuracyM, stayEnd: true });
+    return trimMemberPoints(next, anchorNow);
+  }
+  const next = base.slice();
+  next.push(point);
+  return trimMemberPoints(next, anchorNow);
 }
 
 export function tracksWithinHistory(tracks, now) {
@@ -307,6 +450,7 @@ export function acceptFix(previous, reading, options = {}) {
     accuracy = maxAccuracy;
   }
   if (accuracy > maxAccuracy) return { ok: false, reason: 'accuracy' };
+  if (previous && accuracy > TRAIL_POOR_ACCURACY_M) return { ok: false, reason: 'accuracy' };
   if (previous && Number.isFinite(previous.at)) {
     const dtMs = at - previous.at;
     if (dtMs > 0 && dtMs <= FIX_JUMP_WINDOW_MS) {

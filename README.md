@@ -10,12 +10,12 @@
 | :--- | :--- | :--- |
 | 회사 홈 | GitHub Pages | https://jadegun1124.github.io/umap/ |
 | 앱 화면 미리보기 | 같은 Pages의 `?app=1` | https://jadegun1124.github.io/umap/?app=1 |
-| 안드로이드 앱 | GitHub Releases APK v1.3.0 | https://github.com/jadegun1124/umap/releases/download/v1.3.0/umap-v1.3.0-tracker.apk |
-| 릴리스 페이지 | GitHub Releases | https://github.com/jadegun1124/umap/releases/tag/v1.3.0 |
+| 안드로이드 앱 | GitHub Releases APK v1.4.0 | https://github.com/jadegun1124/umap/releases/download/v1.4.0/umap-v1.4.0-tracker.apk |
+| 릴리스 페이지 | GitHub Releases | https://github.com/jadegun1124/umap/releases/tag/v1.4.0 |
 
 Google Play, App Store, TestFlight에는 올리지 않았습니다. iOS는 아이콘 에셋만 있고 설치 파일은 없습니다.
 
-`main`에 푸시하면 GitHub Actions가 회사 홈을 Pages에 배포하고, 같은 커밋으로 디버그 APK를 만들어 GitHub Release `v1.3.0`의 `umap-v1.3.0-tracker.apk`를 갱신합니다. 이전 빌드는 `v1.2.0`, `v1.1.0`, `v1.0.0`에 남아 있습니다.
+`main`에 푸시하면 GitHub Actions가 회사 홈을 Pages에 배포하고, 같은 커밋으로 디버그 APK를 만들어 GitHub Release `v1.4.0`의 `umap-v1.4.0-tracker.apk`를 갱신합니다. 이전 빌드는 `v1.3.0`, `v1.2.0`, `v1.1.0`, `v1.0.0`에 남아 있습니다.
 
 ## 화면
 
@@ -31,13 +31,13 @@ Google Play, App Store, TestFlight에는 올리지 않았습니다. iOS는 아�
 | 권한 | 쓰는 이유 |
 | :--- | :--- |
 | 알림 | 집 도착·출발과 위치 유지. 허용을 누르면 시스템 알림 창이 열립니다. |
-| 위치 | 정확한 위치 또는 대략적인 위치. 앱 사용 중은 위치 권한 창, 항상 허용은 이 앱의 위치 액세스 권한 화면을 바로 엽니다. |
+| 위치 | 정확한 위치 또는 대략적인 위치. 앱 사용 중은 위치 권한 창, 항상 허용은 이 앱의 위치 액세스 권한 화면을 먼저 엽니다. 그 화면이 열리지 않으면 앱 권한 목록으로 갑니다. |
 | 움직임 | 안드로이드 신체 활동 권한 창. 다시 물을 수 없으면 설정으로 이동합니다. |
 | 배터리 | 배터리 제한 없음을 누르면 시스템 팝업이 바로 열립니다. 스위치는 직접 고릅니다. |
 
 마이크, 문자, 주변 소리, 원격으로 소리를 울리는 기능은 없습니다. 전화번호만으로 다른 사람을 찾지 않습니다.
 
-항상 허용을 누르면 이 앱의 위치 액세스 권한 화면이 바로 열리고, 거기서 라디오를 직접 고릅니다. 앱은 OS 스위치를 대신 바꾸지 않습니다. 위치 유지 알림은 우리 가족 아래에서만 켜고, 알림이 떠 있는 동안 백그라운드에서 위치를 보냅니다. 배터리 제한 없음을 누르면 `ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` 팝업이 바로 열립니다.
+항상 허용을 누르면 이 앱의 위치 액세스 권한 화면이 먼저 열리고, 거기서 라디오를 직접 고릅니다. 그 화면을 열지 못하면 앱 권한 목록(위치, 알림, 신체 활동)으로 가고, 그것도 막히면 앱 정보로 갑니다. 앱은 OS 스위치를 대신 바꾸지 않습니다. 위치 유지 알림은 우리 가족 아래에서만 켜고, 알림이 떠 있는 동안 백그라운드에서 위치를 보냅니다. 배터리 제한 없음을 누르면 `ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` 팝업이 바로 열립니다.
 
 ## 이름과 지도
 
@@ -54,7 +54,7 @@ VITE_FAMILY_SYNC_URL=
   - 키는 `import.meta.env.VITE_VWORLD_API_KEY`만 읽습니다. 빌드 시점에 JS 안에 들어갑니다.
   - 키가 없으면 "키가 이 빌드에 없습니다"만 보여 주고 타일을 요청하지 않습니다. 키가 있는데 타일이 실패하면, 그 페이지의 주소(origin)를 인증키 도메인에 넣으라는 안내가 나옵니다. 타일이 한 장이라도 오면 안내는 사라집니다.
   - 인증키 서비스 URL: `https://jadegun1124.github.io`, 앱 `https://localhost`, 로컬 개발 `http://localhost:5173`.
-- 이동 경로: 서울 날짜로 오늘부터 30일 전까지 이 기기에 남기고, 그보다 오래된 점은 지웁니다. 정지는 반경 50m·3분, 구간은 정지와 정지 사이의 이동 시간입니다. 샘플 사람이나 예시 좌표는 없습니다.
+- 이동 경로: 서울 날짜로 오늘부터 30일 전까지 이 기기에 남기고, 그보다 오래된 점은 지웁니다. 정지는 반경 50m·3분, 구간은 정지와 정지 사이의 이동 시간입니다. 머무름이거나 이동이 정확도 반경 안이면 그 점은 선으로 잇지 않습니다. 정확한 위치와 고도는 건물 사이 다중경로로 점이 튀는 것까지 없애지 못합니다. 샘플 사람이나 예시 좌표는 없습니다.
 
 `VITE_GOOGLE_MAPS_API_KEY`는 가족 지도에서 쓰지 않습니다.
 
@@ -82,9 +82,9 @@ npm run dev
 
 ## 안드로이드 APK
 
-받는 곳: https://github.com/jadegun1124/umap/releases/download/v1.3.0/umap-v1.3.0-tracker.apk
+받는 곳: https://github.com/jadegun1124/umap/releases/download/v1.4.0/umap-v1.4.0-tracker.apk
 
-`main` 푸시마다 `Build Android APK (Umap)` 워크플로가 웹을 빌드하고 `dist` 를 안드로이드 에셋으로 복사한 뒤 `assembleDebug` 로 APK를 만듭니다. 결과 파일은 GitHub Release `v1.3.0`에 올립니다. 앱 `versionName`은 `1.3.0`, `versionCode`는 4입니다. Play 스토어 트랙은 없습니다.
+`main` 푸시마다 `Build Android APK (Umap)` 워크플로가 웹을 빌드하고 `dist` 를 안드로이드 에셋으로 복사한 뒤 `assembleDebug` 로 APK를 만듭니다. 결과 파일은 GitHub Release `v1.4.0`에 올립니다. 앱 `versionName`은 `1.4.0`, `versionCode`는 5입니다. Play 스토어 트랙은 없습니다.
 
 ## 데이터
 
