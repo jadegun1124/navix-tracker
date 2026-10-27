@@ -1,5 +1,8 @@
 // Family location room. The latest point per consented name, plus recent alerts.
 // Phone numbers are not accepted. The read key is never stored.
+// Admin push subscriptions stay in the room and are never returned to readers.
+
+import { base64UrlToBytes, pushEndpointAllowed } from './webpush.mjs';
 
 const KEY_PART = /^[A-Za-z0-9_-]{16,64}$/;
 const CODE_PART = /^\d{4,6}$/;
@@ -12,7 +15,7 @@ const FUTURE_SKEW_MS = 5 * 60 * 1000;
 const EARLIEST_AT = Date.UTC(2024, 0, 1);
 
 export function emptyRoom() {
-  return { places: {}, alerts: [] };
+  return { places: {}, alerts: [], pushes: [] };
 }
 
 export function isKeyPart(value) {
@@ -198,12 +201,34 @@ function samePlaceSnapshot(current, place) {
     && (current.audience === 'family' ? 'family' : 'admin') === (place.audience === 'family' ? 'family' : 'admin');
 }
 
+function hasFix(place) {
+  return !!place && place.sharing === true && place.lat != null && place.lng != null;
+}
+
+function isPlaceholder(place) {
+  return !!place && place.sharing === true && place.lat == null && place.lng == null;
+}
+
 export function applyPlace(room, place) {
   const key = placeStorageKey(place);
   const current = room.places[key];
-  if (current && place.at < current.at) return { room, ignored: true };
-  if (current && place.at === current.at && samePlaceSnapshot(current, place)) return { room, ignored: true };
-  const places = { ...room.places, [key]: place };
+  const incomingFix = hasFix(place);
+  const currentFix = hasFix(current);
+  // A heartbeat with no coordinates must not erase a live fix or move its cursor forward.
+  if (place.sharing && !incomingFix && currentFix) return { room, ignored: true };
+  // A sharing heartbeat with no fix can be newer than the first real fix. The fix still wins.
+  // A newer stop (sharing false) is not a placeholder, so an older fix cannot undo it.
+  if (current && place.at < current.at && !(incomingFix && isPlaceholder(current))) return { room, ignored: true };
+  let next = place;
+  if (place.sharing && next.batteryPct == null && current && typeof current.batteryPct === 'number') {
+    next = {
+      ...next,
+      batteryPct: current.batteryPct,
+      charging: next.charging == null ? (current.charging ?? null) : next.charging,
+    };
+  }
+  if (current && next.at === current.at && samePlaceSnapshot(current, next)) return { room, ignored: true };
+  const places = { ...room.places, [key]: next };
   const names = Object.keys(places);
   if (names.length > MAX_PLACES) {
     names.sort((left, right) => places[left].at - places[right].at);
@@ -221,12 +246,51 @@ export function applyAlert(room, alert, now) {
   return { room: { ...room, alerts }, ignored: false };
 }
 
+function roomPushes(room) {
+  return Array.isArray(room.pushes) ? room.pushes : [];
+}
+
+export function applySubscription(room, subscription) {
+  const pushes = roomPushes(room).filter((item) => item.endpoint !== subscription.endpoint);
+  pushes.push(subscription);
+  while (pushes.length > 8) pushes.shift();
+  return { ...room, pushes };
+}
+
+export function removeSubscriptions(room, endpoints) {
+  const gone = new Set(endpoints);
+  return { ...room, pushes: roomPushes(room).filter((item) => !gone.has(item.endpoint)) };
+}
+
 export function viewRoom(room, since) {
   const cursor = Number.isFinite(since) ? since : 0;
   return {
     places: Object.values(room.places),
     alerts: room.alerts.filter((alert) => alert.at > cursor),
   };
+}
+
+function cleanSubscription(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return { error: json({ error: 'push' }, 400) };
+  if (typeof input.endpoint !== 'string' || input.endpoint.length > 500 || !pushEndpointAllowed(input.endpoint)) {
+    return { error: json({ error: 'push' }, 400) };
+  }
+  if (typeof input.p256dh !== 'string' || typeof input.auth !== 'string') return { error: json({ error: 'push' }, 400) };
+  if (!/^[A-Za-z0-9_-]{16,200}$/.test(input.p256dh) || !/^[A-Za-z0-9_-]{16,200}$/.test(input.auth)) {
+    return { error: json({ error: 'push' }, 400) };
+  }
+  let publicKey;
+  let auth;
+  try {
+    publicKey = base64UrlToBytes(input.p256dh);
+    auth = base64UrlToBytes(input.auth);
+  } catch {
+    return { error: json({ error: 'push' }, 400) };
+  }
+  if (publicKey.length !== 65 || publicKey[0] !== 4 || auth.length < 16 || auth.length > 32) {
+    return { error: json({ error: 'push' }, 400) };
+  }
+  return { subscription: { endpoint: input.endpoint, p256dh: input.p256dh, auth: input.auth } };
 }
 
 export function viewFamilyPlaces(room) {
@@ -241,7 +305,11 @@ export async function parseOperation(request) {
     return { kind: 'health' };
   }
 
-  const match = url.pathname.match(/^\/v1\/rooms\/(\d{4,6})(\/place|\/alert|\/family)?\/?$/);
+  if (request.method === 'GET' && (url.pathname === '/v1/push/vapid' || url.pathname === '/v1/push/vapid/')) {
+    return { kind: 'vapid-public' };
+  }
+
+  const match = url.pathname.match(/^\/v1\/rooms\/(\d{4,6})(\/place|\/alert|\/family|\/push)?\/?$/);
   if (!match) return json({ error: 'not-found' }, 404);
   const code = match[1];
   const action = match[2] || '';
@@ -270,6 +338,23 @@ export async function parseOperation(request) {
     return { kind: 'place', token: id, place: cleaned.place };
   }
 
+  if ((request.method === 'PUT' || request.method === 'DELETE') && action === '/push') {
+    const readKey = request.headers.get('x-umap-read-key') || '';
+    if (!isKeyPart(readKey)) return json({ error: 'read-key' }, 403);
+    const actual = await sha256Base64Url(readKey);
+    if (!safeEqual(actual, token.readKeyHash)) return json({ error: 'read-key' }, 403);
+    const body = await readJson(request);
+    if (body.error) return body.error;
+    if (request.method === 'DELETE') {
+      const endpoint = body.value && typeof body.value.endpoint === 'string' ? body.value.endpoint : '';
+      if (!pushEndpointAllowed(endpoint)) return json({ error: 'push' }, 400);
+      return { kind: 'push-remove', token: id, endpoints: [endpoint] };
+    }
+    const cleaned = cleanSubscription(body.value);
+    if (cleaned.error) return cleaned.error;
+    return { kind: 'push-subscribe', token: id, subscription: cleaned.subscription };
+  }
+
   if (request.method === 'POST' && action === '/alert') {
     const body = await readJson(request);
     if (body.error) return body.error;
@@ -281,11 +366,21 @@ export async function parseOperation(request) {
   return json({ error: 'method' }, 405);
 }
 
+export function alertPushPayload(alert) {
+  return {
+    id: alert.id,
+    kind: alert.kind,
+    title: alert.kind === 'sos' ? 'SOS' : '집 반경을 나갔습니다',
+    body: alert.body,
+  };
+}
+
 export async function handleSyncRequest(store, request) {
   if (request.method === 'OPTIONS') return new Response(null, { status: 204 });
   const op = await parseOperation(request);
   if (op instanceof Response) return op;
   if (op.kind === 'health') return json({ ok: true, service: 'umap-family-sync' });
+  if (op.kind === 'vapid-public') return json({ error: 'vapid' }, 501);
 
   const room = (await store.read(op.token)) || emptyRoom();
   if (op.kind === 'get') return json(viewRoom(room, op.since));
@@ -298,6 +393,14 @@ export async function handleSyncRequest(store, request) {
   if (op.kind === 'alert') {
     const next = applyAlert(room, op.alert, Date.now());
     if (!next.ignored) await store.write(op.token, next.room);
+    return json({ ok: true });
+  }
+  if (op.kind === 'push-subscribe') {
+    await store.write(op.token, applySubscription(room, op.subscription));
+    return json({ ok: true });
+  }
+  if (op.kind === 'push-remove') {
+    await store.write(op.token, removeSubscriptions(room, op.endpoints || []));
     return json({ ok: true });
   }
   return json({ error: 'method' }, 405);

@@ -10,12 +10,12 @@
 | :--- | :--- | :--- |
 | 회사 홈 | GitHub Pages | https://jadegun1124.github.io/umap/ |
 | 앱 화면 미리보기 | 같은 Pages의 `?app=1` | https://jadegun1124.github.io/umap/?app=1 |
-| 안드로이드 앱 | GitHub Releases APK v1.5.0 | https://github.com/jadegun1124/umap/releases/download/v1.5.0/umap-v1.5.0-tracker.apk |
-| 릴리스 페이지 | GitHub Releases | https://github.com/jadegun1124/umap/releases/tag/v1.5.0 |
+| 안드로이드 앱 | GitHub Releases APK v1.6.0 | https://github.com/jadegun1124/umap/releases/download/v1.6.0/umap-v1.6.0-tracker.apk |
+| 릴리스 페이지 | GitHub Releases | https://github.com/jadegun1124/umap/releases/tag/v1.6.0 |
 
 Google Play, App Store, TestFlight에는 올리지 않았습니다. iOS는 아이콘 에셋만 있고 설치 파일은 없습니다.
 
-`main`에 푸시하면 GitHub Actions가 회사 홈을 Pages에 배포하고, 같은 커밋으로 디버그 APK를 만들어 GitHub Release `v1.5.0`의 `umap-v1.5.0-tracker.apk`를 갱신합니다. 이전 빌드는 `v1.4.0`, `v1.3.0`, `v1.2.0`, `v1.1.0`, `v1.0.0`에 남아 있습니다.
+`main`에 푸시하면 GitHub Actions가 회사 홈을 Pages에 배포하고, 같은 커밋으로 디버그 APK를 만들어 GitHub Release `v1.6.0`의 `umap-v1.6.0-tracker.apk`를 갱신합니다. 이전 빌드는 `v1.5.0`, `v1.4.0`, `v1.3.0`, `v1.2.0`, `v1.1.0`, `v1.0.0`에 남아 있습니다.
 
 ## 화면
 
@@ -38,7 +38,7 @@ Google Play, App Store, TestFlight에는 올리지 않았습니다. iOS는 아�
 
 마이크, 문자, 주변 소리, 원격으로 소리를 울리는 기능은 없습니다. 전화번호만으로 다른 사람을 찾지 않습니다.
 
-항상 허용을 누르면 이 앱의 위치 액세스 권한 화면이 먼저 열리고, 거기서 라디오를 직접 고릅니다. 그 화면을 열지 못하면 앱 권한 목록(위치, 알림, 신체 활동)으로 가고, 그것도 막히면 앱 정보로 갑니다. 앱은 OS 스위치를 대신 바꾸지 않습니다. 위치 유지 알림은 처음 권한 화면에서 위치와 함께 묻고, 사용자가 켠 뒤에만 시작합니다. 알림이 떠 있는 동안 백그라운드에서 위치를 보냅니다. 배터리 제한 없음을 누르면 `ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` 팝업이 바로 열립니다.
+항상 허용을 누르면 이 앱의 위치 액세스 권한 화면이 먼저 열리고, 거기서 라디오를 직접 고릅니다. 그 화면을 열지 못하면 앱 권한 목록(위치, 알림, 신체 활동)으로 가고, 그것도 막히면 앱 정보로 갑니다. 앱은 OS 스위치를 대신 바꾸지 않습니다. 위치 유지는 처음 권한 화면에서 위치와 함께 묻고, 사용자가 켠 뒤에만 시작합니다. 백그라운드에서 위치를 보내며, 알림 목록에는 위치 공유 문구를 띄우지 않습니다. 배터리 제한 없음을 누르면 `ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` 팝업이 바로 열립니다.
 
 ## 이름과 지도
 
@@ -83,15 +83,15 @@ npm run dev
 
 ## 안드로이드 APK
 
-받는 곳: https://github.com/jadegun1124/umap/releases/download/v1.5.0/umap-v1.5.0-tracker.apk
+받는 곳: https://github.com/jadegun1124/umap/releases/download/v1.6.0/umap-v1.6.0-tracker.apk
 
-`main` 푸시마다 `Build Android APK (Umap)` 워크플로가 웹을 빌드하고 `dist` 를 안드로이드 에셋으로 복사한 뒤 `assembleDebug` 로 APK를 만듭니다. 결과 파일은 GitHub Release `v1.5.0`에 올립니다. 앱 `versionName`은 `1.5.0`, `versionCode`는 6입니다. Play 스토어 트랙은 없습니다.
+`main` 푸시마다 `Build Android APK (Umap)` 워크플로가 웹을 빌드하고 `dist` 를 안드로이드 에셋으로 복사한 뒤 `assembleDebug` 로 APK를 만듭니다. 결과 파일은 GitHub Release `v1.6.0`에 올립니다. 앱 `versionName`은 `1.6.0`, `versionCode`는 7입니다. Play 스토어 트랙은 없습니다.
 
 ## 데이터
 
 가족, 모드, 우리 집 반경, 권한, 위치 공유 허용은 이 탭의 `sessionStorage`와 모드별 `localStorage`(`umap_family_v1:admin`, `umap_family_v1:managed`)에 있습니다. 관리자 지도는 내 위치와, 위치 공유를 허용한 아이의 핀만 보여 줍니다. 피관리자 지도는 내 위치만 보여 주고, 관리자 카드는 공유 스위치일 뿐 위치 핀이 아닙니다.
 
-같은 브라우저에서 피관리자가 공유를 허용하면 그 좌표가 `umap_family_places_v1`로 관리자 탭의 아이 핀에 붙습니다. 다른 폰은 아래 동기화 서버를 통합니다. 서버가 없거나 끊기면 같은 브라우저 공유만 남고, 화면에 그 사실을 한국어로 알립니다. 집 이탈 사이렌은 관리자 화면에만, SOS 사이렌은 피관리자 폰과 관리자 화면에 울립니다. 서버가 연결되어 있으면 다른 폰의 관리자 화면에도 전달됩니다. 문자는 쓰지 않습니다. 전화번호로 위치를 찾지 않습니다.
+같은 브라우저에서 피관리자가 공유를 허용하면 그 좌표가 `umap_family_places_v1`로 관리자 탭의 아이 핀에 붙습니다. 다른 폰은 초대 링크의 동기화 키로 가족 위치 서버에 최신 위치와 배터리를 올리고, 관리자 폰이 그 서버에서 받아 지도와 목록에 표시합니다. 예시 좌표나 하드코딩된 팝업이 아닙니다. 서버가 없거나 끊기면 같은 브라우저 공유만 남고, 화면에 그 사실을 한국어로 알립니다. 집 이탈 사이렌은 관리자 화면에만, SOS 사이렌은 피관리자 폰과 관리자 화면에 울립니다. 서버가 연결되어 있으면 다른 폰의 관리자 화면에도 전달되고, 알림을 허용한 관리자는 앱이 꺼져 있어도 Web Push 또는 알림 대기로 SOS를 받습니다. 문자는 쓰지 않습니다. 전화번호로 위치를 찾지 않습니다.
 
 ## 다른 폰과 위치 나누기
 

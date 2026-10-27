@@ -114,8 +114,8 @@ function hasPending() {
   return placeQueue != null || alertQueue != null;
 }
 
-export function publishPlaceRemote(place: SharedPlace, syncToken?: string | null) {
-  if (!syncToken || !splitSyncToken(syncToken) || !familySyncUrl()) return;
+export function publishPlaceRemote(place: SharedPlace, syncToken?: string | null): boolean {
+  if (!syncToken || !splitSyncToken(syncToken) || !familySyncUrl()) return false;
   const body: Record<string, unknown> = {
     code: place.code,
     name: place.name.trim().slice(0, 80),
@@ -132,6 +132,7 @@ export function publishPlaceRemote(place: SharedPlace, syncToken?: string | null
   if (place.audience === 'family') body.audience = 'family';
   placeQueue = { code: place.code, token: syncToken, body };
   void flushQueues();
+  return true;
 }
 
 export function publishAlertRemote(alert: FamilyAlert, syncToken?: string | null) {
@@ -378,4 +379,53 @@ export function startManagedFamilySync(
     window.clearTimeout(timer);
     document.removeEventListener('visibilitychange', onVisible);
   };
+}
+
+function base64UrlToBytes(value: string): Uint8Array<ArrayBuffer> {
+  const text = value.replace(/-/g, '+').replace(/_/g, '/');
+  const padded = text + '='.repeat((4 - (text.length % 4)) % 4);
+  const binary = atob(padded);
+  const buffer = new ArrayBuffer(binary.length);
+  const bytes = new Uint8Array(buffer);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return bytes;
+}
+
+/** Subscribe this admin browser for Worker-sent Web Push. Returns false when the WebView has no Push API. */
+export async function registerAdminPush(link: RemoteLink): Promise<boolean> {
+  if (!familySyncUrl() || typeof navigator === 'undefined' || !('serviceWorker' in navigator) || !('PushManager' in window)) return false;
+  if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return false;
+  try {
+    const registration = await navigator.serviceWorker.ready;
+    const keyResponse = await request('/v1/push/vapid', { method: 'GET' });
+    if (!keyResponse.ok) return false;
+    const keyBody: unknown = await keyResponse.json();
+    const publicKey = keyBody && typeof keyBody === 'object' ? (keyBody as { publicKey?: unknown }).publicKey : null;
+    if (typeof publicKey !== 'string' || publicKey.length < 16) return false;
+    const existing = await registration.pushManager.getSubscription();
+    const applicationServerKey = base64UrlToBytes(publicKey);
+    const subscription = existing ?? await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey,
+    });
+    const json = subscription.toJSON();
+    const endpoint = json.endpoint;
+    const p256dh = json.keys?.p256dh;
+    const auth = json.keys?.auth;
+    if (!endpoint || !p256dh || !auth) return false;
+    const token = await syncTokenFor(link.writeKey, link.readKey);
+    const response = await request(`/v1/rooms/${link.code}/push`, {
+      method: 'PUT',
+      headers: {
+        'content-type': 'application/json',
+        'x-umap-sync-key': token,
+        'x-umap-read-key': link.readKey,
+      },
+      body: JSON.stringify({ endpoint, p256dh, auth }),
+    });
+    classify(response);
+    return response.ok;
+  } catch {
+    return false;
+  }
 }

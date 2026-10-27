@@ -53,6 +53,8 @@ export interface GuardianLink {
   share: 'accepted' | 'allowed' | 'revoked';
   leaveAlert: LeaveAlert | null;
   syncToken?: string;
+  /** Admin's roster label carried in the invite link. The phone still publishes under this name when set. */
+  rosterName?: string;
 }
 
 export interface HomeZone {

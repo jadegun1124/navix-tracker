@@ -50,6 +50,15 @@ export function readSharedPlaces(): SharedPlace[] {
   return Object.values(readMap());
 }
 
+const remoteSent = new Set<string>();
+
+function remoteFingerprint(place: SharedPlace): string {
+  const audience = place.audience === 'family' ? 'family' : 'admin';
+  const battery = batteryOf(place);
+  const charging = place.charging === true ? '1' : place.charging === false ? '0' : '';
+  return `${place.code}|${audience}|${place.name}|${place.sharing ? 1 : 0}|${place.lat ?? ''}|${place.lng ?? ''}|${battery ?? ''}|${charging}`;
+}
+
 export function publishSharedPlace(place: SharedPlace, syncToken?: string | null) {
   const places = readMap();
   const key = storageKey(place);
@@ -71,17 +80,22 @@ export function publishSharedPlace(place: SharedPlace, syncToken?: string | null
     (current.charging === true ? true : current.charging === false ? false : null) === charging &&
     (current.audience === 'family' ? 'family' : 'admin') === (place.audience === 'family' ? 'family' : 'admin') &&
     place.at - current.at < 7000;
+  const next = { ...place, batteryPct: battery, charging };
   if (!same) {
-    places[key] = { ...place, batteryPct: battery, charging };
+    places[key] = next;
     localStorage.setItem(STORAGE_KEY, JSON.stringify(places));
     try {
       const channel = new BroadcastChannel(CHANNEL);
-      channel.postMessage(place);
+      channel.postMessage(next);
       channel.close();
     } catch {
       /* BroadcastChannel 이 없는 웹뷰 */
     }
-    publishPlaceRemote(place, syncToken);
+  }
+  const fingerprint = remoteFingerprint(next);
+  if (syncToken && !remoteSent.has(fingerprint) && publishPlaceRemote(next, syncToken)) {
+    remoteSent.add(fingerprint);
+    if (remoteSent.size > 200) remoteSent.clear();
   }
 }
 

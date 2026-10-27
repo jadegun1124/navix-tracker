@@ -5,7 +5,8 @@ import { KEEP_PERMISSION_ASKED_KEY, KEEP_START_ASKED_KEY, keepEntryPrompt, markS
 import { buildDayRecord, collapseStayTrail, displayCoordinate, formatDurationMs, historyDayKeys, historyDayLabel, modeLabel, seoulDayEndMs, seoulDayKey, visibleTrail } from '../../lib/tracking.mjs';
 import { ackFamilyAlert, isFamilyAlertAcked, publishFamilyAlert, readFamilyAlert, subscribeFamilyAlerts, type FamilyAlert } from '../../services/familyAlert';
 import { readSharedPlaces, subscribeSharedPlaces } from '../../services/familyShare';
-import { currentSyncPhase, familySyncConfigured, splitSyncToken, startAdminRemoteSync, startSyncMonitor, subscribeSyncPhase, syncTokenFor, type SyncPhase } from '../../services/familySync';
+import { currentSyncPhase, familySyncConfigured, familySyncUrl, registerAdminPush, splitSyncToken, startAdminRemoteSync, startSyncMonitor, subscribeSyncPhase, syncTokenFor, type SyncPhase } from '../../services/familySync';
+import { umapLocation, umapLocationNative } from '../../services/umapLocation';
 import { sounds } from '../../utils/audio';
 import { DEFAULT_CENTER, type GuardianLink, type HomeZone, type Member } from '../../types/family';
 import { AlwaysAllowNotice } from './AlwaysAllowNotice';
@@ -157,6 +158,11 @@ export function FamilyMapScreen() {
     };
     const latest = readFamilyAlert();
     if (latest) handle(latest);
+    const onPush = (event: MessageEvent) => {
+      const data = event.data as { type?: string; alert?: FamilyAlert } | null;
+      if (data?.type === 'umap-alert' && data.alert) handle(data.alert);
+    };
+    navigator.serviceWorker?.addEventListener('message', onPush);
     const stopLocal = subscribeFamilyAlerts(handle);
     const stopRemote = startAdminRemoteSync(
       { code: state.inviteCode, writeKey: state.syncWriteKey, readKey: state.syncReadKey },
@@ -168,8 +174,30 @@ export function FamilyMapScreen() {
     return () => {
       stopLocal();
       stopRemote();
+      navigator.serviceWorker?.removeEventListener('message', onPush);
     };
   }, [notifyOk, state.inviteCode, state.mode, state.syncReadKey, state.syncWriteKey]);
+
+  useEffect(() => {
+    if (state.mode !== 'admin' || state.permissions.notifications !== 'granted' || !familySyncConfigured()) return;
+    let cancel = false;
+    const link = { code: state.inviteCode, writeKey: state.syncWriteKey, readKey: state.syncReadKey };
+    void (async () => {
+      const pushed = await registerAdminPush(link);
+      if (cancel || pushed || !umapLocationNative()) return;
+      const status = await umapLocation.alertWatchStatus().catch(() => ({ running: false, userStopped: false }));
+      if (cancel || status.userStopped) return;
+      const token = await syncTokenFor(link.writeKey, link.readKey);
+      const base = familySyncUrl();
+      if (!base) return;
+      await umapLocation.startAlertWatch({
+        config: JSON.stringify({ baseUrl: base, code: link.code, token, readKey: link.readKey }),
+      }).catch(() => undefined);
+    })();
+    return () => {
+      cancel = true;
+    };
+  }, [state.inviteCode, state.mode, state.permissions.notifications, state.syncReadKey, state.syncWriteKey]);
 
   const stopIncoming = () => {
     if (incoming) ackFamilyAlert(incoming.id);
@@ -531,7 +559,10 @@ export function FamilyMapScreen() {
               <Line k="배터리 안내" v={state.permissions.battery === 'acknowledged' ? '확인함' : state.permissions.battery === 'skipped' ? '나중에' : '해당 없음'} />
             </dl>
             <p className="mt-3 text-xs leading-5 text-slate-400">
-              항상 허용을 누르면 이 앱의 위치 권한 화면이 바로 열립니다. 배터리 제한 없음을 누르면 시스템 팝업이 바로 열립니다. Umap은 그 스위치를 대신 바꾸지 않습니다. 위치 유지 알림은 처음 권한 화면에서 위치와 함께 묻고, 아직 켜지 않았으면 지도를 열 때 다시 묻습니다. 알림이 떠 있는 동안만 위치를 보냅니다.
+              가족 위치와 배터리는 초대 동기화 키로 위치 서버에 올라가고, 관리자 폰이 그 서버에서 받아 지도에 표시합니다. 예시 좌표나 하드코딩된 팝업이 아닙니다. 알림을 허용하면 앱을 닫아도 SOS가 푸시로 옵니다. 전화번호로는 위치를 찾지 않습니다.
+            </p>
+            <p className="mt-3 text-xs leading-5 text-slate-400">
+              항상 허용을 누르면 이 앱의 위치 권한 화면이 바로 열립니다. 배터리 제한 없음을 누르면 시스템 팝업이 바로 열립니다. Umap은 그 스위치를 대신 바꾸지 않습니다. 위치 유지는 처음 권한 화면에서 위치와 함께 묻고, 사용자가 켠 뒤에만 백그라운드에서 보냅니다. 알림 목록에 위치 공유 문구는 띄우지 않습니다.
             </p>
             <div className="mt-4 space-y-2">
               <button type="button" onClick={family.reopenMode} className="w-full rounded-full bg-slate-100 py-3 font-bold">
@@ -540,7 +571,14 @@ export function FamilyMapScreen() {
               <button type="button" onClick={family.revisitPermissions} className="w-full rounded-full bg-slate-100 py-3 font-bold">
                 권한 안내 다시 보기
               </button>
-              <button type="button" onClick={family.logout} className="w-full rounded-full py-3 font-bold text-slate-500">
+              <button
+                type="button"
+                onClick={() => {
+                  void umapLocation.stopAlertWatch();
+                  family.logout();
+                }}
+                className="w-full rounded-full py-3 font-bold text-slate-500"
+              >
                 로그아웃
               </button>
             </div>
@@ -617,7 +655,7 @@ export function FamilyMapScreen() {
               family.dismissInvite();
               setSheet(null);
             }}
-            onAccept={(label, code, syncToken) => family.acceptInvite(label, code, syncToken)}
+            onAccept={(label, code, syncToken, rosterName) => family.acceptInvite(label, code, syncToken, rosterName)}
             onShare={(code, share) => family.setGuardianShare(code, share)}
           />
         )}
@@ -941,7 +979,7 @@ function AdminInviteSheet({
     <Sheet title="2. 코드를 보내세요" onClose={onClose}>
       <p className="text-sm leading-6 text-slate-500">{sentName} 님 폰에서 피관리자 모드로 링크를 엽니다. 수락 다음에 위치 공유를 따로 묻습니다. 전화번호로는 위치를 찾지 않습니다.</p>
       <p className="mt-4 text-center text-4xl font-black tracking-[0.25em] text-[#0084FF]">{code}</p>
-      {token && <InviteQrImage text={buildInviteLink(code, home, token)} />}
+      {token && <InviteQrImage text={buildInviteLink(code, home, token, sentName)} />}
       {token && <p className="mt-2 text-center text-[11px] leading-5 text-slate-400">QR은 초대 링크와 같습니다. 위치를 읽는 키는 들어 있지 않고, 전화번호도 없습니다.</p>}
       <label className="mt-4 block text-xs font-bold text-slate-400" htmlFor="sync-token">
         동기화 키
@@ -952,7 +990,7 @@ function AdminInviteSheet({
           <Copy className="mr-1 inline h-3.5 w-3.5" />
           코드 복사
         </button>
-        <button type="button" disabled={!token} onClick={() => copy(buildInviteLink(code, home, token), '링크를 복사했습니다')} className="rounded-full bg-slate-100 py-2 text-xs font-bold disabled:opacity-40">
+        <button type="button" disabled={!token} onClick={() => copy(buildInviteLink(code, home, token, sentName), '링크를 복사했습니다')} className="rounded-full bg-slate-100 py-2 text-xs font-bold disabled:opacity-40">
           링크 복사
         </button>
       </div>
@@ -964,11 +1002,11 @@ function AdminInviteSheet({
       {copied && <p className="mt-2 text-center text-xs font-semibold text-[#0084FF]">{copied}</p>}
       <p className="mt-4 text-xs leading-5 text-slate-400">
         {syncReady
-          ? '링크를 연 폰에서 위치 공유를 허용하면 이 지도에 핀이 나타나고, 공유를 끄면 핀이 곧 사라집니다. 코드만 입력하면 같은 브라우저에서만 공유됩니다.'
+          ? '링크를 연 폰에서 위치 공유를 허용하면 그 폰의 최신 위치와 배터리가 위치 서버를 통해 이 지도에 나타납니다. 미리 넣어 둔 좌표는 없습니다. 공유를 끄면 핀이 곧 사라집니다. 코드만 입력하면 같은 브라우저에서만 공유됩니다.'
           : '이 빌드에는 위치 서버 주소가 없습니다. 코드는 같은 브라우저 안에서만 공유됩니다.'}
         {' '}
         {home ? `링크에는 집 반경 ${home.radiusM}m가 들어 있습니다. 상대가 위치 공유를 허용한 뒤 그 원을 나가면 관리자 화면에 사이렌이 울립니다.` : '우리 집을 저장한 뒤 링크를 다시 복사하면 집 반경 이탈 사이렌이 연결됩니다.'}
-        {' '}피관리자 폰에서는 이탈 사이렌이 울리지 않습니다. SOS는 양쪽에서 울립니다. 위치를 읽는 키는 관리자 폰에만 있습니다.
+        {' '}피관리자 폰에서는 이탈 사이렌이 울리지 않습니다. SOS는 양쪽에서 울리고, 관리자가 알림을 허용하면 앱을 닫아도 알림이 옵니다. 위치를 읽는 키는 관리자 폰에만 있습니다.
       </p>
       <button type="button" onClick={onClose} className="mt-4 w-full rounded-full bg-[#0084FF] py-3.5 font-bold text-white">
         완료
@@ -977,19 +1015,20 @@ function AdminInviteSheet({
   );
 }
 
-function parseInviteDraft(value: string): { code: string; syncToken: string | null } {
+function parseInviteDraft(value: string): { code: string; syncToken: string | null; rosterName: string | null } {
   const trimmed = value.trim();
   if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
     try {
       const url = new URL(trimmed);
       const code = (url.searchParams.get('invite') || '').replace(/\D/g, '').slice(0, 6);
       const syncToken = splitSyncToken(url.searchParams.get('sync')) ? url.searchParams.get('sync') : null;
-      return { code, syncToken };
+      const rosterName = (url.searchParams.get('who') || '').trim().slice(0, 80) || null;
+      return { code, syncToken, rosterName };
     } catch {
       /* 링크가 아니면 코드로 봅니다. */
     }
   }
-  return { code: trimmed.replace(/\D/g, '').slice(0, 6), syncToken: null };
+  return { code: trimmed.replace(/\D/g, '').slice(0, 6), syncToken: null, rosterName: null };
 }
 
 function ManagedInviteSheet({
@@ -1004,11 +1043,12 @@ function ManagedInviteSheet({
   pendingSyncToken: string | null;
   guardians: GuardianLink[];
   onClose: () => void;
-  onAccept: (label: string, code: string, syncToken: string | null) => void;
+  onAccept: (label: string, code: string, syncToken: string | null, rosterName: string | null) => void;
   onShare: (code: string, share: 'allowed' | 'revoked') => void;
 }) {
   const [code, setCode] = useState(pending ?? '');
   const [syncToken, setSyncToken] = useState(pendingSyncToken ?? '');
+  const [rosterName, setRosterName] = useState(() => new URLSearchParams(window.location.search).get('who')?.trim().slice(0, 80) ?? '');
   const [label, setLabel] = useState('');
   const [step, setStep] = useState<'join' | 'share'>('join');
   const [joinedCode, setJoinedCode] = useState('');
@@ -1028,6 +1068,7 @@ function ManagedInviteSheet({
                 const parsed = parseInviteDraft(next);
                 setCode(parsed.code);
                 if (parsed.syncToken) setSyncToken(parsed.syncToken);
+                if (parsed.rosterName) setRosterName(parsed.rosterName);
                 return;
               }
               setCode(next.replace(/\D/g, '').slice(0, 6));
@@ -1041,6 +1082,7 @@ function ManagedInviteSheet({
               const parsed = parseInviteDraft(value);
               if (parsed.code) setCode(parsed.code);
               if (parsed.syncToken) setSyncToken(parsed.syncToken);
+              if (parsed.rosterName) setRosterName(parsed.rosterName);
             }}
           />
           <label className="mt-3 block text-xs font-bold text-slate-400" htmlFor="managed-sync-token">
@@ -1058,7 +1100,7 @@ function ManagedInviteSheet({
             disabled={code.length < 4}
             onClick={() => {
               const token = splitSyncToken(syncToken) ? syncToken : null;
-              onAccept(label, code, token);
+              onAccept(label, code, token, rosterName.trim() || null);
               setJoinedCode(code);
               setStep('share');
             }}
@@ -1138,8 +1180,8 @@ function KeepNoticeSheet({
         <h2 className="text-lg font-black">위치 유지 알림 켜기</h2>
         <p className="mt-2 text-sm leading-6 text-slate-600">
           {mode === 'permission'
-            ? '위치를 유지하는 동안 알림이 떠 있습니다. 허용을 누르면 알림 창이 열립니다. 안드로이드 13 이상에서는 알림 권한입니다. 앱이 혼자 켜지 않습니다. 전화번호는 쓰지 않습니다.'
-            : '알림 권한은 이미 허용되어 있습니다. 켜면 알림이 떠 있는 동안 위치를 보냅니다. 끄기는 우리 가족에서 할 수 있습니다. 앱이 혼자 켜지 않습니다.'}
+            ? '위치를 백그라운드에서 보내려면 알림 권한이 필요합니다. 허용을 누르면 알림 창이 열립니다. 알림 목록에는 위치 공유 문구를 띄우지 않습니다. 앱이 혼자 켜지 않습니다. 전화번호는 쓰지 않습니다.'
+            : '알림 권한은 이미 허용되어 있습니다. 켜면 백그라운드에서 위치를 보냅니다. 알림 목록에 위치 공유 문구는 나오지 않습니다. 끄기는 우리 가족에서 할 수 있습니다. 앱이 혼자 켜지 않습니다.'}
         </p>
         {note && <p className="mt-3 text-sm leading-6 text-amber-800">{note}</p>}
         <button type="button" disabled={busy} onClick={onPrimary} className="mt-4 w-full rounded-full bg-[#0084FF] py-3.5 font-bold text-white disabled:opacity-40">
