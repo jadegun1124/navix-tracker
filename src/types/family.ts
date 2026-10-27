@@ -1,11 +1,7 @@
 export interface Profile {
-  sub: string;
+  /** Device-local id. Not a Google subject and not a phone number. */
+  id: string;
   name: string;
-  email: string;
-  picture: string | null;
-  preview: boolean;
-  /** Set only when the ID token itself says the phone is verified. Never a typed number. */
-  verifiedPhone: string | null;
 }
 
 export interface TrackPoint {
@@ -86,7 +82,7 @@ export interface PermissionState {
 }
 
 export type Stage = 'splash' | 'login' | 'mode' | 'survey' | 'terms' | 'phone' | 'permissions' | 'map';
-export type FamilyTab = 'map' | 'alerts' | 'menu';
+export type FamilyTab = 'map' | 'history' | 'menu';
 
 export interface Session {
   stage: Stage;

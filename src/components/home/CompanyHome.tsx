@@ -3,8 +3,8 @@ import React, { useState } from 'react';
 const iconSrc = `${import.meta.env.BASE_URL}umap-icon.png`;
 
 export const COMPANY_HOME_URL = 'https://jadegun1124.github.io/umap/';
-export const ANDROID_RELEASES_URL = 'https://github.com/jadegun1124/umap/releases/tag/v1.2.0';
-export const ANDROID_APK_URL = 'https://github.com/jadegun1124/umap/releases/download/v1.2.0/umap-v1.2.0-tracker.apk';
+export const ANDROID_RELEASES_URL = 'https://github.com/jadegun1124/umap/releases/tag/v1.3.0';
+export const ANDROID_APK_URL = 'https://github.com/jadegun1124/umap/releases/download/v1.3.0/umap-v1.3.0-tracker.apk';
 
 export function CompanyHome() {
   const [sent, setSent] = useState(false);
@@ -49,7 +49,7 @@ export function CompanyHome() {
             <img src={iconSrc} alt="Umap 앱 아이콘" className="h-20 w-20 rounded-[22px]" />
             <p className="mt-4 text-2xl font-black">Umap</p>
             <ul className="mt-4 space-y-2 text-sm leading-6 text-slate-600">
-              <li>Google 로그인 후 권한을 설명하고 묻습니다.</li>
+              <li>이 기기의 이름을 정한 뒤 권한을 설명하고 묻습니다.</li>
               <li>가족 핀과 우리 집 원을 지도에서 봅니다.</li>
               <li>코드나 링크로 가족을 초대합니다.</li>
             </ul>

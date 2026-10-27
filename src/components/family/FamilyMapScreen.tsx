@@ -1,7 +1,7 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Bell, Copy, Home, LocateFixed, MapPin, Minus, Plus, Route, UserPlus, X } from 'lucide-react';
 import { buildInviteLink, formatAgo, formatClock, hasLocation, haversineMeters, shouldAlertLeave } from '../../lib/geo';
-import { buildDayRecord, formatDurationMs, modeLabel, seoulDayKey } from '../../lib/tracking.mjs';
+import { buildDayRecord, formatDurationMs, historyDayKeys, historyDayLabel, modeLabel, seoulDayEndMs, seoulDayKey } from '../../lib/tracking.mjs';
 import { ackFamilyAlert, isFamilyAlertAcked, publishFamilyAlert, readFamilyAlert, subscribeFamilyAlerts, type FamilyAlert } from '../../services/familyAlert';
 import { readSharedPlaces, subscribeSharedPlaces } from '../../services/familyShare';
 import { currentSyncPhase, familySyncConfigured, splitSyncToken, startAdminRemoteSync, startSyncMonitor, subscribeSyncPhase, syncTokenFor, type SyncPhase } from '../../services/familySync';
@@ -41,6 +41,8 @@ export function FamilyMapScreen() {
   const [now, setNow] = useState(() => Date.now());
   const tracking = useFamilyTracking((lat, lng) => mapRef.current?.panTo(lat, lng));
   const [settingsNote, setSettingsNote] = useState<string | null>(null);
+  const [alertsOpen, setAlertsOpen] = useState(false);
+  const [historyDay, setHistoryDay] = useState(() => seoulDayKey(Date.now()));
 
   useEffect(() => subscribeSyncPhase(setSyncPhase), []);
   useEffect(() => startSyncMonitor(), []);
@@ -203,9 +205,27 @@ export function FamilyMapScreen() {
     }, 200);
     return () => window.clearInterval(timer);
   }, [shareKey, state.members, state.mode]);
-  const trail = selected && showTrail && (selected.id === 'self' || selected.share === 'allowed' || selected.role === 'admin-share') ? state.tracks[selected.id] ?? [] : [];
-  const todayRecord = buildDayRecord(selected ? state.tracks[selected.id] ?? [] : [], now);
-  const todayVisits = selected ? state.visits[selected.id] ?? [] : [];
+  const liveDay = seoulDayKey(now);
+  const pathDay = state.tab === 'history' ? historyDay : liveDay;
+  const memberPoints = selected ? state.tracks[selected.id] ?? [] : [];
+  const dayPoints = useMemo(
+    () => memberPoints.filter((point) => seoulDayKey(point.at) === pathDay),
+    [memberPoints, pathDay],
+  );
+  const showPath = !!selected && (state.tab === 'history' || showTrail) && (selected.id === 'self' || selected.share === 'allowed' || selected.role === 'admin-share');
+  const trail = showPath ? dayPoints : [];
+  const dayRecord = buildDayRecord(dayPoints, pathDay === liveDay ? now : seoulDayEndMs(pathDay));
+  const dayVisits = useMemo(() => {
+    const list = selected ? state.visits[selected.id] ?? [] : [];
+    return list.filter((visit) => seoulDayKey(visit.arrivedAt) === pathDay);
+  }, [pathDay, selected, state.visits]);
+  const unreadAlerts = state.notices.some((item) => !item.read);
+  useEffect(() => {
+    if (state.tab !== 'history' || trail.length === 0) return;
+    const points = trail;
+    const timer = window.setTimeout(() => mapRef.current?.fit(points), 80);
+    return () => window.clearTimeout(timer);
+  }, [historyDay, selected?.id, state.tab, trail]);
   const missingSyncKey = state.mode === 'managed' && state.guardians.some((link) => (link.share === 'allowed' || link.share === 'revoked') && !link.syncToken);
   const syncBanner = syncBannerText(syncPhase, missingSyncKey);
   const remoteLive = syncPhase === 'live';
@@ -235,6 +255,16 @@ export function FamilyMapScreen() {
               if (member) focusMember(member, true);
             }}
           />
+
+          <button
+            type="button"
+            aria-label="알림"
+            onClick={() => setAlertsOpen(true)}
+            className="absolute left-3 top-3 z-30 flex h-11 w-11 items-center justify-center rounded-full bg-white shadow-md"
+          >
+            <Bell className={`h-5 w-5 ${unreadAlerts ? 'text-[#0084FF]' : 'text-slate-700'}`} />
+            {unreadAlerts && <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-[#ff8a34]" />}
+          </button>
 
           <div className="absolute right-3 top-3 z-30 flex flex-col gap-2">
             <RoundButton label="안심존 표시" onClick={() => setShowZone((value) => !value)}>
@@ -324,6 +354,36 @@ export function FamilyMapScreen() {
 
         {state.tab === 'map' && (
           <section className="rounded-t-3xl bg-white px-4 pb-2 pt-3 shadow-[0_-8px_30px_rgba(15,23,42,0.08)]">
+            <div className="mb-2 flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-black">우리 가족</h2>
+                <p className="text-[11px] font-semibold text-slate-400">{syncPhaseLine(syncPhase)}</p>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setHistoryDay(liveDay);
+                    family.setTab('history');
+                  }}
+                  className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-bold text-slate-700"
+                >
+                  오늘 이동{dayRecord.segments.length > 0 ? ` ${dayRecord.segments.length}` : ''}
+                </button>
+                {state.mode === 'admin' && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setHomeCenter(mapRef.current?.getCenter() ?? center);
+                      setSheet('home');
+                    }}
+                    className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-bold text-slate-700"
+                  >
+                    {state.home ? '우리 집 수정' : '우리 집 추가'}
+                  </button>
+                )}
+              </div>
+            </div>
             <AlwaysAllowNotice
               locationMode={state.permissions.locationMode}
               keepAlive={state.backgroundKeepAlive}
@@ -340,7 +400,6 @@ export function FamilyMapScreen() {
               onBattery={() => {
                 void askBattery().then((result) => setSettingsNote(result.note));
               }}
-              onReview={family.revisitPermissions}
               onStart={() => {
                 void (async () => {
                   const notifications = await askNotifications();
@@ -354,30 +413,6 @@ export function FamilyMapScreen() {
               }}
               onStop={() => family.setKeepAlive(false)}
             />
-            <div className="mb-2 flex items-center justify-between">
-              <div>
-                <h2 className="text-lg font-black">우리 가족</h2>
-                <p className="text-[11px] font-semibold text-slate-400">{syncPhaseLine(syncPhase)}</p>
-              </div>
-              <div className="flex gap-2">
-                <button type="button" onClick={() => setSheet('today')} className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-bold text-slate-700">
-                  오늘 이동{todayRecord.segments.length > 0 ? ` ${todayRecord.segments.length}` : ''}
-                </button>
-                {state.mode === 'admin' && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setHomeCenter(mapRef.current?.getCenter() ?? center);
-                      setSheet('home');
-                    }}
-                    className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-bold text-slate-700"
-                  >
-                    {state.home ? '우리 집 수정' : '우리 집 추가'}
-                  </button>
-                )}
-              </div>
-            </div>
-            {state.profile?.preview && <p className="mb-2 text-xs font-semibold text-amber-600">미리보기 세션 · Google 계정으로 연결되지 않았습니다.</p>}
             <div className="max-h-48 space-y-2 overflow-y-auto pb-2">
               {(state.mode === 'managed'
                 ? state.members.filter((member) => member.id === 'self' || member.role === 'admin-share')
@@ -386,7 +421,7 @@ export function FamilyMapScreen() {
                   key={member.id}
                   member={member}
                   now={now}
-                  trip={member.id === selected?.id && todayRecord.segments.length > 0 ? `${modeLabel(todayRecord.segments[todayRecord.segments.length - 1].mode)} · ${formatDurationMs(todayRecord.segments[todayRecord.segments.length - 1].durationMs)}` : undefined}
+                  trip={member.id === selected?.id && pathDay === liveDay && dayRecord.segments.length > 0 ? `${modeLabel(dayRecord.segments[dayRecord.segments.length - 1].mode)} · ${formatDurationMs(dayRecord.segments[dayRecord.segments.length - 1].durationMs)}` : undefined}
                   home={state.mode === 'admin' ? state.home : null}
                   selected={member.id === selected?.id}
                   onSelect={() => focusMember(member, true)}
@@ -424,27 +459,39 @@ export function FamilyMapScreen() {
           </section>
         )}
 
-        {state.tab === 'alerts' && (
-          <section className="min-h-[46%] overflow-y-auto bg-white px-4 py-4">
-            <div className="mb-3 flex items-center justify-between">
-              <h2 className="text-lg font-black">알림</h2>
-              <button type="button" onClick={family.markAlertsRead} className="text-xs font-bold text-[#0084FF]">
-                모두 읽음
-              </button>
+        {state.tab === 'history' && (
+          <section className="max-h-[58%] overflow-y-auto rounded-t-3xl bg-white px-4 pb-3 pt-3 shadow-[0_-8px_30px_rgba(15,23,42,0.08)]">
+            <h2 className="text-lg font-black">이동 기록</h2>
+            <p className="text-[11px] font-semibold text-slate-400">오늘부터 30일 전 · 서울 날짜</p>
+            <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
+              {historyDayKeys(now).map((day) => (
+                <button
+                  key={day}
+                  type="button"
+                  onClick={() => setHistoryDay(day)}
+                  className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-bold ${day === historyDay ? 'bg-[#0084FF] text-white' : 'bg-slate-100 text-slate-600'}`}
+                >
+                  {historyDayLabel(day, now)}
+                </button>
+              ))}
             </div>
-            {state.notices.length === 0 ? (
-              <p className="text-sm leading-6 text-slate-500">아직 알림이 없습니다. 우리 집을 저장하면 들어오고 나갈 때 여기에 기록됩니다.</p>
-            ) : (
-              <ul className="space-y-2">
-                {state.notices.map((item) => (
-                  <li key={item.id} className={`rounded-2xl px-3 py-3 ${item.read ? 'bg-slate-50' : 'bg-blue-50'}`}>
-                    <p className="text-sm font-bold">{item.title}</p>
-                    <p className="text-xs leading-5 text-slate-500">{item.body}</p>
-                    <p className="mt-1 text-[11px] text-slate-400">{formatClock(item.at)}</p>
-                  </li>
+            {visibleMembers.length > 1 && (
+              <div className="mt-2 flex gap-2 overflow-x-auto pb-1">
+                {visibleMembers.map((member) => (
+                  <button
+                    key={member.id}
+                    type="button"
+                    onClick={() => focusMember(member, false)}
+                    className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-bold ${member.id === selected?.id ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600'}`}
+                  >
+                    {member.name}
+                  </button>
                 ))}
-              </ul>
+              </div>
             )}
+            <div className="mt-3">
+              <TodayRecord segments={dayRecord.segments} stops={dayRecord.stops} visits={dayVisits} />
+            </div>
           </section>
         )}
 
@@ -453,12 +500,7 @@ export function FamilyMapScreen() {
             <h2 className="text-lg font-black">메뉴</h2>
             <p className="mt-3 text-xs font-bold text-[#0084FF]">{state.mode === 'admin' ? '관리자 모드' : '피관리자 모드'}</p>
             <p className="mt-1 font-bold">{state.profile?.name}</p>
-            <p className="text-slate-500">{state.profile?.email || (state.profile?.preview ? '미리보기 계정' : 'Google 계정')}</p>
-            {state.phoneVerified && state.phone ? (
-              <p className="mt-1 text-slate-500">확인된 전화번호 {state.phone}. 위치 찾기에는 쓰지 않습니다.</p>
-            ) : (
-              <p className="mt-1 text-xs leading-5 text-slate-400">본인 확인은 Google 계정입니다. 전화번호는 받지 않고, 번호로 가족을 찾지 않습니다.</p>
-            )}
+            <p className="mt-1 text-xs leading-5 text-slate-400">이 기기에만 저장된 이름입니다. 전화번호나 Google 계정으로 본인을 확인하지 않습니다.</p>
             <dl className="mt-4 space-y-2 rounded-2xl bg-slate-50 p-3 text-slate-600">
               <Line k="알림" v={labelOf(state.permissions.notifications)} />
               <Line k="위치 정확도" v={state.permissions.accuracy === 'precise' ? '정확한 위치' : '대략적인 위치'} />
@@ -467,7 +509,7 @@ export function FamilyMapScreen() {
               <Line k="배터리 안내" v={state.permissions.battery === 'acknowledged' ? '확인함' : state.permissions.battery === 'skipped' ? '나중에' : '해당 없음'} />
             </dl>
             <p className="mt-3 text-xs leading-5 text-slate-400">
-              항상 허용과 배터리 제한 없음은 누른 뒤에 열리는 시스템 화면에서 직접 고릅니다. Umap은 그 스위치를 대신 바꾸지 않습니다. 위치 유지 알림을 켜면 알림 허용 창을 먼저 띄우고, 알림이 떠 있는 동안 위치를 보냅니다.
+              항상 허용을 누르면 이 앱의 위치 권한 화면이 바로 열립니다. 배터리 제한 없음을 누르면 시스템 팝업이 바로 열립니다. Umap은 그 스위치를 대신 바꾸지 않습니다. 위치 유지 알림은 우리 가족 아래에서 켜고, 알림이 떠 있는 동안 위치를 보냅니다.
             </p>
             <div className="mt-4 space-y-2">
               <button type="button" onClick={family.reopenMode} className="w-full rounded-full bg-slate-100 py-3 font-bold">
@@ -485,7 +527,7 @@ export function FamilyMapScreen() {
 
         <nav className="grid grid-cols-3 border-t border-slate-100 bg-white pb-[env(safe-area-inset-bottom)] text-[11px] font-bold text-slate-400">
           <NavButton active={state.tab === 'map'} label="지도" onClick={() => family.setTab('map')} icon={<MapPin className="h-5 w-5" />} />
-          <NavButton active={state.tab === 'alerts'} label="알림" badge={state.notices.some((item) => !item.read)} onClick={() => family.setTab('alerts')} icon={<Bell className="h-5 w-5" />} />
+          <NavButton active={state.tab === 'history'} label="기록" onClick={() => family.setTab('history')} icon={<Route className="h-5 w-5" />} />
           <NavButton active={state.tab === 'menu'} label="메뉴" onClick={() => family.setTab('menu')} icon={<span className="text-lg leading-none">☰</span>} />
         </nav>
 
@@ -511,9 +553,27 @@ export function FamilyMapScreen() {
             }}
           />
         )}
-        {sheet === 'today' && (
-          <Sheet title="오늘 이동" onClose={() => setSheet(null)}>
-            <TodayRecord segments={todayRecord.segments} stops={todayRecord.stops} visits={todayVisits} />
+        {alertsOpen && (
+          <Sheet
+            title="알림"
+            onClose={() => {
+              family.markAlertsRead();
+              setAlertsOpen(false);
+            }}
+          >
+            {state.notices.length === 0 ? (
+              <p className="text-sm leading-6 text-slate-500">아직 알림이 없습니다. 우리 집을 저장하면 들어오고 나갈 때 여기에 기록됩니다.</p>
+            ) : (
+              <ul className="space-y-2">
+                {state.notices.map((item) => (
+                  <li key={item.id} className={`rounded-2xl px-3 py-3 ${item.read ? 'bg-slate-50' : 'bg-blue-50'}`}>
+                    <p className="text-sm font-bold">{item.title}</p>
+                    <p className="text-xs leading-5 text-slate-500">{item.body}</p>
+                    <p className="mt-1 text-[11px] text-slate-400">{formatClock(item.at)}</p>
+                  </li>
+                ))}
+              </ul>
+            )}
           </Sheet>
         )}
         {sheet === 'invite' && state.mode === 'admin' && (

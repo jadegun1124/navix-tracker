@@ -2,6 +2,8 @@ export const STOP_RADIUS_M: number;
 export const STOP_MIN_MS: number;
 export const STRIDE_M: number;
 export const TRAIL_POINT_CAP: number;
+export const HISTORY_DAYS: number;
+export const VISIT_DAY_CAP: number;
 export const MODE_WALK_MAX_KMH: number;
 export const MODE_BIKE_MAX_KMH: number;
 export const MODE_PLANE_MIN_KMH: number;
@@ -60,6 +62,16 @@ export function needsDailyWipe(storedDay: string | null | undefined, now: number
 export function shouldKeepTrailPoint(last: TrailSample | null | undefined, point: TrailSample): boolean;
 export function tracksForSeoulDay(tracks: Record<string, TrailSample[]> | null | undefined, now: number): Record<string, TrailSample[]>;
 export function visitsForSeoulDay<T extends VisitRecord>(visits: Record<string, T[]> | null | undefined, now: number): Record<string, T[]>;
+export function shiftDayKey(dayKey: string, deltaDays: number): string;
+export function oldestHistoryDay(now: number): string;
+export function isWithinHistory(epochMs: number, now: number): boolean;
+export function historyDayKeys(now: number): string[];
+export function historyDayLabel(dayKey: string, now: number): string;
+export function seoulDayEndMs(dayKey: string): number;
+export function trimMemberPoints(points: TrailSample[] | null | undefined, now: number): TrailSample[];
+export function appendHistoryPoint(points: TrailSample[] | null | undefined, point: TrailSample, now: number): TrailSample[];
+export function tracksWithinHistory(tracks: Record<string, TrailSample[]> | null | undefined, now: number): Record<string, TrailSample[]>;
+export function visitsWithinHistory<T extends VisitRecord>(visits: Record<string, T[]> | null | undefined, now: number): Record<string, T[]>;
 export function acceptFix(
   previous: { lat: number; lng: number; at: number } | null | undefined,
   reading: { lat?: number; lng?: number; accuracy?: number; at?: number; speedMps?: number | null } | null | undefined,

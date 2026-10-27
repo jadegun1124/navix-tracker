@@ -43,11 +43,6 @@ export interface NativeBattery {
   charging: boolean | null;
 }
 
-export interface NativeSignInResult {
-  credential?: string;
-  error?: string;
-}
-
 interface UmapLocationPlugin {
   openSettings(): Promise<{ opened: boolean }>;
   openAlwaysLocation(): Promise<AlwaysLocationResult>;
@@ -56,7 +51,6 @@ interface UmapLocationPlugin {
   requestMotion(): Promise<NativePromptResult>;
   openBattery(): Promise<BatteryOptimizationResult>;
   battery(): Promise<{ pct?: number | null; charging?: boolean | null }>;
-  signIn(options: { clientId: string }): Promise<NativeSignInResult>;
   start(options: { config: string }): Promise<{ started: boolean; reason?: string }>;
   stop(): Promise<{ stopped: boolean }>;
   status(): Promise<{ running: boolean; userStopped: boolean; native: boolean; reason?: string }>;
@@ -85,9 +79,6 @@ const web: UmapLocationPlugin = {
   },
   async battery() {
     return { pct: null, charging: null };
-  },
-  async signIn() {
-    return { error: 'web' };
   },
   async start() {
     return { started: false, reason: 'web' };
@@ -186,15 +177,6 @@ export async function readNativeBattery(): Promise<NativeBattery> {
     return { pct, charging };
   } catch {
     return { pct: null, charging: null };
-  }
-}
-
-export async function nativeGoogleSignIn(clientId: string): Promise<NativeSignInResult> {
-  if (!umapLocationNative()) return { error: 'web' };
-  try {
-    return await plugin.signIn({ clientId });
-  } catch {
-    return { error: 'failed' };
   }
 }
 

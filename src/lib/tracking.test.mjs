@@ -2,14 +2,19 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   acceptFix,
+  HISTORY_DAYS,
   buildDayRecord,
   classifyMode,
   estimateSteps,
   formatDurationMs,
+  historyDayKeys,
+  isWithinHistory,
   needsDailyWipe,
+  oldestHistoryDay,
+  seoulDayEndMs,
   seoulDayKey,
   shouldKeepTrailPoint,
-  tracksForSeoulDay,
+  tracksWithinHistory,
 } from './tracking.mjs';
 
 test('seoul day rolls at midnight KST, not UTC', () => {
@@ -22,17 +27,29 @@ test('seoul day rolls at midnight KST, not UTC', () => {
   assert.equal(needsDailyWipe(undefined, midnight), true);
 });
 
-test('daily wipe keeps today trail points and drops yesterday without a revoke payload', () => {
+test('history keeps today and 30 days ago, and drops the day before that', () => {
   const now = Date.UTC(2026, 9, 27, 16, 0);
-  const kept = tracksForSeoulDay({
+  assert.equal(seoulDayKey(now), '2026-10-28');
+  const oldest = oldestHistoryDay(now);
+  assert.equal(oldest, '2026-09-28');
+  assert.equal(historyDayKeys(now)[0], '2026-10-28');
+  assert.equal(historyDayKeys(now).at(-1), oldest);
+  assert.equal(historyDayKeys(now).length, HISTORY_DAYS + 1);
+  const yesterday = Date.UTC(2026, 9, 26, 16, 0);
+  const tooOld = Date.UTC(2026, 8, 27, 14, 0);
+  assert.equal(isWithinHistory(yesterday, now), true);
+  assert.equal(isWithinHistory(tooOld, now), false);
+  const kept = tracksWithinHistory({
     self: [
-      { lat: 37.1, lng: 127.1, at: Date.UTC(2026, 9, 27, 14, 0) },
-      { lat: 37.2, lng: 127.2, at: Date.UTC(2026, 9, 27, 16, 30) },
+      { lat: 37.0, lng: 127.0, at: tooOld },
+      { lat: 37.1, lng: 127.1, at: yesterday },
+      { lat: 37.2, lng: 127.2, at: now },
     ],
   }, now);
-  assert.equal(kept.self.length, 1);
-  assert.equal(kept.self[0].lat, 37.2);
-  assert.equal(Object.hasOwn(kept, 'sharing'), false);
+  assert.equal(kept.self.length, 2);
+  assert.equal(kept.self[0].lat, 37.1);
+  assert.equal(kept.self[1].lat, 37.2);
+  assert.equal(seoulDayKey(seoulDayEndMs('2026-10-27')), '2026-10-27');
 });
 
 test('trail sampler keeps a dwell sample and a real move, drops jitter', () => {

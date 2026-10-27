@@ -20,15 +20,6 @@ import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 import com.getcapacitor.annotation.Permission;
 import com.getcapacitor.annotation.PermissionCallback;
-import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption;
-import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential;
-import androidx.credentials.CredentialManager;
-import androidx.credentials.CredentialManagerCallback;
-import androidx.credentials.GetCredentialRequest;
-import androidx.credentials.GetCredentialResponse;
-import androidx.credentials.exceptions.GetCredentialException;
-import java.util.Locale;
-import java.util.concurrent.Executor;
 import org.json.JSONException;
 import org.json.JSONObject;
 
@@ -136,52 +127,20 @@ public class UmapLocationPlugin extends Plugin {
 
     @PluginMethod
     public void openAlwaysLocation(PluginCall call) {
-        if (getActivity() == null) {
-            resolveAlways(call, false);
-            return;
-        }
-        if (!hasForeground()) {
-            requestPermissionForAlias("location", call, "alwaysAfterForeground");
-            return;
-        }
-        openAlwaysScreen(call);
-    }
-
-    @PermissionCallback
-    private void alwaysAfterForeground(PluginCall call) {
-        if (!hasForeground()) {
-            resolveAlways(call, true);
-            return;
-        }
         AppCompatActivity activity = getActivity();
         if (activity == null) {
-            resolveAlways(call, false);
-            return;
-        }
-        activity.runOnUiThread(() -> openAlwaysScreen(call));
-    }
-
-    @PermissionCallback
-    private void backgroundForAlways(PluginCall call) {
-        resolveAlways(call, true);
-    }
-
-    private void openAlwaysScreen(PluginCall call) {
-        if (hasBackground()) {
-            resolveAlways(call, false);
-            return;
-        }
-        if (Build.VERSION.SDK_INT < 29) {
             resolveAlways(call, false);
             return;
         }
         call.setKeepAlive(true);
         pendingAlways = call;
         leftForSettings = false;
-        if (openLocationPermissionPage()) return;
-        pendingAlways = null;
-        leftForSettings = false;
-        requestPermissionForAlias("backgroundLocation", call, "backgroundForAlways");
+        activity.runOnUiThread(() -> {
+            if (openLocationPermissionPage()) return;
+            pendingAlways = null;
+            leftForSettings = false;
+            resolveAlways(call, false);
+        });
     }
 
     @Override
@@ -209,22 +168,9 @@ public class UmapLocationPlugin extends Plugin {
         PowerManager power = (PowerManager) getContext().getSystemService(Context.POWER_SERVICE);
         boolean unrestricted = power != null && power.isIgnoringBatteryOptimizations(pkg);
         result.put("unrestricted", unrestricted);
-        if (unrestricted) {
-            result.put("opened", false);
-            call.resolve(result);
-            return;
-        }
         Intent intent = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
         intent.setData(Uri.parse("package:" + pkg));
-        if (!startExternal(intent)) {
-            Intent fallback = new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS);
-            if (!startExternal(fallback)) {
-                result.put("opened", openAppDetails());
-                call.resolve(result);
-                return;
-            }
-        }
-        result.put("opened", true);
+        result.put("opened", startExternal(intent));
         call.resolve(result);
     }
 
@@ -243,62 +189,6 @@ public class UmapLocationPlugin extends Plugin {
         boolean charging = status == BatteryManager.BATTERY_STATUS_CHARGING || status == BatteryManager.BATTERY_STATUS_FULL;
         result.put("charging", charging);
         call.resolve(result);
-    }
-
-    @PluginMethod
-    public void signIn(PluginCall call) {
-        String clientId = call.getString("clientId", "");
-        if (clientId == null || clientId.trim().isEmpty()) {
-            resolveSignIn(call, null, "missing-client");
-            return;
-        }
-        AppCompatActivity activity = getActivity();
-        if (activity == null) {
-            resolveSignIn(call, null, "unavailable");
-            return;
-        }
-        String serverClientId = clientId.trim();
-        activity.runOnUiThread(() -> startGoogleSignIn(call, serverClientId));
-    }
-
-    private void startGoogleSignIn(PluginCall call, String serverClientId) {
-        AppCompatActivity activity = getActivity();
-        if (activity == null) {
-            resolveSignIn(call, null, "unavailable");
-            return;
-        }
-        try {
-            GetSignInWithGoogleOption option = new GetSignInWithGoogleOption.Builder(serverClientId).build();
-            GetCredentialRequest request = new GetCredentialRequest.Builder().addCredentialOption(option).build();
-            CredentialManager manager = CredentialManager.create(activity);
-            Executor executor = ContextCompat.getMainExecutor(activity);
-            manager.getCredentialAsync(
-                activity,
-                request,
-                null,
-                executor,
-                new CredentialManagerCallback<GetCredentialResponse, GetCredentialException>() {
-                    @Override
-                    public void onResult(GetCredentialResponse response) {
-                        try {
-                            GoogleIdTokenCredential credential = GoogleIdTokenCredential.createFrom(response.getCredential().getData());
-                            String token = credential.getIdToken();
-                            if (token == null || token.isEmpty()) resolveSignIn(call, null, "token");
-                            else resolveSignIn(call, token, null);
-                        } catch (Exception error) {
-                            resolveSignIn(call, null, "token");
-                        }
-                    }
-
-                    @Override
-                    public void onError(GetCredentialException error) {
-                        resolveSignIn(call, null, signInCode(error));
-                    }
-                }
-            );
-        } catch (Exception error) {
-            resolveSignIn(call, null, signInCode(error));
-        }
     }
 
     @PluginMethod
@@ -362,24 +252,6 @@ public class UmapLocationPlugin extends Plugin {
         call.resolve(result);
     }
 
-    private void resolveSignIn(PluginCall call, String credential, String error) {
-        JSObject result = new JSObject();
-        if (credential != null) result.put("credential", credential);
-        if (error != null) result.put("error", error);
-        call.resolve(result);
-    }
-
-    private String signInCode(Throwable error) {
-        String name = error.getClass().getSimpleName().toLowerCase(Locale.US);
-        String message = error.getMessage() == null ? "" : error.getMessage();
-        if (name.contains("cancel")) return "cancelled";
-        if (message.contains("UNREGISTERED") || message.contains("28444") || message.contains("Developer console") || message.contains("10:")) {
-            return "unregistered";
-        }
-        if (name.contains("nocredential") || name.contains("interrupt") || name.contains("provider")) return "unavailable";
-        return "failed";
-    }
-
     private boolean granted(String permission) {
         return ContextCompat.checkSelfPermission(getContext(), permission) == PackageManager.PERMISSION_GRANTED;
     }
@@ -398,14 +270,48 @@ public class UmapLocationPlugin extends Plugin {
         return granted(android.Manifest.permission.ACCESS_BACKGROUND_LOCATION);
     }
 
+    private Intent locationGroupIntent(String pkg) {
+        Intent intent = new Intent("android.intent.action.MANAGE_APP_PERMISSION");
+        intent.addCategory(Intent.CATEGORY_DEFAULT);
+        intent.putExtra(Intent.EXTRA_PACKAGE_NAME, pkg);
+        intent.putExtra("android.intent.extra.PERMISSION_GROUP_NAME", "android.permission-group.LOCATION");
+        return intent;
+    }
+
+    private boolean canStart(Intent intent) {
+        try {
+            return intent.resolveActivity(getContext().getPackageManager()) != null;
+        } catch (Exception error) {
+            return false;
+        }
+    }
+
+    /** Opens the location permission radio list for this package. Does not open app info. */
     private boolean openLocationPermissionPage() {
         String pkg = getContext().getPackageName();
-        Intent direct = new Intent("android.intent.action.MANAGE_APP_PERMISSION");
-        direct.putExtra(Intent.EXTRA_PACKAGE_NAME, pkg);
-        direct.putExtra("android.intent.extra.PERMISSION_GROUP_NAME", "android.permission-group.LOCATION");
-        direct.putExtra("android.intent.extra.PERMISSION_NAME", android.Manifest.permission.ACCESS_FINE_LOCATION);
-        if (startExternal(direct)) return true;
-        return openAppDetails();
+        String[][] targets = new String[][] {
+            {"com.samsung.android.permissioncontroller", "com.android.permissioncontroller.permission.ui.ManagePermissionsActivity"},
+            {"com.samsung.android.permissioncontroller", "com.samsung.android.permissioncontroller.permission.ui.ManagePermissionsActivity"},
+            {"com.google.android.permissioncontroller", "com.android.permissioncontroller.permission.ui.ManagePermissionsActivity"},
+            {"com.android.permissioncontroller", "com.android.permissioncontroller.permission.ui.ManagePermissionsActivity"}
+        };
+        for (String[] target : targets) {
+            Intent intent = locationGroupIntent(pkg);
+            intent.setClassName(target[0], target[1]);
+            if (canStart(intent) && startExternal(intent)) return true;
+        }
+        String[] packages = new String[] {
+            "com.samsung.android.permissioncontroller",
+            "com.google.android.permissioncontroller",
+            "com.android.permissioncontroller"
+        };
+        for (String controller : packages) {
+            Intent intent = locationGroupIntent(pkg);
+            intent.setPackage(controller);
+            if (canStart(intent) && startExternal(intent)) return true;
+        }
+        Intent implicit = locationGroupIntent(pkg);
+        return canStart(implicit) && startExternal(implicit);
     }
 
     private boolean openPermissionPage(String permission) {

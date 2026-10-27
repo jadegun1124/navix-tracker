@@ -15,7 +15,7 @@ export function TodayRecord({
   return (
     <div className="space-y-3 text-sm">
       <p className="leading-6 text-slate-500">
-        반경 50m 안에 3분 이상 머물면 정지로 기록하고, 정지와 정지 사이를 한 구간으로 봅니다. 이동 시간은 출발부터 다음 정지까지입니다. 서울 날짜가 바뀌면 이 폰의 궤적과 방문은 지우고, 서버에는 마지막 위치만 남습니다.
+        반경 50m 안에 3분 이상 머물면 정지로 기록하고, 정지와 정지 사이를 한 구간으로 봅니다. 이동 시간은 출발부터 다음 정지까지입니다. 이 폰에는 서울 날짜로 오늘부터 30일 전까지 남고, 그보다 오래된 기록은 지웁니다. 서버에는 마지막 위치만 남습니다.
       </p>
       <section>
         <h3 className="text-xs font-bold text-slate-400">이동 구간</h3>

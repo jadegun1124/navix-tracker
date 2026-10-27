@@ -58,8 +58,9 @@ export async function askWhileUsing(precise: boolean): Promise<{ location: 'whil
 export async function askAlwaysLocation(precise: boolean): Promise<{ location: 'always' | 'while-using' | 'denied' | 'unavailable'; note: string | null }> {
   if (alwaysAllowAction(umapLocationNative()) === 'location-settings') {
     const result = await openAlwaysLocation();
-    if (!result.opened && result.location === 'unavailable') {
-      return { location: 'unavailable', note: '위치 설정 화면을 열지 못했습니다.' };
+    if (!result.opened) {
+      if (result.location === 'always') return { location: 'always', note: '위치 권한이 항상 허용입니다.' };
+      return { location: 'unavailable', note: '위치 권한 화면을 열지 못했습니다.' };
     }
     if (result.location === 'always') return { location: 'always', note: '위치 권한이 항상 허용입니다.' };
     if (result.location === 'denied') return { location: 'denied', note: '설정에서 위치 접근을 항상 허용으로 바꿀 수 있습니다. 앱이 그 스위치를 대신 바꾸지는 않습니다.' };
@@ -98,9 +99,9 @@ export async function askMotion(): Promise<{ state: 'granted' | 'denied' | 'skip
 export async function askBattery(): Promise<{ opened: boolean; unrestricted: boolean; note: string | null }> {
   if (batteryAction(umapLocationNative()) === 'ignore-battery-optimizations') {
     const result = await openBatteryOptimization();
-    if (result.unrestricted) return { opened: false, unrestricted: true, note: '이미 배터리 제한 없음입니다.' };
-    if (result.opened) return { opened: true, unrestricted: false, note: null };
-    return { opened: false, unrestricted: false, note: '배터리 제한 없음 창을 열지 못했습니다. 설정 > 앱 > Umap > 배터리에서 제한 없음을 고르세요.' };
+    if (result.opened) return { opened: true, unrestricted: result.unrestricted, note: null };
+    if (result.unrestricted) return { opened: false, unrestricted: true, note: null };
+    return { opened: false, unrestricted: false, note: '배터리 제한 없음 팝업을 열지 못했습니다.' };
   }
   return { opened: false, unrestricted: false, note: '배터리 제한 없음 창은 안드로이드 앱에서 열립니다. 브라우저에서는 그 설정을 바꾸지 않습니다.' };
 }
