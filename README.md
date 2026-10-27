@@ -10,12 +10,12 @@
 | :--- | :--- | :--- |
 | 회사 홈 | GitHub Pages | https://jadegun1124.github.io/umap/ |
 | 앱 화면 미리보기 | 같은 Pages의 `?app=1` | https://jadegun1124.github.io/umap/?app=1 |
-| 안드로이드 앱 | GitHub Releases APK v1.4.0 | https://github.com/jadegun1124/umap/releases/download/v1.4.0/umap-v1.4.0-tracker.apk |
-| 릴리스 페이지 | GitHub Releases | https://github.com/jadegun1124/umap/releases/tag/v1.4.0 |
+| 안드로이드 앱 | GitHub Releases APK v1.5.0 | https://github.com/jadegun1124/umap/releases/download/v1.5.0/umap-v1.5.0-tracker.apk |
+| 릴리스 페이지 | GitHub Releases | https://github.com/jadegun1124/umap/releases/tag/v1.5.0 |
 
 Google Play, App Store, TestFlight에는 올리지 않았습니다. iOS는 아이콘 에셋만 있고 설치 파일은 없습니다.
 
-`main`에 푸시하면 GitHub Actions가 회사 홈을 Pages에 배포하고, 같은 커밋으로 디버그 APK를 만들어 GitHub Release `v1.4.0`의 `umap-v1.4.0-tracker.apk`를 갱신합니다. 이전 빌드는 `v1.3.0`, `v1.2.0`, `v1.1.0`, `v1.0.0`에 남아 있습니다.
+`main`에 푸시하면 GitHub Actions가 회사 홈을 Pages에 배포하고, 같은 커밋으로 디버그 APK를 만들어 GitHub Release `v1.5.0`의 `umap-v1.5.0-tracker.apk`를 갱신합니다. 이전 빌드는 `v1.4.0`, `v1.3.0`, `v1.2.0`, `v1.1.0`, `v1.0.0`에 남아 있습니다.
 
 ## 화면
 
@@ -30,14 +30,15 @@ Google Play, App Store, TestFlight에는 올리지 않았습니다. iOS는 아�
 
 | 권한 | 쓰는 이유 |
 | :--- | :--- |
-| 알림 | 집 도착·출발과 위치 유지. 허용을 누르면 시스템 알림 창이 열립니다. |
+| 알림 | 집 도착·출발과 위치 유지. 처음 권한 화면에서 위치와 함께 묻고, 허용을 누르면 시스템 알림 창이 열립니다. 아직 켜지 않았으면 지도를 열 때 다시 묻습니다. |
 | 위치 | 정확한 위치 또는 대략적인 위치. 앱 사용 중은 위치 권한 창, 항상 허용은 이 앱의 위치 액세스 권한 화면을 먼저 엽니다. 그 화면이 열리지 않으면 앱 권한 목록으로 갑니다. |
 | 움직임 | 안드로이드 신체 활동 권한 창. 다시 물을 수 없으면 설정으로 이동합니다. |
 | 배터리 | 배터리 제한 없음을 누르면 시스템 팝업이 바로 열립니다. 스위치는 직접 고릅니다. |
+| 카메라 | 초대 QR을 읽을 때만. 허용을 누르면 카메라 권한 창이 열리고, 다시 물을 수 없으면 설정으로 갑니다. 스캔이 끝나면 끄고, 마이크와 전화번호는 읽지 않습니다. |
 
 마이크, 문자, 주변 소리, 원격으로 소리를 울리는 기능은 없습니다. 전화번호만으로 다른 사람을 찾지 않습니다.
 
-항상 허용을 누르면 이 앱의 위치 액세스 권한 화면이 먼저 열리고, 거기서 라디오를 직접 고릅니다. 그 화면을 열지 못하면 앱 권한 목록(위치, 알림, 신체 활동)으로 가고, 그것도 막히면 앱 정보로 갑니다. 앱은 OS 스위치를 대신 바꾸지 않습니다. 위치 유지 알림은 우리 가족 아래에서만 켜고, 알림이 떠 있는 동안 백그라운드에서 위치를 보냅니다. 배터리 제한 없음을 누르면 `ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` 팝업이 바로 열립니다.
+항상 허용을 누르면 이 앱의 위치 액세스 권한 화면이 먼저 열리고, 거기서 라디오를 직접 고릅니다. 그 화면을 열지 못하면 앱 권한 목록(위치, 알림, 신체 활동)으로 가고, 그것도 막히면 앱 정보로 갑니다. 앱은 OS 스위치를 대신 바꾸지 않습니다. 위치 유지 알림은 처음 권한 화면에서 위치와 함께 묻고, 사용자가 켠 뒤에만 시작합니다. 알림이 떠 있는 동안 백그라운드에서 위치를 보냅니다. 배터리 제한 없음을 누르면 `ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` 팝업이 바로 열립니다.
 
 ## 이름과 지도
 
@@ -82,9 +83,9 @@ npm run dev
 
 ## 안드로이드 APK
 
-받는 곳: https://github.com/jadegun1124/umap/releases/download/v1.4.0/umap-v1.4.0-tracker.apk
+받는 곳: https://github.com/jadegun1124/umap/releases/download/v1.5.0/umap-v1.5.0-tracker.apk
 
-`main` 푸시마다 `Build Android APK (Umap)` 워크플로가 웹을 빌드하고 `dist` 를 안드로이드 에셋으로 복사한 뒤 `assembleDebug` 로 APK를 만듭니다. 결과 파일은 GitHub Release `v1.4.0`에 올립니다. 앱 `versionName`은 `1.4.0`, `versionCode`는 5입니다. Play 스토어 트랙은 없습니다.
+`main` 푸시마다 `Build Android APK (Umap)` 워크플로가 웹을 빌드하고 `dist` 를 안드로이드 에셋으로 복사한 뒤 `assembleDebug` 로 APK를 만듭니다. 결과 파일은 GitHub Release `v1.5.0`에 올립니다. 앱 `versionName`은 `1.5.0`, `versionCode`는 6입니다. Play 스토어 트랙은 없습니다.
 
 ## 데이터
 

@@ -9,3 +9,14 @@ export const LOCATION_PERMISSION_LIST_ACTION: string;
 export const APP_DETAILS_ACTION: string;
 export const BATTERY_POPUP_ACTION: string;
 export function alwaysAllowScreens(): Array<'location-radio' | 'app-permissions' | 'app-details'>;
+export const KEEP_PERMISSION_ASKED_KEY: string;
+export const KEEP_START_ASKED_KEY: string;
+export function readSessionFlag(key: string): boolean;
+export function markSessionFlag(key: string): void;
+export function keepEntryPrompt(input: {
+  notifications: 'unknown' | 'granted' | 'denied' | 'skipped';
+  locationMode: 'unknown' | 'while-using' | 'always' | 'denied';
+  keepAlive: boolean;
+  permissionAsked: boolean;
+  startAsked: boolean;
+}): 'permission' | 'start' | 'none';

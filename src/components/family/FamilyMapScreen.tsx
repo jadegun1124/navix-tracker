@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Bell, Copy, Home, LocateFixed, MapPin, Minus, Plus, Route, UserPlus, X } from 'lucide-react';
 import { buildInviteLink, formatAgo, formatClock, hasLocation, haversineMeters, shouldAlertLeave } from '../../lib/geo';
+import { KEEP_PERMISSION_ASKED_KEY, KEEP_START_ASKED_KEY, keepEntryPrompt, markSessionFlag, readSessionFlag } from '../../lib/systemSettings.mjs';
 import { buildDayRecord, collapseStayTrail, displayCoordinate, formatDurationMs, historyDayKeys, historyDayLabel, modeLabel, seoulDayEndMs, seoulDayKey, visibleTrail } from '../../lib/tracking.mjs';
 import { ackFamilyAlert, isFamilyAlertAcked, publishFamilyAlert, readFamilyAlert, subscribeFamilyAlerts, type FamilyAlert } from '../../services/familyAlert';
 import { readSharedPlaces, subscribeSharedPlaces } from '../../services/familyShare';
@@ -41,6 +42,15 @@ export function FamilyMapScreen() {
   const [now, setNow] = useState(() => Date.now());
   const tracking = useFamilyTracking((lat, lng) => mapRef.current?.panTo(lat, lng));
   const [settingsNote, setSettingsNote] = useState<string | null>(null);
+  const [keepPrompt, setKeepPrompt] = useState<'permission' | 'start' | 'none'>(() => keepEntryPrompt({
+    notifications: state.permissions.notifications,
+    locationMode: state.permissions.locationMode,
+    keepAlive: state.backgroundKeepAlive,
+    permissionAsked: readSessionFlag(KEEP_PERMISSION_ASKED_KEY),
+    startAsked: readSessionFlag(KEEP_START_ASKED_KEY),
+  }));
+  const [keepBusy, setKeepBusy] = useState(false);
+  const [keepNote, setKeepNote] = useState<string | null>(null);
   const [alertsOpen, setAlertsOpen] = useState(false);
   const [historyDay, setHistoryDay] = useState(() => seoulDayKey(Date.now()));
 
@@ -521,7 +531,7 @@ export function FamilyMapScreen() {
               <Line k="배터리 안내" v={state.permissions.battery === 'acknowledged' ? '확인함' : state.permissions.battery === 'skipped' ? '나중에' : '해당 없음'} />
             </dl>
             <p className="mt-3 text-xs leading-5 text-slate-400">
-              항상 허용을 누르면 이 앱의 위치 권한 화면이 바로 열립니다. 배터리 제한 없음을 누르면 시스템 팝업이 바로 열립니다. Umap은 그 스위치를 대신 바꾸지 않습니다. 위치 유지 알림은 우리 가족 아래에서 켜고, 알림이 떠 있는 동안 위치를 보냅니다.
+              항상 허용을 누르면 이 앱의 위치 권한 화면이 바로 열립니다. 배터리 제한 없음을 누르면 시스템 팝업이 바로 열립니다. Umap은 그 스위치를 대신 바꾸지 않습니다. 위치 유지 알림은 처음 권한 화면에서 위치와 함께 묻고, 아직 켜지 않았으면 지도를 열 때 다시 묻습니다. 알림이 떠 있는 동안만 위치를 보냅니다.
             </p>
             <div className="mt-4 space-y-2">
               <button type="button" onClick={family.reopenMode} className="w-full rounded-full bg-slate-100 py-3 font-bold">
@@ -609,6 +619,44 @@ export function FamilyMapScreen() {
             }}
             onAccept={(label, code, syncToken) => family.acceptInvite(label, code, syncToken)}
             onShare={(code, share) => family.setGuardianShare(code, share)}
+          />
+        )}
+        {keepPrompt !== 'none' && !state.backgroundKeepAlive && (
+          <KeepNoticeSheet
+            mode={keepPrompt}
+            busy={keepBusy}
+            note={keepNote}
+            onLater={() => {
+              markSessionFlag(keepPrompt === 'start' ? KEEP_START_ASKED_KEY : KEEP_PERMISSION_ASKED_KEY);
+              setKeepPrompt('none');
+            }}
+            onPrimary={() => {
+              if (keepPrompt === 'start') {
+                markSessionFlag(KEEP_START_ASKED_KEY);
+                family.setKeepAlive(true);
+                setKeepPrompt('none');
+                return;
+              }
+              setKeepBusy(true);
+              void askNotifications().then((result) => {
+                setKeepBusy(false);
+                markSessionFlag(KEEP_PERMISSION_ASKED_KEY);
+                const notifications = result.state === 'granted' || result.state === 'denied' || result.state === 'skipped' ? result.state : 'denied';
+                family.finishPermissions({ ...state.permissions, notifications, completed: true });
+                if (result.state === 'granted' && state.permissions.locationMode === 'always') {
+                  markSessionFlag(KEEP_START_ASKED_KEY);
+                  family.setKeepAlive(true);
+                  setKeepPrompt('none');
+                  return;
+                }
+                if (result.state === 'granted') {
+                  setSettingsNote('알림을 허용했습니다. 위치를 항상 허용으로 고르면 유지 알림을 켤 수 있습니다. 앱이 혼자 켜지 않습니다.');
+                  setKeepPrompt('none');
+                  return;
+                }
+                setKeepNote(result.note ?? '알림을 허용하지 않으면 위치 유지 알림을 켤 수 없습니다. 초대 코드는 그대로 쓸 수 있습니다.');
+              });
+            }}
           />
         )}
         {confirm && (
@@ -1071,9 +1119,43 @@ function ConfirmSheet({
   );
 }
 
+function KeepNoticeSheet({
+  mode,
+  busy,
+  note,
+  onPrimary,
+  onLater,
+}: {
+  mode: 'permission' | 'start';
+  busy: boolean;
+  note: string | null;
+  onPrimary: () => void;
+  onLater: () => void;
+}) {
+  return (
+    <div className="absolute inset-0 z-[60] flex items-end bg-slate-900/40">
+      <div className="w-full rounded-t-3xl bg-white px-5 pb-8 pt-5">
+        <h2 className="text-lg font-black">위치 유지 알림 켜기</h2>
+        <p className="mt-2 text-sm leading-6 text-slate-600">
+          {mode === 'permission'
+            ? '위치를 유지하는 동안 알림이 떠 있습니다. 허용을 누르면 알림 창이 열립니다. 안드로이드 13 이상에서는 알림 권한입니다. 앱이 혼자 켜지 않습니다. 전화번호는 쓰지 않습니다.'
+            : '알림 권한은 이미 허용되어 있습니다. 켜면 알림이 떠 있는 동안 위치를 보냅니다. 끄기는 우리 가족에서 할 수 있습니다. 앱이 혼자 켜지 않습니다.'}
+        </p>
+        {note && <p className="mt-3 text-sm leading-6 text-amber-800">{note}</p>}
+        <button type="button" disabled={busy} onClick={onPrimary} className="mt-4 w-full rounded-full bg-[#0084FF] py-3.5 font-bold text-white disabled:opacity-40">
+          {busy ? '확인 중…' : '위치 유지 알림 켜기'}
+        </button>
+        <button type="button" disabled={busy} onClick={onLater} className="mt-2 w-full py-2 text-sm font-bold text-slate-400">
+          나중에
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function Sheet({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
   return (
-    <div className="absolute inset-0 z-20 flex items-end bg-slate-900/40">
+    <div className="absolute inset-0 z-50 flex items-end bg-slate-900/40">
       <div className="max-h-[86%] w-full overflow-y-auto rounded-t-3xl bg-white px-5 pb-8 pt-4">
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-lg font-black">{title}</h2>

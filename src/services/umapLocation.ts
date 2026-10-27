@@ -51,6 +51,7 @@ interface UmapLocationPlugin {
   openAlwaysLocation(): Promise<AlwaysLocationResult>;
   requestForeground(): Promise<{ location: 'while-using' | 'denied' | 'unavailable' }>;
   requestNotifications(): Promise<NativePromptResult>;
+  requestCamera(): Promise<NativePromptResult>;
   requestMotion(): Promise<NativePromptResult>;
   openBattery(): Promise<BatteryOptimizationResult>;
   battery(): Promise<{ pct?: number | null; charging?: boolean | null }>;
@@ -72,6 +73,9 @@ const web: UmapLocationPlugin = {
     return { location: 'unavailable' };
   },
   async requestNotifications() {
+    return { state: 'unavailable', openedSettings: false };
+  },
+  async requestCamera() {
     return { state: 'unavailable', openedSettings: false };
   },
   async requestMotion() {
@@ -149,6 +153,17 @@ export async function requestNotificationPermission(): Promise<NativePromptResul
   if (!umapLocationNative()) return { state: 'unavailable', openedSettings: false };
   try {
     const result = await plugin.requestNotifications();
+    const state = result.state === 'granted' || result.state === 'denied' ? result.state : 'unavailable';
+    return { state, openedSettings: result.openedSettings === true };
+  } catch {
+    return { state: 'unavailable', openedSettings: false };
+  }
+}
+
+export async function requestCameraPermission(): Promise<NativePromptResult> {
+  if (!umapLocationNative()) return { state: 'unavailable', openedSettings: false };
+  try {
+    const result = await plugin.requestCamera();
     const state = result.state === 'granted' || result.state === 'denied' ? result.state : 'unavailable';
     return { state, openedSettings: result.openedSettings === true };
   } catch {
