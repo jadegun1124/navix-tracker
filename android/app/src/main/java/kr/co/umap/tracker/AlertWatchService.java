@@ -234,7 +234,6 @@ public class AlertWatchService extends Service {
             .setVisibility(Notification.VISIBILITY_SECRET)
             .setPriority(Notification.PRIORITY_MIN)
             .addAction(new Notification.Action.Builder(android.R.drawable.ic_menu_close_clear_cancel, "알림 대기 끄기", stopAction).build());
-        if (Build.VERSION.SDK_INT >= 26) builder.setSilent(true);
         Notification notification = builder.build();
         if (Build.VERSION.SDK_INT >= 29) startForeground(WATCH_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
         else startForeground(WATCH_ID, notification);
