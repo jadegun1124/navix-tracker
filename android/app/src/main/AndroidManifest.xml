@@ -1,6 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MANAGE_APP_PERMISSION" />
+            <category android:name="android.intent.category.DEFAULT" />
+        </intent>
+        <package android:name="com.samsung.android.permissioncontroller" />
+        <package android:name="com.google.android.permissioncontroller" />
+        <package android:name="com.android.permissioncontroller" />
+    </queries>
+
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
@@ -42,9 +52,8 @@
             android:stopWithTask="false" />
     </application>
 
-    <!-- Location, notifications, and optional motion. Requested only after the in-app explanation. -->
-    <!-- ACCESS_BACKGROUND_LOCATION is declared so the system settings page can offer 항상 허용.
-         The app never calls requestPermissions for it. -->
+    <!-- ACCESS_BACKGROUND_LOCATION is declared so the location permission screen can offer 항상 허용.
+         The app opens that screen and does not call requestPermissions for background location. -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />

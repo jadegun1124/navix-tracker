@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useReducer } from 'react';
-import { appendTrail, hasLocation } from '../../lib/geo';
-import { needsDailyWipe, seoulDayKey, tracksForSeoulDay, TRAIL_POINT_CAP, visitsForSeoulDay } from '../../lib/tracking.mjs';
+import { hasLocation } from '../../lib/geo';
+import { localProfile } from '../../lib/localProfile.mjs';
+import { HISTORY_DAYS, TRAIL_POINT_CAP, appendHistoryPoint, isWithinHistory, seoulDayKey, tracksWithinHistory, visitsWithinHistory } from '../../lib/tracking.mjs';
 import type { DayStop } from '../../lib/tracking.mjs';
 import type { SharedPlace } from '../../services/familyShare';
 import { umapLocation } from '../../services/umapLocation';
@@ -203,7 +204,7 @@ function cleanTracks(value: unknown): Record<string, TrackPoint[]> {
   const tracks: Record<string, TrackPoint[]> = {};
   for (const [id, points] of Object.entries(value as Record<string, unknown>)) {
     if (!Array.isArray(points)) continue;
-    const clean = points.filter(isPoint).slice(-TRAIL_POINT_CAP);
+    const clean = points.filter(isPoint).slice(-(TRAIL_POINT_CAP * (HISTORY_DAYS + 1)));
     if (clean.length > 0) tracks[id] = clean;
   }
   return tracks;
@@ -277,9 +278,19 @@ function scrubSeed(member: Member, share: ShareState): Member {
   return { ...member, share };
 }
 
+function cleanProfile(value: unknown): Profile | null {
+  if (!value || typeof value !== 'object') return null;
+  const raw = value as { id?: unknown; name?: unknown; preview?: unknown };
+  let name = typeof raw.name === 'string' ? raw.name : '';
+  if (raw.preview === true && (name === '부건' || name === 'Bukeon')) name = '나';
+  const id = typeof raw.id === 'string' ? raw.id : '';
+  return localProfile(name, id);
+}
+
 function withoutDemo(session: Session): Session {
-  const previewAlias = session.profile?.preview && (session.profile.name === '부건' || session.profile.name === 'Bukeon');
-  const profile = previewAlias && session.profile ? { ...session.profile, name: '나' } : session.profile;
+  const legacy = session.profile as (Profile & { preview?: boolean }) | null;
+  const previewAlias = !!legacy && legacy.preview === true && (legacy.name === '부건' || legacy.name === 'Bukeon');
+  const profile = cleanProfile(previewAlias && session.profile ? { ...session.profile, name: '나' } : session.profile);
   const members = session.members
     .filter((member) => member.id !== 'sample' && member.name !== '샘플' && member.role !== 'guardian' && !('isSample' in member && (member as { isSample?: boolean }).isSample))
     .map((member) => {
@@ -292,7 +303,7 @@ function withoutDemo(session: Session): Session {
       if (renamed.id !== 'self' && share !== 'allowed') return { ...next, lat: null, lng: null };
       return scrubSeed(next, share);
     });
-  const kept = new Set(members.filter((member) => member.id === 'self' || hasLocation(member)).map((member) => member.id));
+  const kept = new Set(members.map((member) => member.id));
   const tracks: Record<string, TrackPoint[]> = {};
   for (const [id, points] of Object.entries(session.tracks)) {
     if (!kept.has(id)) continue;
@@ -343,19 +354,28 @@ function load(): Session {
       visits: cleanVisits(parsed.visits),
       shareSelfWithFamily: parsed.shareSelfWithFamily === true,
       backgroundKeepAlive: parsed.backgroundKeepAlive === true,
-      phoneVerified: parsed.phoneVerified === true && typeof parsed.phone === 'string' && parsed.phone.trim().length >= 8,
-      phone: parsed.phoneVerified === true && typeof parsed.phone === 'string' ? parsed.phone.trim() : '',
+      phoneVerified: false,
+      phone: '',
+      tab: parsed.tab === 'history' || parsed.tab === 'menu' ? parsed.tab : 'map',
     };
     if (session.stage === 'phone') session.stage = 'permissions';
-    if (session.profile) session.profile = { ...session.profile, verifiedPhone: session.profile.verifiedPhone ?? null };
-    if (session.profile && session.permissions.completed) session.stage = session.mode ? 'map' : 'mode';
     const loaded = withoutDemo(session);
+    const profile = loaded.profile;
     const now = Date.now();
+    const stage = !profile
+      ? (loaded.stage === 'splash' ? 'splash' : 'login')
+      : loaded.permissions.completed
+        ? (loaded.mode ? 'map' : 'mode')
+        : loaded.stage;
     return {
       ...loaded,
+      profile,
+      phone: '',
+      phoneVerified: false,
+      stage,
       trailDay: seoulDayKey(now),
-      tracks: tracksForSeoulDay(loaded.tracks, now),
-      visits: visitsForSeoulDay(loaded.visits, now),
+      tracks: tracksWithinHistory(loaded.tracks, now),
+      visits: visitsWithinHistory(loaded.visits, now),
     };
   } catch {
     return { ...fresh(), pendingSyncToken };
@@ -412,16 +432,17 @@ function reducer(state: Session, action: Action): Session {
       if (!state.mode) return { ...state, stage: 'mode' };
       return { ...state, stage: state.permissions.completed ? 'map' : 'survey' };
     case 'login': {
-      const members = state.members.length > 0
-        ? state.members.map((member) => (member.id === 'self' ? { ...member, name: action.profile.name } : member))
-        : membersFor(action.profile);
-      const verifiedPhone = action.profile.verifiedPhone;
+      const profile = cleanProfile(action.profile);
+      if (!profile) return state;
+      const members = state.members.some((member) => member.id === 'self')
+        ? state.members.map((member) => (member.id === 'self' ? { ...member, name: profile.name } : member))
+        : membersFor(profile);
       return withoutDemo({
         ...state,
-        profile: action.profile,
+        profile,
         members,
-        phone: verifiedPhone ?? '',
-        phoneVerified: Boolean(verifiedPhone),
+        phone: '',
+        phoneVerified: false,
         stage: state.mode ? (state.permissions.completed ? 'map' : 'survey') : 'mode',
       });
     }
@@ -454,7 +475,7 @@ function reducer(state: Session, action: Action): Session {
       return { ...state, stage: 'permissions' };
     case 'save-phone':
     case 'skip-phone':
-      return { ...state, phone: state.phoneVerified ? state.phone : '', stage: 'permissions' };
+      return { ...state, phone: '', phoneVerified: false, stage: 'permissions' };
     case 'finish-permissions':
       return { ...state, permissions: { ...action.permissions, completed: true }, stage: 'map', tab: 'map' };
     case 'set-tab':
@@ -563,23 +584,19 @@ function reducer(state: Session, action: Action): Session {
       return { ...state, notices: state.notices.map((item) => ({ ...item, read: true })) };
     case 'update-self': {
       const at = Date.now();
-      const wiped = needsDailyWipe(state.trailDay, at);
-      const tracks = wiped ? {} : state.tracks;
-      const visits = wiped ? {} : state.visits;
       const speed = typeof action.speedMps === 'number' && Number.isFinite(action.speedMps) ? action.speedMps : null;
+      const selfTrail = appendHistoryPoint(state.tracks.self, { lat: action.lat, lng: action.lng, at, speedMps: speed }, at);
+      const tracks = tracksWithinHistory(selfTrail === state.tracks.self ? state.tracks : { ...state.tracks, self: selfTrail }, at);
       return {
         ...state,
         trailDay: seoulDayKey(at),
-        visits,
+        visits: visitsWithinHistory(state.visits, at),
         members: state.members.map((member) =>
           member.id === 'self'
             ? { ...member, lat: action.lat, lng: action.lng, accuracyM: Math.max(1, Math.round(action.accuracyM)), updatedAt: at }
             : member,
         ),
-        tracks: {
-          ...tracks,
-          self: appendTrail(tracks.self, { lat: action.lat, lng: action.lng, at, speedMps: speed }),
-        },
+        tracks,
       };
     }
     case 'set-battery': {
@@ -591,13 +608,11 @@ function reducer(state: Session, action: Action): Session {
       };
     }
     case 'roll-day': {
-      if (!needsDailyWipe(state.trailDay, action.now)) return state;
-      return {
-        ...state,
-        trailDay: seoulDayKey(action.now),
-        tracks: tracksForSeoulDay(state.tracks, action.now),
-        visits: visitsForSeoulDay(state.visits, action.now),
-      };
+      const trailDay = seoulDayKey(action.now);
+      const tracks = tracksWithinHistory(state.tracks, action.now);
+      const visits = visitsWithinHistory(state.visits, action.now);
+      if (state.trailDay === trailDay && tracks === state.tracks && visits === state.visits) return state;
+      return { ...state, trailDay, tracks, visits };
     }
     case 'set-share-self':
       if (state.mode !== 'admin' || state.shareSelfWithFamily === action.share) return state;
@@ -639,13 +654,15 @@ function reducer(state: Session, action: Action): Session {
       const charging = place.charging === true ? true : place.charging === false ? false : member.charging;
       const sameSpot = hasLocation(member) && member.lat === place.lat && member.lng === place.lng;
       if (sameSpot && member.updatedAt === place.at && member.battery === battery && member.charging === charging && member.share === 'allowed') return state;
-      const today = seoulDayKey(Date.now());
-      const tracks = needsDailyWipe(state.trailDay, Date.now()) ? {} : { ...state.tracks };
-      if (seoulDayKey(place.at) === today) tracks[member.id] = appendTrail(tracks[member.id], { lat: place.lat, lng: place.lng, at: place.at });
+      const now = Date.now();
+      const keptTracks = tracksWithinHistory(state.tracks, now);
+      const tracks = isWithinHistory(place.at, now)
+        ? { ...keptTracks, [member.id]: appendHistoryPoint(keptTracks[member.id], { lat: place.lat, lng: place.lng, at: place.at }, now) }
+        : keptTracks;
       return {
         ...state,
-        trailDay: today,
-        visits: needsDailyWipe(state.trailDay, Date.now()) ? {} : state.visits,
+        trailDay: seoulDayKey(now),
+        visits: visitsWithinHistory(state.visits, now),
         members: state.members.map((item) =>
           item.id === member.id
             ? {
@@ -668,18 +685,17 @@ function reducer(state: Session, action: Action): Session {
       const prefix = `family:${action.code}:`;
       const now = Date.now();
       const today = seoulDayKey(now);
-      const wiped = needsDailyWipe(state.trailDay, now);
       const incoming = action.places.filter((place) => place.audience === 'family' && place.sharing && place.lat != null && place.lng != null && Number.isFinite(place.lat) && Number.isFinite(place.lng));
       const current = state.members.filter((member) => member.id.startsWith(prefix));
-      const unchanged = !wiped && current.length === incoming.length && incoming.every((place) => {
+      const unchanged = current.length === incoming.length && incoming.every((place) => {
         const member = current.find((item) => item.id === `family:${action.code}:${place.name}`);
         const battery = typeof place.batteryPct === 'number' ? Math.round(place.batteryPct) : null;
         const charging = place.charging === true ? true : place.charging === false ? false : null;
         return !!member && member.updatedAt === place.at && member.lat === place.lat && member.lng === place.lng && member.battery === battery && member.charging === charging;
       });
       if (unchanged) return state;
-      let tracks = wiped ? {} : { ...state.tracks };
-      const visits = wiped ? {} : state.visits;
+      let tracks = tracksWithinHistory(state.tracks, now);
+      const visits = visitsWithinHistory(state.visits, now);
       let members = state.members.filter((member) => !member.id.startsWith(prefix));
       for (const place of incoming) {
         if (place.lat == null || place.lng == null) continue;
@@ -699,8 +715,7 @@ function reducer(state: Session, action: Action): Session {
           moving: null,
           share: 'allowed',
         }];
-        if (seoulDayKey(place.at) === today) tracks = { ...tracks, [id]: appendTrail(tracks[id], { lat: place.lat, lng: place.lng, at: place.at }) };
-        else delete tracks[id];
+        if (isWithinHistory(place.at, now)) tracks = { ...tracks, [id]: appendHistoryPoint(tracks[id], { lat: place.lat, lng: place.lng, at: place.at }, now) };
       }
       for (const member of current) {
         if (!members.some((item) => item.id === member.id)) delete tracks[member.id];
@@ -709,12 +724,10 @@ function reducer(state: Session, action: Action): Session {
     }
     case 'merge-visits': {
       const now = Date.now();
-      const today = seoulDayKey(now);
-      const wiped = needsDailyWipe(state.trailDay, now);
-      const base = wiped ? {} : state.visits;
+      const base = visitsWithinHistory(state.visits, now);
       const current = base[action.memberId] ?? [];
       const next = action.stops
-        .filter((stop) => seoulDayKey(stop.arrivedAt) === today)
+        .filter((stop) => isWithinHistory(stop.arrivedAt, now))
         .map((stop) => {
           const id = `${action.memberId}:${stop.arrivedAt}:${stop.lat.toFixed(4)}:${stop.lng.toFixed(4)}`;
           const prev = current.find((visit) => visit.id === id);
@@ -727,16 +740,14 @@ function reducer(state: Session, action: Action): Session {
             label: prev?.label ?? null,
             source: prev?.label ? 'geocode' as const : 'coords' as const,
           };
-        })
-        .slice(-40);
-      if (!wiped && visitsSame(current, next)) return state;
-      const visits = { ...base };
-      if (next.length > 0) visits[action.memberId] = next;
-      else delete visits[action.memberId];
+        });
+      const visits = visitsWithinHistory({ ...base, [action.memberId]: next }, now);
+      const stored = visits[action.memberId] ?? [];
+      if (visitsSame(current, stored) && base === state.visits) return state;
       return {
         ...state,
-        trailDay: today,
-        tracks: wiped ? tracksForSeoulDay(state.tracks, now) : state.tracks,
+        trailDay: seoulDayKey(now),
+        tracks: tracksWithinHistory(state.tracks, now),
         visits,
       };
     }

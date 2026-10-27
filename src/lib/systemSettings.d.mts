@@ -3,3 +3,6 @@ export function whileUsingAction(native: boolean): 'foreground-location' | 'brow
 export function alwaysAllowAction(native: boolean): 'location-settings' | 'browser-geolocation';
 export function motionAction(native: boolean, iosPrompt: boolean): 'activity-recognition' | 'ios-motion-prompt' | 'explain-only';
 export function batteryAction(native: boolean): 'ignore-battery-optimizations' | 'explain-only';
+export const LOCATION_PERMISSION_ACTION: string;
+export const LOCATION_PERMISSION_GROUP: string;
+export const BATTERY_POPUP_ACTION: string;

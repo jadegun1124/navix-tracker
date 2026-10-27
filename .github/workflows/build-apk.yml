@@ -49,7 +49,6 @@ jobs:
       - name: Build Web Application
         env:
           VITE_GOOGLE_MAPS_API_KEY: ${{ secrets.VITE_GOOGLE_MAPS_API_KEY }}
-          VITE_GOOGLE_CLIENT_ID: ${{ secrets.VITE_GOOGLE_CLIENT_ID }}
           VITE_VWORLD_API_KEY: ${{ secrets.VITE_VWORLD_API_KEY }}
           VWORLD_API_KEY: ${{ secrets.VWORLD_API_KEY }}
           VITE_FAMILY_SYNC_URL: ${{ secrets.VITE_FAMILY_SYNC_URL != '' && secrets.VITE_FAMILY_SYNC_URL || 'https://umap-family-sync.umap-jadegun.workers.dev' }}
@@ -91,36 +90,36 @@ jobs:
         run: |
           mkdir -p output
           find android/ -name "*.apk" -ls
-          find android/ -name "*.apk" -exec cp {} output/umap-v1.2.0-tracker.apk \;
+          find android/ -name "*.apk" -exec cp {} output/umap-v1.3.0-tracker.apk \;
           echo "Output directory contents:"
           ls -lh output/
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: umap-v1.2.0-tracker-apk
-          path: output/umap-v1.2.0-tracker.apk
+          name: umap-v1.3.0-tracker-apk
+          path: output/umap-v1.3.0-tracker.apk
           retention-days: 30
 
       - name: Create or Update GitHub Release with APK
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.2.0
-          name: 'Umap Android APK v1.2.0'
+          tag_name: v1.3.0
+          name: 'Umap Android APK v1.3.0'
           make_latest: true
           body: |
-            ### Umap 안드로이드 앱 1.2.0
+            ### Umap 안드로이드 앱 1.3.0
             - 회사 홈 (GitHub Pages): https://jadegun1124.github.io/umap/
             - 이 파일: GitHub Releases APK. Google Play에는 없습니다.
-            - 다운로드: https://github.com/jadegun1124/umap/releases/download/v1.2.0/umap-v1.2.0-tracker.apk
+            - 다운로드: https://github.com/jadegun1124/umap/releases/download/v1.3.0/umap-v1.3.0-tracker.apk
             - 표시 이름: Umap
             - 패키지: `kr.co.umap.tracker`
-            - versionName: 1.2.0
-            - versionCode: 3
-            - Google 로그인, 권한 안내, 가족 지도, 우리 집 안심존, 초대 코드
+            - versionName: 1.3.0
+            - versionCode: 4
+            - 이 기기의 표시 이름, 권한 안내, 가족 지도, 30일 이동 기록, 우리 집 안심존, 초대 코드
             - iOS 앱은 App Store / TestFlight에 없습니다.
             - 마이크, 문자, 주변 소리, 원격 경보음은 요청하지 않습니다.
-            - 이전 파일: https://github.com/jadegun1124/umap/releases/tag/v1.1.0
-          files: output/umap-v1.2.0-tracker.apk
+            - 이전 파일: https://github.com/jadegun1124/umap/releases/tag/v1.2.0
+          files: output/umap-v1.3.0-tracker.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

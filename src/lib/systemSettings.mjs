@@ -21,3 +21,10 @@ export function motionAction(native, iosPrompt) {
 export function batteryAction(native) {
   return native ? 'ignore-battery-optimizations' : 'explain-only';
 }
+
+// Android UmapLocationPlugin must open these. The location screen is the
+// permission-group radio list, not the app-info page. Battery is the system
+// popup, not the optimization list.
+export const LOCATION_PERMISSION_ACTION = 'android.intent.action.MANAGE_APP_PERMISSION';
+export const LOCATION_PERMISSION_GROUP = 'android.permission-group.LOCATION';
+export const BATTERY_POPUP_ACTION = 'android.settings.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS';

@@ -36,7 +36,6 @@ jobs:
       - name: Build Standalone Static Web App
         env:
           VITE_GOOGLE_MAPS_API_KEY: ${{ secrets.VITE_GOOGLE_MAPS_API_KEY }}
-          VITE_GOOGLE_CLIENT_ID: ${{ secrets.VITE_GOOGLE_CLIENT_ID }}
           VITE_VWORLD_API_KEY: ${{ secrets.VITE_VWORLD_API_KEY }}
           VWORLD_API_KEY: ${{ secrets.VWORLD_API_KEY }}
           VITE_FAMILY_SYNC_URL: ${{ secrets.VITE_FAMILY_SYNC_URL != '' && secrets.VITE_FAMILY_SYNC_URL || 'https://umap-family-sync.umap-jadegun.workers.dev' }}

@@ -1,4 +1,4 @@
-import { shouldKeepTrailPoint, TRAIL_POINT_CAP } from './tracking.mjs';
+import { appendHistoryPoint } from './tracking.mjs';
 
 export function haversineMeters(
   a: { lat: number; lng: number },
@@ -40,11 +40,7 @@ export function hasLocation<T extends { lat: number | null; lng: number | null }
 }
 
 export function appendTrail(points: TrailPoint[] | undefined, point: TrailPoint): TrailPoint[] {
-  const list = points ? points.slice(-(TRAIL_POINT_CAP - 1)) : [];
-  const last = list[list.length - 1];
-  if (last && !shouldKeepTrailPoint(last, point)) return points ?? [];
-  list.push(point);
-  return list.slice(-TRAIL_POINT_CAP);
+  return appendHistoryPoint(points, point, point.at);
 }
 
 export function formatAgo(at: number, now = Date.now()): string {

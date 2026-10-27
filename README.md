@@ -10,19 +10,19 @@
 | :--- | :--- | :--- |
 | 회사 홈 | GitHub Pages | https://jadegun1124.github.io/umap/ |
 | 앱 화면 미리보기 | 같은 Pages의 `?app=1` | https://jadegun1124.github.io/umap/?app=1 |
-| 안드로이드 앱 | GitHub Releases APK v1.2.0 | https://github.com/jadegun1124/umap/releases/download/v1.2.0/umap-v1.2.0-tracker.apk |
-| 릴리스 페이지 | GitHub Releases | https://github.com/jadegun1124/umap/releases/tag/v1.2.0 |
+| 안드로이드 앱 | GitHub Releases APK v1.3.0 | https://github.com/jadegun1124/umap/releases/download/v1.3.0/umap-v1.3.0-tracker.apk |
+| 릴리스 페이지 | GitHub Releases | https://github.com/jadegun1124/umap/releases/tag/v1.3.0 |
 
 Google Play, App Store, TestFlight에는 올리지 않았습니다. iOS는 아이콘 에셋만 있고 설치 파일은 없습니다.
 
-`main`에 푸시하면 GitHub Actions가 회사 홈을 Pages에 배포하고, 같은 커밋으로 디버그 APK를 만들어 GitHub Release `v1.2.0`의 `umap-v1.2.0-tracker.apk`를 갱신합니다. 이전 빌드는 `v1.1.0`과 `v1.0.0`에 남아 있습니다.
+`main`에 푸시하면 GitHub Actions가 회사 홈을 Pages에 배포하고, 같은 커밋으로 디버그 APK를 만들어 GitHub Release `v1.3.0`의 `umap-v1.3.0-tracker.apk`를 갱신합니다. 이전 빌드는 `v1.2.0`, `v1.1.0`, `v1.0.0`에 남아 있습니다.
 
 ## 화면
 
 - 웹(GitHub Pages): 회사 홈페이지. 관제 콘솔은 없습니다.
 - 앱: Capacitor 안드로이드 앱이 가족 위치 화면을 엽니다. 브라우저에서 같은 화면을 보려면 `?app=1` 을 붙입니다.
 
-흐름은 Google 로그인 → 관리자/피관리자 선택 → 권한 안내 → 가족 지도입니다. 관리자만 가족을 초대하고 지웁니다. 피관리자는 코드를 수락한 뒤 위치 공유를 따로 허용합니다.
+흐름은 이 기기의 표시 이름 → 관리자/피관리자 선택 → 권한 안내 → 가족 지도입니다. 하단의 기록 탭에서 오늘부터 30일 전까지의 이동을 봅니다. 알림은 지도 왼쪽 위 종 아이콘에서 엽니다. 관리자만 가족을 초대하고 지웁니다. 피관리자는 코드를 수락한 뒤 위치 공유를 따로 허용합니다.
 
 ## 권한
 
@@ -31,34 +31,32 @@ Google Play, App Store, TestFlight에는 올리지 않았습니다. iOS는 아�
 | 권한 | 쓰는 이유 |
 | :--- | :--- |
 | 알림 | 집 도착·출발과 위치 유지. 허용을 누르면 시스템 알림 창이 열립니다. |
-| 위치 | 정확한 위치 또는 대략적인 위치. 앱 사용 중은 위치 권한 창, 항상 허용은 위치 설정 화면을 엽니다. |
+| 위치 | 정확한 위치 또는 대략적인 위치. 앱 사용 중은 위치 권한 창, 항상 허용은 이 앱의 위치 액세스 권한 화면을 바로 엽니다. |
 | 움직임 | 안드로이드 신체 활동 권한 창. 다시 물을 수 없으면 설정으로 이동합니다. |
-| 배터리 | 항상 허용을 고른 경우 배터리 제한 없음 창을 엽니다. 스위치는 직접 고릅니다. |
+| 배터리 | 배터리 제한 없음을 누르면 시스템 팝업이 바로 열립니다. 스위치는 직접 고릅니다. |
 
 마이크, 문자, 주변 소리, 원격으로 소리를 울리는 기능은 없습니다. 전화번호만으로 다른 사람을 찾지 않습니다.
 
-항상 허용은 화면에서 다시 확인한 뒤에 위치 설정 화면을 엽니다. 앱은 OS 스위치를 대신 바꾸지 않습니다. 위치 유지 알림을 켜면 알림 허용 창을 먼저 띄우고, 알림이 떠 있는 동안 백그라운드에서 위치를 보냅니다. 배터리 제한 없음도 버튼을 눌렀을 때만 시스템 창으로 엽니다.
+항상 허용을 누르면 이 앱의 위치 액세스 권한 화면이 바로 열리고, 거기서 라디오를 직접 고릅니다. 앱은 OS 스위치를 대신 바꾸지 않습니다. 위치 유지 알림은 우리 가족 아래에서만 켜고, 알림이 떠 있는 동안 백그라운드에서 위치를 보냅니다. 배터리 제한 없음을 누르면 `ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` 팝업이 바로 열립니다.
 
-## Google 로그인과 지도
+## 이름과 지도
 
 키는 환경 변수로만 넣습니다. 로컬에서는 `.env.example` 을 복사해 `.env` 를 만들고 `VITE_VWORLD_API_KEY=` 뒤에 키를 적습니다. `.env` 는 gitignore 되어 있어 커밋되지 않습니다.
 
 ```bash
-VITE_GOOGLE_CLIENT_ID=
-VITE_GOOGLE_MAPS_API_KEY=
 VITE_VWORLD_API_KEY=
 VITE_FAMILY_SYNC_URL=
 ```
 
-- 로그인: 브라우저에서는 [Google Identity Services](https://developers.google.com/identity/gsi/web/guides/overview) 버튼입니다. 범위는 `openid`, `email`, `profile` 만 사용하고 이름, 이메일, 프로필 사진만 받습니다. 안드로이드 앱은 WebView 버튼 대신 Credential Manager로 같은 ID 토큰을 받습니다. 웹 클라이언트 ID와 함께, 패키지 `kr.co.umap.tracker` 와 서명 SHA-1이 들어간 Android OAuth 클라이언트가 같은 Google Cloud 프로젝트에 있어야 합니다. 승인된 자바스크립트 원본에는 사이트 주소와 `https://localhost` 를 넣습니다. Google 기본 범위에는 전화번호가 없고, 앱은 번호를 입력받아 본인 확인으로 쓰지 않습니다.
+- 이름: 가족 지도에 보일 표시 이름을 이 기기에만 저장합니다. Google 로그인과 전화번호 본인 확인은 없습니다.
 - 지도: 국토교통부 [VWorld](https://www.vworld.kr/) 2D Base 한 종류입니다. 위성, CARTO, OpenStreetMap 전환은 없습니다.
   - `https://api.vworld.kr/req/wmts/1.0.0/{API_KEY}/Base/{z}/{y}/{x}.png`
   - 키는 `import.meta.env.VITE_VWORLD_API_KEY`만 읽습니다. 빌드 시점에 JS 안에 들어갑니다.
   - 키가 없으면 "키가 이 빌드에 없습니다"만 보여 주고 타일을 요청하지 않습니다. 키가 있는데 타일이 실패하면, 그 페이지의 주소(origin)를 인증키 도메인에 넣으라는 안내가 나옵니다. 타일이 한 장이라도 오면 안내는 사라집니다.
   - 인증키 서비스 URL: `https://jadegun1124.github.io`, 앱 `https://localhost`, 로컬 개발 `http://localhost:5173`.
-- 이동 경로: 오늘(아시아/서울) 궤적만 이 기기에 남기고, 날짜가 바뀌면 지웁니다. 정지는 반경 50m·3분, 구간은 정지와 정지 사이의 이동 시간입니다. 샘플 사람이나 예시 좌표는 없습니다.
+- 이동 경로: 서울 날짜로 오늘부터 30일 전까지 이 기기에 남기고, 그보다 오래된 점은 지웁니다. 정지는 반경 50m·3분, 구간은 정지와 정지 사이의 이동 시간입니다. 샘플 사람이나 예시 좌표는 없습니다.
 
-클라이언트 ID가 없으면 로그인은 미리보기로 이어집니다. 미리보기라고 화면에 적습니다. `VITE_GOOGLE_MAPS_API_KEY`는 가족 지도에서 쓰지 않습니다.
+`VITE_GOOGLE_MAPS_API_KEY`는 가족 지도에서 쓰지 않습니다.
 
 GitHub Actions secret `VITE_VWORLD_API_KEY`와 `VWORLD_API_KEY`는 같은 값입니다. Pages 워크플로(`deploy.yml`)와 APK 워크플로(`build-apk.yml`)가 `npm run build`에 `VITE_VWORLD_API_KEY`를 넘깁니다. Vite용 secret이 비어 있으면 `VWORLD_API_KEY`를 그 이름으로 복사한 뒤 공백을 지웁니다. 로그에는 키가 있는지 여부만 남기고 문자열은 찍지 않습니다. secret을 바꾸면 `main`에 푸시해 두 워크플로를 다시 돌려야 배포된 Pages와 APK에 들어갑니다. PR 검사만으로는 키가 들어가지 않습니다. 로컬은 gitignore된 `.env`에 `VITE_VWORLD_API_KEY=`를 둡니다.
 
@@ -84,9 +82,9 @@ npm run dev
 
 ## 안드로이드 APK
 
-받는 곳: https://github.com/jadegun1124/umap/releases/download/v1.2.0/umap-v1.2.0-tracker.apk
+받는 곳: https://github.com/jadegun1124/umap/releases/download/v1.3.0/umap-v1.3.0-tracker.apk
 
-`main` 푸시마다 `Build Android APK (Umap)` 워크플로가 웹을 빌드하고 `dist` 를 안드로이드 에셋으로 복사한 뒤 `assembleDebug` 로 APK를 만듭니다. 결과 파일은 GitHub Release `v1.2.0`에 올립니다. 앱 `versionName`은 `1.2.0`, `versionCode`는 3입니다. Play 스토어 트랙은 없습니다.
+`main` 푸시마다 `Build Android APK (Umap)` 워크플로가 웹을 빌드하고 `dist` 를 안드로이드 에셋으로 복사한 뒤 `assembleDebug` 로 APK를 만듭니다. 결과 파일은 GitHub Release `v1.3.0`에 올립니다. 앱 `versionName`은 `1.3.0`, `versionCode`는 4입니다. Play 스토어 트랙은 없습니다.
 
 ## 데이터
 

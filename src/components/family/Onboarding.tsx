@@ -1,9 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Bell, BatteryCharging, ChevronLeft, Footprints, MapPin, Shield, UserRound, Users } from 'lucide-react';
-import { GOOGLE_SIGN_IN_SCOPES } from '../../lib/authScopes.mjs';
-import { decodeGoogleCredential, googleClientId, loadGoogleIdentity, previewProfile, signInFailureCopy } from '../../services/googleAuth';
+import { localProfile } from '../../lib/localProfile.mjs';
 import { askAlwaysLocation, askBattery, askMotion, askNotifications, askWhileUsing } from '../../services/systemPermissions';
-import { nativeGoogleSignIn, umapLocationNative } from '../../services/umapLocation';
 import { REQUIRED_TERMS, type AppMode, type PermissionState, type Profile } from '../../types/family';
 import { useFamily } from './session';
 
@@ -17,17 +15,6 @@ function Shell({ children }: { children: React.ReactNode }) {
   );
 }
 
-function GoogleMark() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true">
-      <path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 8 3.1l5.7-5.7C34.2 6.1 29.4 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.2-.1-2.3-.4-3.5z" />
-      <path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 16 19 12 24 12c3.1 0 5.8 1.2 8 3.1l5.7-5.7C34.2 6.1 29.4 4 24 4 16.3 4 9.6 8.3 6.3 14.7z" />
-      <path fill="#4CAF50" d="M24 44c5.2 0 10-2 13.6-5.2l-6.3-5.3C29.2 35.1 26.7 36 24 36c-5.3 0-9.7-3.3-11.3-8l-6.5 5C9.5 39.6 16.2 44 24 44z" />
-      <path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-1.1 3.2-3.5 5.7-6.6 7.1l6.3 5.3C37.4 38.4 44 33 44 24c0-1.2-.1-2.3-.4-3.5z" />
-    </svg>
-  );
-}
-
 export function Onboarding() {
   const family = useFamily();
   const { stage } = family.state;
@@ -35,7 +22,7 @@ export function Onboarding() {
   return (
     <Shell>
       {stage === 'splash' && <Splash onDone={family.splashDone} />}
-      {stage === 'login' && <Login onGoogle={family.login} />}
+      {stage === 'login' && <Login onSubmit={family.login} />}
       {stage === 'mode' && (
         <ModeChoice
           chosen={family.state.mode}
@@ -135,136 +122,54 @@ function ModeChoice({
   );
 }
 
-function Login({ onGoogle }: { onGoogle: (profile: Profile) => void }) {
-  const hostRef = useRef<HTMLDivElement>(null);
-  const onGoogleRef = useRef(onGoogle);
-  useEffect(() => {
-    onGoogleRef.current = onGoogle;
-  });
-  const clientId = googleClientId();
-  const native = umapLocationNative();
-  const [help, setHelp] = useState(false);
-  const [gisError, setGisError] = useState(false);
+function Login({ onSubmit }: { onSubmit: (profile: Profile) => void }) {
+  const [name, setName] = useState('');
   const [message, setMessage] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  const acceptCredential = (credential: string | undefined) => {
-    const profile = credential ? decodeGoogleCredential(credential) : null;
-    if (profile) onGoogleRef.current(profile);
-    else setMessage(signInFailureCopy('token'));
-  };
-
-  useEffect(() => {
-    if (native || !clientId || !hostRef.current) return;
-    let dead = false;
-    loadGoogleIdentity()
-      .then(() => {
-        if (dead || !hostRef.current || !window.google?.accounts?.id) return;
-        const host = hostRef.current;
-        window.google.accounts.id.initialize({
-          client_id: clientId,
-          callback: (response) => acceptCredential(response.credential),
-          // ID token only. FedCM keeps the button working when third-party cookies are blocked.
-          ux_mode: 'popup',
-          auto_select: false,
-          cancel_on_tap_outside: true,
-          itp_support: true,
-          use_fedcm_for_button: true,
-          context: 'signin',
-        });
-        host.innerHTML = '';
-        const width = Math.max(200, Math.min(400, host.clientWidth || 320));
-        try {
-          window.google.accounts.id.renderButton(host, {
-            theme: 'outline',
-            size: 'large',
-            shape: 'pill',
-            text: 'continue_with',
-            width,
-            locale: 'ko',
-            click_listener: () => setMessage(null),
-          });
-        } catch {
-          if (!dead) setGisError(true);
-        }
-      })
-      .catch(() => {
-        if (!dead) setGisError(true);
-      });
-    return () => {
-      dead = true;
-    };
-  }, [clientId, native]);
-
-  const startNative = async () => {
-    if (!clientId) {
-      setHelp(true);
-      return;
-    }
-    setBusy(true);
-    setMessage(null);
-    const result = await nativeGoogleSignIn(clientId);
-    setBusy(false);
-    if (result.credential) {
-      acceptCredential(result.credential);
-      return;
-    }
-    if (result.error && result.error !== 'cancelled') setMessage(signInFailureCopy(result.error));
-    else if (result.error === 'cancelled') setMessage(signInFailureCopy('cancelled'));
-  };
+  const trimmed = name.trim();
 
   return (
     <div className="flex h-full flex-col px-6 pb-10 pt-16">
       <img src={iconSrc} alt="" className="h-16 w-16 rounded-2xl shadow-md" />
-      <h1 className="mt-6 text-[28px] font-black leading-tight">Google로 Umap에 들어오기</h1>
+      <h1 className="mt-6 text-[28px] font-black leading-tight">이 폰에서 쓸 이름</h1>
       <p className="mt-3 text-sm leading-6 text-slate-600">
-        가족 위치는 초대한 사람과 초대를 받은 사람만 나눕니다. 다른 사람의 번호만으로 위치를 찾지 않습니다.
+        가족 지도에 보이는 이름입니다. 이 기기에만 저장됩니다. 전화번호나 Google 계정은 쓰지 않습니다.
       </p>
-      <p className="mt-2 text-xs leading-5 text-slate-500">
-        Google 로그인은 {GOOGLE_SIGN_IN_SCOPES.join(', ')} 만 사용합니다. 이 범위에는 전화번호가 없습니다. 번호를 적는 칸은 두지 않으며, 입력한 번호를 본인 확인으로 쓰지 않습니다.
-      </p>
-      <div className="mt-10">
-        {native ? (
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => void startNative()}
-            className="flex h-12 w-full items-center justify-center gap-3 rounded-full border border-slate-300 bg-white text-sm font-bold shadow-sm disabled:opacity-40"
-          >
-            <GoogleMark />
-            {busy ? 'Google 계정 여는 중…' : 'Google로 로그인'}
-          </button>
-        ) : clientId && !gisError ? (
-          <div ref={hostRef} className="flex min-h-12 w-full justify-center" />
-        ) : (
-          <button
-            type="button"
-            onClick={() => setHelp(true)}
-            className="flex h-12 w-full items-center justify-center gap-3 rounded-full border border-slate-300 bg-white text-sm font-bold shadow-sm"
-          >
-            <GoogleMark />
-            Google로 로그인
-          </button>
-        )}
-        {message && <p className="mt-4 text-sm leading-6 text-slate-600">{message}</p>}
-        {(help || gisError) && (
-          <div className="mt-4 rounded-2xl bg-white p-4 text-sm leading-6 text-slate-600 shadow-sm">
-            <p>
-              {gisError
-                ? 'Google 로그인 스크립트를 불러오지 못했습니다.'
-                : 'VITE_GOOGLE_CLIENT_ID 에 Google Cloud OAuth 웹 클라이언트 ID를 넣으면 이 버튼이 계정 선택으로 연결됩니다.'}
-              {' '}키는 저장소에 넣지 않습니다. 안드로이드 앱은 웹 버튼 대신 기기 계정 선택을 쓰고, 같은 프로젝트에 Android 클라이언트가 있어야 합니다.
-            </p>
-            <button
-              type="button"
-              onClick={() => onGoogle(previewProfile())}
-              className="mt-3 w-full rounded-full bg-[#0084FF] py-3 text-sm font-bold text-white"
-            >
-              미리보기로 계속
-            </button>
-          </div>
-        )}
-      </div>
+      <form
+        className="mt-8"
+        onSubmit={(event) => {
+          event.preventDefault();
+          const profile = localProfile(trimmed);
+          if (!profile) {
+            setMessage('전화번호는 이름으로 쓰지 않습니다. 가족에게 보일 이름을 적어 주세요.');
+            return;
+          }
+          onSubmit(profile);
+        }}
+      >
+        <label className="block text-xs font-bold text-slate-400" htmlFor="local-name">
+          표시 이름
+        </label>
+        <input
+          id="local-name"
+          value={name}
+          onChange={(event) => {
+            setName(event.target.value);
+            setMessage(null);
+          }}
+          placeholder="이름"
+          maxLength={20}
+          autoComplete="nickname"
+          className="mt-1 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 outline-none focus:border-[#0084FF]"
+        />
+        {message && <p className="mt-3 text-sm leading-6 text-slate-600">{message}</p>}
+        <button
+          type="submit"
+          disabled={trimmed.length < 1}
+          className="mt-4 w-full rounded-full bg-[#0084FF] py-3.5 text-sm font-bold text-white disabled:opacity-40"
+        >
+          시작
+        </button>
+      </form>
     </div>
   );
 }
@@ -337,7 +242,7 @@ const TERM_COPY: { id: string; title: string; required: boolean; body: string }[
     id: 'privacy',
     title: '개인정보 수집·이용 동의',
     required: true,
-    body: 'Google 계정 이름과 이메일, 선택한 위치 권한, 가족 이름, 이동 경로를 이 기기에 저장합니다. 전화번호는 받지 않고, 번호로 사람을 찾지 않습니다.',
+    body: '이 기기에 저장한 표시 이름, 선택한 위치 권한, 가족 이름, 이동 경로를 이 기기에 둡니다. 전화번호는 받지 않고, Google 계정으로 로그인하지 않습니다.',
   },
   {
     id: 'guardian',
@@ -355,7 +260,7 @@ const TERM_COPY: { id: string; title: string; required: boolean; body: string }[
     id: 'overseas',
     title: '개인정보 국외 이전 동의',
     required: false,
-    body: 'Google 로그인을 쓰면 계정 식별자가 Google로 전달됩니다. 지도 타일은 국토교통부 VWorld에서 불러옵니다.',
+    body: '계정 정보를 Google로 보내지 않습니다. 지도 타일은 국토교통부 VWorld에서 불러옵니다.',
   },
 ];
 
@@ -436,7 +341,6 @@ function Permissions({
   const [step, setStep] = useState<'intro' | 'notifications' | 'location' | 'motion' | 'battery'>('intro');
   const [draft, setDraft] = useState<PermissionState>({ ...initial, completed: false });
   const [busy, setBusy] = useState(false);
-  const [confirmAlways, setConfirmAlways] = useState(false);
   const [askedAlways, setAskedAlways] = useState(false);
   const [note, setNote] = useState<string | null>(null);
 
@@ -525,12 +429,6 @@ function Permissions({
               onClick={() => setDraft({ ...draft, accuracy: 'approximate' })}
             />
           </div>
-          {confirmAlways && (
-            <div className="mt-4 rounded-2xl bg-white p-4 text-sm leading-6 text-slate-600 shadow-sm">
-              <p>다음날에도 위치를 보내려면 위치 접근을 항상 허용으로 바꿔야 합니다. 앱을 쓰는 동안에만 허용하면 화면이 꺼진 뒤 갱신이 멈출 수 있습니다.</p>
-              <p className="mt-2">아래 버튼은 위치 권한 화면을 엽니다. 항상 허용은 그 화면에서 직접 고릅니다. Umap이 스위치를 대신 바꾸지는 않습니다.</p>
-            </div>
-          )}
           {note && <p className="mt-3 text-center text-sm leading-6 text-slate-600">{note}</p>}
           <div className="mt-auto space-y-2 pt-4 text-center">
             <TextButton
@@ -548,17 +446,16 @@ function Permissions({
             />
             <TextButton
               disabled={busy}
-              label={confirmAlways ? '항상 허용 설정 열기' : '항상 허용'}
+              label="항상 허용"
               onClick={async () => {
-                if (!confirmAlways) {
-                  setConfirmAlways(true);
-                  setNote(null);
-                  return;
-                }
                 setAskedAlways(true);
                 setBusy(true);
                 const result = await askAlwaysLocation(draft.accuracy === 'precise');
                 setBusy(false);
+                if (result.location === 'unavailable') {
+                  setNote(result.note);
+                  return;
+                }
                 setNote(result.note);
                 const locationMode = result.location === 'always' ? 'always' as const : result.location === 'while-using' ? 'while-using' as const : 'denied' as const;
                 const next = { ...draft, locationMode };
@@ -609,7 +506,7 @@ function Permissions({
           <BatteryCharging className="mt-6 h-8 w-8 text-[#0084FF]" />
           <h1 className="mt-4 text-2xl font-black leading-snug">배터리 최적화 안내</h1>
           <p className="mt-3 text-sm leading-6 text-slate-600">
-            백그라운드 위치는 절전으로 끊길 수 있습니다. 버튼을 누르면 이 앱의 배터리 제한 없음 창이 열립니다. 제한 없음은 그 창에서 직접 고릅니다. Umap이 설정을 대신 바꾸지는 않습니다.
+            버튼을 누르면 이 앱의 배터리 제한 없음 팝업이 바로 열립니다. 허용은 그 팝업에서 직접 고릅니다.
           </p>
           {note && <p className="mt-3 text-sm leading-6 text-amber-800">{note}</p>}
           <div className="mt-auto space-y-3">

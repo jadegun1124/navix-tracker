@@ -16,15 +16,20 @@
 // steps as distance / STRIDE_M (0.75 m) and the UI must say 추정.
 //
 // OS: a WebView watch dies overnight if the process sleeps. A cached fix
-// older than FIX_STALE_MS is rejected so yesterday's point is not published
-// as today. Background publishing is a foreground service started only after
-// the user turns on the in-app keep-alive control. The app never changes the
-// OS permission itself.
+// older than FIX_STALE_MS is rejected so a stale point is not published as
+// now. Stored trails and visits stay for HISTORY_DAYS Seoul calendar days
+// (today through that many days ago) and older points are trimmed.
+// Background publishing is a foreground service started only after the user
+// turns on the in-app keep-alive control. The app never changes the OS
+// permission itself.
 
 export const STOP_RADIUS_M = 50;
 export const STOP_MIN_MS = 3 * 60 * 1000;
 export const STRIDE_M = 0.75;
 export const TRAIL_POINT_CAP = 1500;
+/** Today plus this many Seoul calendar days back. 30 → 오늘부터 30일 전. */
+export const HISTORY_DAYS = 30;
+export const VISIT_DAY_CAP = 40;
 
 export const MODE_WALK_MAX_KMH = 7;
 export const MODE_BIKE_MAX_KMH = 23;
@@ -103,9 +108,183 @@ export function visitsForSeoulDay(visits, now) {
   if (!visits || typeof visits !== 'object') return next;
   for (const [id, list] of Object.entries(visits)) {
     if (!Array.isArray(list)) continue;
-    const kept = list.filter((visit) => visit && Number.isFinite(visit.arrivedAt) && seoulDayKey(visit.arrivedAt) === day).slice(-40);
+    const kept = list.filter((visit) => visit && Number.isFinite(visit.arrivedAt) && seoulDayKey(visit.arrivedAt) === day).slice(-VISIT_DAY_CAP);
     if (kept.length > 0) next[id] = kept;
   }
+  return next;
+}
+
+function calendarDayKey(year, monthIndex, day) {
+  const dt = new Date(Date.UTC(year, monthIndex, day));
+  const month = String(dt.getUTCMonth() + 1).padStart(2, '0');
+  const date = String(dt.getUTCDate()).padStart(2, '0');
+  return `${dt.getUTCFullYear()}-${month}-${date}`;
+}
+
+export function shiftDayKey(dayKey, deltaDays) {
+  const [year, month, day] = String(dayKey).split('-').map(Number);
+  if (!year || !month || !day) return '';
+  return calendarDayKey(year, month - 1, day + deltaDays);
+}
+
+export function oldestHistoryDay(now) {
+  return shiftDayKey(seoulDayKey(now), -HISTORY_DAYS);
+}
+
+export function isWithinHistory(epochMs, now) {
+  const day = seoulDayKey(epochMs);
+  const today = seoulDayKey(now);
+  const oldest = oldestHistoryDay(now);
+  return Boolean(day && today && oldest && day >= oldest && day <= today);
+}
+
+export function historyDayKeys(now) {
+  const today = seoulDayKey(now);
+  const keys = [];
+  for (let offset = 0; offset <= HISTORY_DAYS; offset += 1) keys.push(shiftDayKey(today, -offset));
+  return keys;
+}
+
+export function historyDayLabel(dayKey, now) {
+  const today = seoulDayKey(now);
+  if (dayKey === today) return '오늘';
+  if (dayKey === shiftDayKey(today, -1)) return '어제';
+  const [year, month, day] = String(dayKey).split('-');
+  if (today.slice(0, 4) === year) return `${Number(month)}월 ${Number(day)}일`;
+  return `${year}.${Number(month)}.${Number(day)}`;
+}
+
+export function seoulDayEndMs(dayKey) {
+  const [year, month, day] = String(dayKey).split('-').map(Number);
+  if (!year || !month || !day) return Date.now();
+  return Date.UTC(year, month - 1, day) - 9 * 60 * 60 * 1000 + 86_400_000 - 1;
+}
+
+function sameList(left, right) {
+  if (left === right) return true;
+  if (!left || !right || left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index += 1) if (left[index] !== right[index]) return false;
+  return true;
+}
+
+export function trimMemberPoints(points, now) {
+  if (!Array.isArray(points) || points.length === 0) return [];
+  const today = seoulDayKey(now);
+  const oldest = oldestHistoryDay(now);
+  const byDay = new Map();
+  let dropped = false;
+  for (const point of points) {
+    if (!point || !Number.isFinite(point.at)) {
+      dropped = true;
+      continue;
+    }
+    const day = seoulDayKey(point.at);
+    if (!day || day < oldest || day > today) {
+      dropped = true;
+      continue;
+    }
+    const bucket = byDay.get(day);
+    if (bucket) bucket.push(point);
+    else byDay.set(day, [point]);
+  }
+  const kept = [];
+  for (const day of [...byDay.keys()].sort()) {
+    const bucket = byDay.get(day);
+    const slice = bucket.length > TRAIL_POINT_CAP ? bucket.slice(-TRAIL_POINT_CAP) : bucket;
+    if (slice.length !== bucket.length) dropped = true;
+    kept.push(...slice);
+  }
+  if (!dropped && sameList(points, kept)) return points;
+  return kept;
+}
+
+export function appendHistoryPoint(points, point, now) {
+  const anchor = Number.isFinite(now) ? now : point?.at;
+  const list = Array.isArray(points) ? points : [];
+  const last = list[list.length - 1];
+  if (last && point && !shouldKeepTrailPoint(last, point)) {
+    const trimmed = trimMemberPoints(list, anchor);
+    return trimmed === list ? list : trimmed;
+  }
+  const next = list.slice();
+  if (point && Number.isFinite(point.at)) next.push(point);
+  return trimMemberPoints(next, anchor);
+}
+
+export function tracksWithinHistory(tracks, now) {
+  if (!tracks || typeof tracks !== 'object') return {};
+  let changed = false;
+  const next = {};
+  const ids = Object.keys(tracks);
+  for (const id of ids) {
+    const points = tracks[id];
+    if (!Array.isArray(points)) {
+      changed = true;
+      continue;
+    }
+    const trimmed = trimMemberPoints(points, now);
+    if (trimmed.length === 0) {
+      if (points.length > 0) changed = true;
+      continue;
+    }
+    next[id] = trimmed;
+    if (trimmed !== points) changed = true;
+  }
+  if (!changed && Object.keys(next).length === ids.length) return tracks;
+  return next;
+}
+
+function trimVisitList(list, now) {
+  if (!Array.isArray(list)) return [];
+  const today = seoulDayKey(now);
+  const oldest = oldestHistoryDay(now);
+  const byDay = new Map();
+  let dropped = false;
+  for (const visit of list) {
+    if (!visit || !Number.isFinite(visit.arrivedAt)) {
+      dropped = true;
+      continue;
+    }
+    const day = seoulDayKey(visit.arrivedAt);
+    if (!day || day < oldest || day > today) {
+      dropped = true;
+      continue;
+    }
+    const bucket = byDay.get(day);
+    if (bucket) bucket.push(visit);
+    else byDay.set(day, [visit]);
+  }
+  const kept = [];
+  for (const day of [...byDay.keys()].sort()) {
+    const bucket = byDay.get(day);
+    const slice = bucket.length > VISIT_DAY_CAP ? bucket.slice(-VISIT_DAY_CAP) : bucket;
+    if (slice.length !== bucket.length) dropped = true;
+    kept.push(...slice);
+  }
+  if (!dropped && sameList(list, kept)) return list;
+  return kept;
+}
+
+export function visitsWithinHistory(visits, now) {
+  if (!visits || typeof visits !== 'object') return {};
+  let changed = false;
+  const next = {};
+  const ids = Object.keys(visits);
+  for (const id of ids) {
+    const list = visits[id];
+    if (!Array.isArray(list)) {
+      changed = true;
+      continue;
+    }
+    const trimmed = trimVisitList(list, now);
+    if (trimmed.length === 0) {
+      if (list.length > 0) changed = true;
+      continue;
+    }
+    next[id] = trimmed;
+    if (trimmed !== list) changed = true;
+  }
+  if (!changed && Object.keys(next).length === ids.length) return visits;
   return next;
 }
 
