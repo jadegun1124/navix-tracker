@@ -562,7 +562,7 @@ export function FamilyMapScreen() {
               가족 위치와 배터리는 초대 동기화 키로 위치 서버에 올라가고, 관리자 폰이 그 서버에서 받아 지도에 표시합니다. 예시 좌표나 하드코딩된 팝업이 아닙니다. 알림을 허용하면 앱을 닫아도 SOS가 푸시로 옵니다. 전화번호로는 위치를 찾지 않습니다.
             </p>
             <p className="mt-3 text-xs leading-5 text-slate-400">
-              항상 허용을 누르면 이 앱의 위치 권한 화면이 바로 열립니다. 배터리 제한 없음을 누르면 시스템 팝업이 바로 열립니다. Umap은 그 스위치를 대신 바꾸지 않습니다. 위치 유지는 처음 권한 화면에서 위치와 함께 묻고, 사용자가 켠 뒤에만 백그라운드에서 보냅니다. 알림 목록에 위치 공유 문구는 띄우지 않습니다.
+              항상 허용을 누르면 이 앱의 위치 권한 화면이 바로 열립니다. 배터리 제한 없음을 누르면 시스템 팝업이 바로 열립니다. Umap은 그 스위치를 대신 바꾸지 않습니다. 위치 유지는 사용자가 켠 뒤에만 백그라운드에서 보냅니다. 알림 목록에 Umap 카드는 나오지 않습니다. 배터리 제한 없음을 켜 두면 화면이 꺼져도 위치 간격을 유지합니다.
             </p>
             <div className="mt-4 space-y-2">
               <button type="button" onClick={family.reopenMode} className="w-full rounded-full bg-slate-100 py-3 font-bold">
@@ -681,18 +681,21 @@ export function FamilyMapScreen() {
                 markSessionFlag(KEEP_PERMISSION_ASKED_KEY);
                 const notifications = result.state === 'granted' || result.state === 'denied' || result.state === 'skipped' ? result.state : 'denied';
                 family.finishPermissions({ ...state.permissions, notifications, completed: true });
-                if (result.state === 'granted' && state.permissions.locationMode === 'always') {
+                if (state.permissions.locationMode === 'always') {
                   markSessionFlag(KEEP_START_ASKED_KEY);
                   family.setKeepAlive(true);
                   setKeepPrompt('none');
+                  if (result.state !== 'granted') {
+                    setSettingsNote('위치 유지를 켰습니다. 알림 목록에 Umap 카드는 나오지 않습니다. SOS 알림은 알림 권한이 필요합니다.');
+                  }
                   return;
                 }
                 if (result.state === 'granted') {
-                  setSettingsNote('알림을 허용했습니다. 위치를 항상 허용으로 고르면 유지 알림을 켤 수 있습니다. 앱이 혼자 켜지 않습니다.');
+                  setSettingsNote('알림을 허용했습니다. 위치를 항상 허용으로 고르면 위치 유지를 켤 수 있습니다. 알림 목록에 Umap 카드는 나오지 않습니다.');
                   setKeepPrompt('none');
                   return;
                 }
-                setKeepNote(result.note ?? '알림을 허용하지 않으면 위치 유지 알림을 켤 수 없습니다. 초대 코드는 그대로 쓸 수 있습니다.');
+                setKeepNote(result.note ?? '알림을 허용하지 않았습니다. 위치를 항상 허용으로 고르면 위치 유지를 켤 수 있습니다. SOS 알림만 알림 권한이 필요합니다.');
               });
             }}
           />
@@ -1177,15 +1180,15 @@ function KeepNoticeSheet({
   return (
     <div className="absolute inset-0 z-[60] flex items-end bg-slate-900/40">
       <div className="w-full rounded-t-3xl bg-white px-5 pb-8 pt-5">
-        <h2 className="text-lg font-black">위치 유지 알림 켜기</h2>
+        <h2 className="text-lg font-black">{mode === 'permission' ? '알림을 허용할까요?' : '위치 유지를 켤까요?'}</h2>
         <p className="mt-2 text-sm leading-6 text-slate-600">
           {mode === 'permission'
-            ? '위치를 백그라운드에서 보내려면 알림 권한이 필요합니다. 허용을 누르면 알림 창이 열립니다. 알림 목록에는 위치 공유 문구를 띄우지 않습니다. 앱이 혼자 켜지 않습니다. 전화번호는 쓰지 않습니다.'
-            : '알림 권한은 이미 허용되어 있습니다. 켜면 백그라운드에서 위치를 보냅니다. 알림 목록에 위치 공유 문구는 나오지 않습니다. 끄기는 우리 가족에서 할 수 있습니다. 앱이 혼자 켜지 않습니다.'}
+            ? '알림 권한은 SOS와 집 반경 알림에 씁니다. 허용을 누르면 알림 창이 열립니다. 위치 공유 중에는 알림 목록에 Umap 카드가 나오지 않습니다. 앱이 혼자 켜지 않습니다. 전화번호는 쓰지 않습니다.'
+            : '켜면 백그라운드에서 위치를 보냅니다. 알림 목록에 Umap 카드는 나오지 않습니다. 끄기는 우리 가족에서 할 수 있습니다. 배터리 제한 없음을 켜 두면 화면이 꺼져도 간격을 유지합니다. 앱이 혼자 켜지 않습니다.'}
         </p>
         {note && <p className="mt-3 text-sm leading-6 text-amber-800">{note}</p>}
         <button type="button" disabled={busy} onClick={onPrimary} className="mt-4 w-full rounded-full bg-[#0084FF] py-3.5 font-bold text-white disabled:opacity-40">
-          {busy ? '확인 중…' : '위치 유지 알림 켜기'}
+          {busy ? '확인 중…' : mode === 'permission' ? '알림 허용' : '위치 유지 켜기'}
         </button>
         <button type="button" disabled={busy} onClick={onLater} className="mt-2 w-full py-2 text-sm font-bold text-slate-400">
           나중에

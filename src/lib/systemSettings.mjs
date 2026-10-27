@@ -58,8 +58,9 @@ export function markSessionFlag(key) {
 }
 
 // 'permission' asks POST_NOTIFICATIONS (or the browser notification prompt).
-// 'start' turns on the foreground notification only after the user taps, and
-// only when location is already 항상 허용. Neither path starts it by itself.
+// 'start' turns on background location only after the user taps, and only
+// when location is already 항상 허용. Neither path starts it by itself.
+// The Android keep-alive path does not post an ongoing shade card.
 export function keepEntryPrompt({ notifications, locationMode, keepAlive, permissionAsked, startAsked }) {
   if (keepAlive) return 'none';
   if (notifications !== 'granted' && notifications !== 'skipped' && !permissionAsked) return 'permission';

@@ -33,14 +33,34 @@ test('keep-alive notification is asked at entry until allowed, and started only 
   assert.equal(keepEntryPrompt({ ...base, notifications: 'granted', locationMode: 'always', keepAlive: true }), 'none');
 });
 
-test('location foreground notification does not post the share banner', () => {
-  const source = readFileSync(new URL('../../android/app/src/main/java/kr/co/umap/tracker/LocationKeepService.java', import.meta.url), 'utf8');
-  assert.equal(source.includes('Umap 위치 공유'), false);
-  assert.equal(source.includes('위치를 보내는 중'), false);
-  assert.equal(source.includes('위치 유지 끄기'), false);
-  assert.match(source, /IMPORTANCE_MIN/);
-  assert.match(source, /deleteNotificationChannel\(LEGACY_CHANNEL_ID\)/);
-  assert.match(source, /umap_location_quiet/);
+test('location keep does not post an ongoing shade card', () => {
+  const location = readFileSync(new URL('../../android/app/src/main/java/kr/co/umap/tracker/LocationKeepService.java', import.meta.url), 'utf8');
+  const watch = readFileSync(new URL('../../android/app/src/main/java/kr/co/umap/tracker/AlertWatchService.java', import.meta.url), 'utf8');
+  const cleanup = readFileSync(new URL('../../android/app/src/main/java/kr/co/umap/tracker/OngoingNotificationCleanup.java', import.meta.url), 'utf8');
+  const manifest = readFileSync(new URL('../../android/app/src/main/AndroidManifest.xml', import.meta.url), 'utf8');
+  assert.equal(location.includes('Umap 위치 공유'), false);
+  assert.equal(location.includes('위치를 보내는 중'), false);
+  assert.equal(location.includes('위치 유지 끄기'), false);
+  assert.equal(location.includes('startForeground('), false);
+  assert.equal(watch.includes('startForeground('), false);
+  assert.equal(location.includes('IMPORTANCE_MIN'), false);
+  assert.equal(watch.includes('IMPORTANCE_MIN'), false);
+  assert.equal(location.includes('\\u2060'), false);
+  assert.equal(watch.includes('\\u2060'), false);
+  assert.match(location, /requestLocationUpdates/);
+  assert.match(watch, /setExactAndAllowWhileIdle/);
+  assert.match(watch, /IMPORTANCE_HIGH/);
+  assert.match(watch, /SOS/);
+  assert.match(cleanup, /deleteNotificationChannel\(LOCATION_CHANNEL\)/);
+  assert.match(cleanup, /deleteNotificationChannel\(QUIET_CHANNEL\)/);
+  assert.match(cleanup, /deleteNotificationChannel\(WATCH_CHANNEL\)/);
+  assert.match(cleanup, /umap_location_quiet/);
+  assert.match(cleanup, /umap_alert_watch/);
+  assert.match(cleanup, /"umap_location"/);
+  assert.equal(manifest.includes('foregroundServiceType'), false);
+  assert.match(manifest, /LocationKeepReceiver/);
+  assert.match(manifest, /AlertWatchReceiver/);
+  assert.match(manifest, /USE_EXACT_ALARM/);
 });
 
 test('browser permission buttons stay inside the browser prompt', () => {

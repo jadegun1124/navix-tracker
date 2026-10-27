@@ -19,9 +19,9 @@
 // older than FIX_STALE_MS is rejected so a stale point is not published as
 // now. Stored trails and visits stay for HISTORY_DAYS Seoul calendar days
 // (today through that many days ago) and older points are trimmed.
-// Background publishing is a foreground service started only after the user
-// turns on the in-app keep-alive control. The app never changes the OS
-// permission itself.
+// Background publishing is a LocationManager registration started only after
+// the user turns on the in-app keep-alive control. It does not post an
+// ongoing notification. The app never changes the OS permission itself.
 
 export const STOP_RADIUS_M = 50;
 export const STOP_MIN_MS = 3 * 60 * 1000;

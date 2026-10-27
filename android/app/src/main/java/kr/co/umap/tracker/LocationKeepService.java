@@ -1,26 +1,17 @@
 package kr.co.umap.tracker;
 
 import android.annotation.SuppressLint;
-import android.app.Notification;
-import android.app.NotificationChannel;
-import android.app.NotificationManager;
-import android.app.PendingIntent;
-import android.app.Service;
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
-import android.content.pm.ServiceInfo;
 import android.location.Location;
-import android.location.LocationListener;
 import android.location.LocationManager;
 import android.net.Uri;
 import android.os.BatteryManager;
 import android.os.Build;
-import android.os.Bundle;
-import android.os.IBinder;
-import android.os.Looper;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
@@ -33,44 +24,56 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 /**
- * Foreground location publisher. Started only after the user turns on the
- * in-app keep-alive control. This class does not call requestPermissions and
- * does not change the OS "always allow" setting.
+ * Background location publisher. Started only after the user turns on the
+ * in-app keep-alive control. Registers LocationManager updates with a
+ * PendingIntent so the process does not need a foreground service.
+ *
+ * Android 12 and later always show a foreground-service notification, even
+ * when the channel importance is minimum and the title is empty. That is the
+ * blank Umap row 1.6.0 left in the shade. This class does not post one and
+ * does not create a location channel.
+ *
+ * Updates keep the requested interval while the app is in the foreground or
+ * on the battery-optimization allowlist (배터리 제한 없음) with 항상 허용.
+ * Without that allowlist, Android 8+ may throttle a background app to a few
+ * fixes an hour. The system location-in-use glyph is not an app notification.
  *
  * Thresholds match src/lib/tracking.mjs: drop fixes older than 30s, precise
  * accuracy above 80m, later fixes worse than 40m, jumps faster than 350 m/s.
  * A still fix inside the stay radius is reported at the last stable pin so the
  * trail does not grow a multipath spike.
  */
-public class LocationKeepService extends Service {
-    public static final String ACTION_STOP = "kr.co.umap.tracker.STOP_KEEPALIVE";
+public class LocationKeepService {
+    public static final String ACTION_FIX = "kr.co.umap.tracker.LOCATION_FIX";
     private static final String PREFS = "umap_location_keep";
-    private static final String CHANNEL_ID = "umap_location_quiet";
-    private static final String LEGACY_CHANNEL_ID = "umap_location";
-    private static final int NOTIFICATION_ID = 4108;
+    private static final int REQUEST_CODE = OngoingNotificationCleanup.LOCATION_NOTIFICATION_ID;
+    private static final ExecutorService IO = Executors.newSingleThreadExecutor();
 
     public interface Sink {
         void onFix(JSONObject fix);
     }
 
+    private static volatile Context appContext;
     private static volatile Sink sink;
-    private static volatile boolean running;
     private static volatile String lastError;
+    private static final Object LOCK = new Object();
+    private static volatile boolean filterLoaded;
+    private static Location stableFix;
+    private static Location lastPublished;
+    private static long lastPublishedAt;
 
-    private ExecutorService io;
-    private LocationManager locationManager;
-    private LocationListener listener;
-    private JSONObject config;
-    private Location lastPublished;
-    private long lastPublishedAt;
-    private Location stableFix;
+    public static void attach(Context context) {
+        appContext = context.getApplicationContext();
+    }
 
     public static void setSink(Sink next) {
         sink = next;
     }
 
     public static boolean isRunning() {
-        return running;
+        Context context = appContext;
+        if (context == null) return false;
+        return prefs(context).getBoolean("registered", false);
     }
 
     public static String lastError() {
@@ -78,29 +81,49 @@ public class LocationKeepService extends Service {
     }
 
     public static boolean start(Context context, String configJson) {
+        attach(context);
+        OngoingNotificationCleanup.clear(context);
         if (!writeConfig(context, configJson)) {
             lastError = "config";
             return false;
         }
-        lastError = null;
-        Intent intent = new Intent(context, LocationKeepService.class);
-        try {
-            if (Build.VERSION.SDK_INT >= 26) context.startForegroundService(intent);
-            else context.startService(intent);
-            return true;
-        } catch (Exception error) {
-            lastError = "start";
+        if (!hasLocationPermission(context)) {
+            lastError = "permission";
+            disarm(context);
             return false;
         }
+        JSONObject config = readConfig(context);
+        if (config == null || !allowedBase(config.optString("baseUrl", ""))) {
+            lastError = "config";
+            disarm(context);
+            return false;
+        }
+        lastError = null;
+        prefs(context).edit().putBoolean("registered", true).commit();
+        synchronized (LOCK) {
+            if (anySharing(config)) registerUpdates(context, config);
+            else removeUpdates(context);
+        }
+        if (!anySharing(config)) IO.execute(() -> publish(context, null));
+        return true;
     }
 
     public static void stop(Context context) {
-        prefs(context).edit().remove("config").apply();
-        context.stopService(new Intent(context, LocationKeepService.class));
+        attach(context);
+        prefs(context).edit().remove("config").putBoolean("registered", false).commit();
+        synchronized (LOCK) {
+            clearFilter(context);
+            removeUpdates(context);
+        }
+        OngoingNotificationCleanup.clear(context);
     }
 
     public static void markUserStopped(Context context) {
-        prefs(context).edit().remove("config").putBoolean("userStopped", true).apply();
+        prefs(context).edit().remove("config").putBoolean("registered", false).putBoolean("userStopped", true).commit();
+        synchronized (LOCK) {
+            clearFilter(context);
+            removeUpdates(context);
+        }
     }
 
     public static void ackUserStopped(Context context) {
@@ -111,8 +134,44 @@ public class LocationKeepService extends Service {
         return prefs(context).getBoolean("userStopped", false);
     }
 
+    @SuppressWarnings("deprecation")
+    public static Location locationFrom(Intent intent) {
+        if (intent == null) return null;
+        if (Build.VERSION.SDK_INT >= 33) {
+            return intent.getParcelableExtra(LocationManager.KEY_LOCATION_CHANGED, Location.class);
+        }
+        return intent.getParcelableExtra(LocationManager.KEY_LOCATION_CHANGED);
+    }
+
+    public static void onFix(Context context, Location location, BroadcastReceiver.PendingResult pending) {
+        attach(context);
+        IO.execute(() -> {
+        try {
+            if (!prefs(context).getBoolean("registered", false) || location == null) return;
+            if (!hasLocationPermission(context)) {
+                disarm(context);
+                return;
+            }
+            Location publishFix;
+            synchronized (LOCK) {
+                publishFix = handleFix(context, location);
+            }
+            if (publishFix != null) publish(context, publishFix);
+        } finally {
+                if (pending != null) pending.finish();
+            }
+        });
+    }
+
+    private static void disarm(Context context) {
+        prefs(context).edit().putBoolean("registered", false).commit();
+        synchronized (LOCK) {
+            removeUpdates(context);
+        }
+    }
+
     private static SharedPreferences prefs(Context context) {
-        return context.getSharedPreferences(PREFS, MODE_PRIVATE);
+        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
     }
 
     private static boolean writeConfig(Context context, String configJson) {
@@ -124,6 +183,16 @@ public class LocationKeepService extends Service {
             return true;
         } catch (Exception error) {
             return false;
+        }
+    }
+
+    private static JSONObject readConfig(Context context) {
+        String raw = prefs(context).getString("config", "");
+        if (raw == null || raw.isEmpty()) return null;
+        try {
+            return new JSONObject(raw);
+        } catch (Exception error) {
+            return null;
         }
     }
 
@@ -140,143 +209,64 @@ public class LocationKeepService extends Service {
         }
     }
 
-    @Override
-    public void onCreate() {
-        super.onCreate();
-        io = Executors.newSingleThreadExecutor();
-        locationManager = (LocationManager) getSystemService(LOCATION_SERVICE);
-        listener = new LocationListener() {
-            @Override
-            public void onLocationChanged(Location location) {
-                handleFix(location);
+    private static android.app.PendingIntent locationIntent(Context context) {
+        Intent intent = new Intent(context, LocationKeepReceiver.class);
+        intent.setAction(ACTION_FIX);
+        int flags = android.app.PendingIntent.FLAG_UPDATE_CURRENT;
+        if (Build.VERSION.SDK_INT >= 31) flags |= android.app.PendingIntent.FLAG_MUTABLE;
+        return android.app.PendingIntent.getBroadcast(context, REQUEST_CODE, intent, flags);
+    }
+
+    @SuppressLint("MissingPermission")
+    private static void registerUpdates(Context context, JSONObject config) {
+        LocationManager locationManager = (LocationManager) context.getSystemService(Context.LOCATION_SERVICE);
+        if (locationManager == null) return;
+        android.app.PendingIntent pending = locationIntent(context);
+        try {
+            locationManager.removeUpdates(pending);
+        } catch (Exception ignored) {
+            /* 이미 해제된 감시 */
+        }
+        boolean precise = config.optBoolean("precise", true);
+        try {
+            if (precise && locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+                locationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 5_000L, 0f, pending);
             }
-
-            @Override
-            public void onStatusChanged(String provider, int status, Bundle extras) {}
-
-            @Override
-            public void onProviderEnabled(String provider) {}
-
-            @Override
-            public void onProviderDisabled(String provider) {}
-        };
-    }
-
-    @Override
-    public int onStartCommand(Intent intent, int flags, int startId) {
-        if (intent != null && ACTION_STOP.equals(intent.getAction())) {
-            markUserStopped(this);
-            shutdown();
-            return START_NOT_STICKY;
-        }
-        if (Build.VERSION.SDK_INT >= 33
-            && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-            lastError = "notifications";
-            stopSelf();
-            return START_NOT_STICKY;
+        } catch (Exception ignored) {
+            /* GPS 하드웨어가 없거나 권한이 없는 경우 */
         }
         try {
-            becomeForeground();
-        } catch (Exception error) {
-            lastError = "notifications";
-            stopSelf();
-            return START_NOT_STICKY;
+            if (locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
+                locationManager.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, precise ? 15_000L : 20_000L, 0f, pending);
+            }
+        } catch (Exception ignored) {
+            /* 네트워크 위치가 없는 기기 */
         }
-        String raw = prefs(this).getString("config", "");
-        if (raw == null || raw.isEmpty() || !hasLocationPermission()) {
-            lastError = hasLocationPermission() ? "config" : "permission";
-            shutdown();
-            return START_NOT_STICKY;
-        }
+    }
+
+    private static void removeUpdates(Context context) {
+        LocationManager locationManager = (LocationManager) context.getSystemService(Context.LOCATION_SERVICE);
+        if (locationManager == null) return;
         try {
-            config = new JSONObject(raw);
-        } catch (Exception error) {
-            lastError = "config";
-            shutdown();
-            return START_NOT_STICKY;
+            locationManager.removeUpdates(locationIntent(context));
+        } catch (Exception ignored) {
+            /* 이미 해제된 감시 */
         }
-        if (!allowedBase(config.optString("baseUrl", ""))) {
-            lastError = "config";
-            shutdown();
-            return START_NOT_STICKY;
-        }
-        lastError = null;
-        running = true;
-        removeUpdates();
-        if (anySharing()) requestUpdates();
-        else io.execute(() -> publish(null));
-        return START_STICKY;
     }
 
-    @Override
-    public void onDestroy() {
-        running = false;
-        removeUpdates();
-        if (io != null) io.shutdownNow();
-        super.onDestroy();
+    private static boolean hasLocationPermission(Context context) {
+        return context.checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+            || context.checkSelfPermission(android.Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED;
     }
 
-    @Override
-    public IBinder onBind(Intent intent) {
-        return null;
-    }
-
-    private void shutdown() {
-        running = false;
-        removeUpdates();
-        stopForeground(STOP_FOREGROUND_REMOVE);
-        stopSelf();
-    }
-
-    private void becomeForeground() {
-        NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
-        if (Build.VERSION.SDK_INT >= 26) {
-            // The previous channel was IMPORTANCE_LOW and already created on devices.
-            // Android will not lower that importance, so delete it and use a new min channel.
-            manager.deleteNotificationChannel(LEGACY_CHANNEL_ID);
-            NotificationChannel channel = new NotificationChannel(CHANNEL_ID, "Umap", NotificationManager.IMPORTANCE_MIN);
-            channel.setDescription("");
-            channel.setSound(null, null);
-            channel.enableVibration(false);
-            channel.enableLights(false);
-            channel.setShowBadge(false);
-            channel.setLockscreenVisibility(Notification.VISIBILITY_SECRET);
-            manager.createNotificationChannel(channel);
-        }
-        Intent open = new Intent(this, MainActivity.class);
-        PendingIntent content = PendingIntent.getActivity(this, 1, open, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-        Notification.Builder builder = Build.VERSION.SDK_INT >= 26 ? new Notification.Builder(this, CHANNEL_ID) : new Notification.Builder(this);
-        // Location foreground services still need a notification object. It carries no share text,
-        // makes no sound, and uses the minimum importance so the shade does not list "위치 공유".
-        builder.setSmallIcon(android.R.drawable.ic_menu_mylocation)
-            .setContentTitle("\u2060")
-            .setContentText("\u2060")
-            .setContentIntent(content)
-            .setOngoing(true)
-            .setOnlyAlertOnce(true)
-            .setShowWhen(false)
-            .setVisibility(Notification.VISIBILITY_SECRET)
-            .setCategory(Notification.CATEGORY_SERVICE)
-            .setPriority(Notification.PRIORITY_MIN);
-        Notification notification = builder.build();
-        notification.flags |= Notification.FLAG_NO_CLEAR;
-        if (Build.VERSION.SDK_INT >= 29) startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION);
-        else startForeground(NOTIFICATION_ID, notification);
-    }
-
-    private boolean hasLocationPermission() {
-        return checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
-            || checkSelfPermission(android.Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED;
-    }
-
-    private boolean anySharing() {
-        for (JSONObject target : targets()) {
+    private static boolean anySharing(JSONObject config) {
+        for (JSONObject target : targets(config)) {
             if (target.optBoolean("sharing", false)) return true;
         }
         return false;
     }
 
-    private List<JSONObject> targets() {
+    private static List<JSONObject> targets(JSONObject config) {
         List<JSONObject> list = new ArrayList<>();
         if (config == null) return list;
         JSONArray raw = config.optJSONArray("targets");
@@ -293,51 +283,84 @@ public class LocationKeepService extends Service {
         return list;
     }
 
-    @SuppressLint("MissingPermission")
-    private void requestUpdates() {
-        if (locationManager == null) return;
-        boolean precise = config.optBoolean("precise", true);
+    private static void ensureFilter(Context context) {
+        if (filterLoaded) return;
+        filterLoaded = true;
+        SharedPreferences stored = prefs(context);
+        stableFix = readStoredFix(stored, "stable");
+        lastPublished = readStoredFix(stored, "last");
+        lastPublishedAt = stored.getLong("lastAt", 0L);
+    }
+
+    private static void rememberFilter(Context context) {
+        SharedPreferences.Editor editor = prefs(context).edit();
+        writeStoredFix(editor, "stable", stableFix);
+        writeStoredFix(editor, "last", lastPublished);
+        editor.putLong("lastAt", lastPublishedAt);
+        editor.apply();
+    }
+
+    private static void clearFilter(Context context) {
+        stableFix = null;
+        lastPublished = null;
+        lastPublishedAt = 0L;
+        filterLoaded = true;
+        prefs(context).edit().remove("stable").remove("last").remove("lastAt").apply();
+    }
+
+    private static Location readStoredFix(SharedPreferences stored, String key) {
+        String raw = stored.getString(key, "");
+        if (raw == null || raw.isEmpty()) return null;
         try {
-            if (precise && locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
-                locationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 5_000L, 0f, listener, Looper.getMainLooper());
-            }
-        } catch (Exception ignored) {
-            /* GPS 하드웨어가 없거나 권한이 없는 경우 */
-        }
-        try {
-            if (locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
-                locationManager.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, precise ? 15_000L : 20_000L, 0f, listener, Looper.getMainLooper());
-            }
-        } catch (Exception ignored) {
-            /* 네트워크 위치가 없는 기기 */
+            JSONObject json = new JSONObject(raw);
+            Location location = new Location(json.optString("provider", LocationManager.GPS_PROVIDER));
+            location.setLatitude(json.getDouble("lat"));
+            location.setLongitude(json.getDouble("lng"));
+            location.setTime(json.optLong("time", 0L));
+            location.setAccuracy((float) json.optDouble("acc", 0d));
+            if (json.has("speed") && !json.isNull("speed")) location.setSpeed((float) json.getDouble("speed"));
+            return location;
+        } catch (Exception error) {
+            return null;
         }
     }
 
-    private void removeUpdates() {
-        if (locationManager != null && listener != null) {
-            try {
-                locationManager.removeUpdates(listener);
-            } catch (Exception ignored) {
-                /* 이미 해제된 감시 */
-            }
+    private static void writeStoredFix(SharedPreferences.Editor editor, String key, Location location) {
+        if (location == null) {
+            editor.remove(key);
+            return;
+        }
+        try {
+            JSONObject json = new JSONObject();
+            json.put("provider", location.getProvider() == null ? LocationManager.GPS_PROVIDER : location.getProvider());
+            json.put("lat", location.getLatitude());
+            json.put("lng", location.getLongitude());
+            json.put("time", location.getTime());
+            json.put("acc", location.getAccuracy());
+            if (location.hasSpeed()) json.put("speed", location.getSpeed());
+            editor.putString(key, json.toString());
+        } catch (Exception error) {
+            editor.remove(key);
         }
     }
 
-    private void handleFix(Location location) {
-        if (!running || location == null || config == null) return;
+    private static Location handleFix(Context context, Location location) {
+        ensureFilter(context);
+        JSONObject config = readConfig(context);
+        if (config == null) return null;
         long now = System.currentTimeMillis();
         long fixAt = location.getTime() > 0 ? location.getTime() : now;
-        if (now - fixAt > 30_000 || fixAt > now + 10_000) return;
+        if (now - fixAt > 30_000 || fixAt > now + 10_000) return null;
         boolean precise = config.optBoolean("precise", true);
         float accuracy = location.getAccuracy();
-        if (precise && accuracy > 80f) return;
-        if (precise && accuracy > 40f && stableFix != null) return;
-        if (!precise && accuracy > 400f) return;
+        if (precise && accuracy > 80f) return null;
+        if (precise && accuracy > 40f && stableFix != null) return null;
+        if (!precise && accuracy > 400f) return null;
         if (stableFix != null) {
             long dt = fixAt - stableFix.getTime();
             if (dt > 0 && dt <= 180_000) {
                 float speed = stableFix.distanceTo(location) / (dt / 1000f);
-                if (speed > 350f) return;
+                if (speed > 350f) return null;
             }
         }
         Location reported = location;
@@ -355,16 +378,22 @@ public class LocationKeepService extends Service {
         if (lastPublishedAt > 0) {
             long since = now - lastPublishedAt;
             float moved = lastPublished == null ? 9999f : lastPublished.distanceTo(reported);
-            if (since < 5_000) return;
-            if (since < 15_000 && moved < 30f) return;
+            if (since < 5_000) {
+                rememberFilter(context);
+                return null;
+            }
+            if (since < 15_000 && moved < 30f) {
+                rememberFilter(context);
+                return null;
+            }
         }
         lastPublished = new Location(reported);
         lastPublishedAt = now;
-        Location publishFix = reported;
-        io.execute(() -> publish(publishFix));
+        rememberFilter(context);
+        return new Location(reported);
     }
 
-    private boolean isStayJitter(Location anchor, Location next, float accuracy) {
+    private static boolean isStayJitter(Location anchor, Location next, float accuracy) {
         float moved = anchor.distanceTo(next);
         float gate = Math.max(50f, accuracy * 2f);
         if (moved <= gate) return true;
@@ -374,7 +403,7 @@ public class LocationKeepService extends Service {
         return false;
     }
 
-    private void emit(Location location, long fixAt) {
+    private static void emit(Location location, long fixAt) {
         Sink current = sink;
         if (current == null) return;
         try {
@@ -391,18 +420,19 @@ public class LocationKeepService extends Service {
         }
     }
 
-    private void publish(Location location) {
-        JSONObject current = config;
+    private static void publish(Context context, Location location) {
+        JSONObject current = readConfig(context);
         if (current == null) return;
         String base = current.optString("baseUrl", "").replaceAll("/+$", "");
         String name = current.optString("name", "가족").trim();
         if (name.isEmpty()) name = "가족";
         if (name.length() > 80) name = name.substring(0, 80);
         long at = System.currentTimeMillis();
-        int battery = batteryPct();
-        boolean charging = chargingNow();
-        if (!running) return;
-        for (JSONObject target : targets()) {
+        int battery = batteryPct(context);
+        boolean charging = chargingNow(context);
+        if (!prefs(context).getBoolean("registered", false)) return;
+        boolean changed = false;
+        for (JSONObject target : targets(current)) {
             boolean sharing = target.optBoolean("sharing", false);
             if (sharing && location == null) continue;
             if (!sharing && target.optBoolean("revokeSent", false)) continue;
@@ -424,16 +454,17 @@ public class LocationKeepService extends Service {
                     body.put("charging", charging);
                 }
                 if (put(base, target.optString("token"), body)) {
-                    if (!sharing) target.put("revokeSent", true);
-                    else target.put("revokeSent", false);
+                    target.put("revokeSent", !sharing);
+                    changed = true;
                 }
             } catch (Exception ignored) {
                 /* 다음 위치에서 다시 보낸다 */
             }
         }
+        if (changed) prefs(context).edit().putString("config", current.toString()).apply();
     }
 
-    private boolean put(String base, String token, JSONObject body) {
+    private static boolean put(String base, String token, JSONObject body) {
         HttpURLConnection connection = null;
         try {
             URL url = new URL(base + "/v1/rooms/" + body.getString("code") + "/place");
@@ -459,8 +490,8 @@ public class LocationKeepService extends Service {
         }
     }
 
-    private int batteryPct() {
-        Intent sticky = registerReceiver(null, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
+    private static int batteryPct(Context context) {
+        Intent sticky = stickyBattery(context);
         if (sticky == null) return -1;
         int level = sticky.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
         int scale = sticky.getIntExtra(BatteryManager.EXTRA_SCALE, -1);
@@ -468,10 +499,18 @@ public class LocationKeepService extends Service {
         return Math.round(level * 100f / scale);
     }
 
-    private boolean chargingNow() {
-        Intent sticky = registerReceiver(null, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
+    private static boolean chargingNow(Context context) {
+        Intent sticky = stickyBattery(context);
         if (sticky == null) return false;
         int status = sticky.getIntExtra(BatteryManager.EXTRA_STATUS, -1);
         return status == BatteryManager.BATTERY_STATUS_CHARGING || status == BatteryManager.BATTERY_STATUS_FULL;
+    }
+
+    private static Intent stickyBattery(Context context) {
+        try {
+            return context.registerReceiver(null, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
+        } catch (Exception error) {
+            return null;
+        }
     }
 }
