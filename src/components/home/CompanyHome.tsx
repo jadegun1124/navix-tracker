@@ -3,8 +3,8 @@ import React, { useState } from 'react';
 const iconSrc = `${import.meta.env.BASE_URL}umap-icon.png`;
 
 export const COMPANY_HOME_URL = 'https://jadegun1124.github.io/umap/';
-export const ANDROID_RELEASES_URL = 'https://github.com/jadegun1124/umap/releases/tag/v1.3.0';
-export const ANDROID_APK_URL = 'https://github.com/jadegun1124/umap/releases/download/v1.3.0/umap-v1.3.0-tracker.apk';
+export const ANDROID_RELEASES_URL = 'https://github.com/jadegun1124/umap/releases/tag/v1.4.0';
+export const ANDROID_APK_URL = 'https://github.com/jadegun1124/umap/releases/download/v1.4.0/umap-v1.4.0-tracker.apk';
 
 export function CompanyHome() {
   const [sent, setSent] = useState(false);

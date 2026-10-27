@@ -8,7 +8,10 @@ import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.BatteryManager;
 import android.os.Build;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.PowerManager;
+import android.os.SystemClock;
 import android.provider.Settings;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
@@ -45,8 +48,17 @@ import org.json.JSONObject;
     }
 )
 public class UmapLocationPlugin extends Plugin {
+    private static final long BOUNCE_MS = 450L;
+    private static final String MANAGE_APP_PERMISSION = "android.intent.action.MANAGE_APP_PERMISSION";
+    private static final String MANAGE_APP_PERMISSIONS = "android.intent.action.MANAGE_APP_PERMISSIONS";
+    private static final String LOCATION_GROUP = "android.permission-group.LOCATION";
+
     private PluginCall pendingAlways;
     private boolean leftForSettings;
+    private String openedScreen = "none";
+    private long openedAt;
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private Runnable bounceFallback;
 
     @Override
     public void load() {
@@ -135,8 +147,9 @@ public class UmapLocationPlugin extends Plugin {
         call.setKeepAlive(true);
         pendingAlways = call;
         leftForSettings = false;
+        openedScreen = "none";
         activity.runOnUiThread(() -> {
-            if (openLocationPermissionPage()) return;
+            if (openAlwaysSettings()) return;
             pendingAlways = null;
             leftForSettings = false;
             resolveAlways(call, false);
@@ -146,13 +159,22 @@ public class UmapLocationPlugin extends Plugin {
     @Override
     protected void handleOnPause() {
         super.handleOnPause();
-        if (pendingAlways != null) leftForSettings = true;
+        if (pendingAlways != null) {
+            leftForSettings = true;
+            clearBounce();
+        }
     }
 
     @Override
     protected void handleOnResume() {
         super.handleOnResume();
         if (pendingAlways != null && leftForSettings) {
+            long elapsed = SystemClock.uptimeMillis() - openedAt;
+            if (elapsed < BOUNCE_MS && !"app-details".equals(openedScreen)) {
+                leftForSettings = false;
+                advanceFallback();
+                return;
+            }
             PluginCall call = pendingAlways;
             pendingAlways = null;
             leftForSettings = false;
@@ -249,6 +271,8 @@ public class UmapLocationPlugin extends Plugin {
         result.put("location", location);
         result.put("opened", opened);
         result.put("native", true);
+        result.put("screen", opened ? openedScreen : "none");
+        openedScreen = "none";
         call.resolve(result);
     }
 
@@ -270,14 +294,6 @@ public class UmapLocationPlugin extends Plugin {
         return granted(android.Manifest.permission.ACCESS_BACKGROUND_LOCATION);
     }
 
-    private Intent locationGroupIntent(String pkg) {
-        Intent intent = new Intent("android.intent.action.MANAGE_APP_PERMISSION");
-        intent.addCategory(Intent.CATEGORY_DEFAULT);
-        intent.putExtra(Intent.EXTRA_PACKAGE_NAME, pkg);
-        intent.putExtra("android.intent.extra.PERMISSION_GROUP_NAME", "android.permission-group.LOCATION");
-        return intent;
-    }
-
     private boolean canStart(Intent intent) {
         try {
             return intent.resolveActivity(getContext().getPackageManager()) != null;
@@ -286,8 +302,104 @@ public class UmapLocationPlugin extends Plugin {
         }
     }
 
-    /** Opens the location permission radio list for this package. Does not open app info. */
-    private boolean openLocationPermissionPage() {
+    /** Radio (위치 액세스 권한), then 앱 권한, then app info. Never stops on an in-app message alone. */
+    private boolean openAlwaysSettings() {
+        if (openLocationRadio()) {
+            noteOpened("location-radio");
+            return true;
+        }
+        if (openAppPermissions()) {
+            noteOpened("app-permissions");
+            return true;
+        }
+        if (openAppDetails()) {
+            noteOpened("app-details");
+            return true;
+        }
+        return false;
+    }
+
+    private void noteOpened(String screen) {
+        openedScreen = screen;
+        openedAt = SystemClock.uptimeMillis();
+        leftForSettings = false;
+        armBounce();
+    }
+
+    private void armBounce() {
+        clearBounce();
+        if ("app-details".equals(openedScreen)) return;
+        bounceFallback = () -> {
+            if (pendingAlways == null || leftForSettings) return;
+            advanceFallback();
+        };
+        mainHandler.postDelayed(bounceFallback, 700L);
+    }
+
+    private void clearBounce() {
+        if (bounceFallback != null) {
+            mainHandler.removeCallbacks(bounceFallback);
+            bounceFallback = null;
+        }
+    }
+
+    private void advanceFallback() {
+        clearBounce();
+        if ("location-radio".equals(openedScreen) && openAppPermissions()) {
+            noteOpened("app-permissions");
+            return;
+        }
+        if (!"app-details".equals(openedScreen) && openAppDetails()) {
+            noteOpened("app-details");
+            return;
+        }
+        PluginCall call = pendingAlways;
+        pendingAlways = null;
+        leftForSettings = false;
+        if (call != null) resolveAlways(call, false);
+    }
+
+    private Intent locationRadioIntent(String pkg) {
+        Intent intent = new Intent(MANAGE_APP_PERMISSION);
+        intent.addCategory(Intent.CATEGORY_DEFAULT);
+        intent.putExtra(Intent.EXTRA_PACKAGE_NAME, pkg);
+        intent.putExtra("android.intent.extra.PERMISSION_GROUP_NAME", LOCATION_GROUP);
+        return intent;
+    }
+
+    private Intent appPermissionsIntent(String pkg) {
+        Intent intent = new Intent(MANAGE_APP_PERMISSIONS);
+        intent.addCategory(Intent.CATEGORY_DEFAULT);
+        intent.putExtra(Intent.EXTRA_PACKAGE_NAME, pkg);
+        return intent;
+    }
+
+    private boolean openLocationRadio() {
+        String pkg = getContext().getPackageName();
+        String[][] targets = new String[][] {
+            {"com.samsung.android.permissioncontroller", "com.android.permissioncontroller.permission.ui.AppPermissionActivity"},
+            {"com.samsung.android.permissioncontroller", "com.samsung.android.permissioncontroller.permission.ui.AppPermissionActivity"},
+            {"com.google.android.permissioncontroller", "com.android.permissioncontroller.permission.ui.AppPermissionActivity"},
+            {"com.android.permissioncontroller", "com.android.permissioncontroller.permission.ui.AppPermissionActivity"},
+            {"com.google.android.permissioncontroller", "com.android.permissioncontroller.permission.ui.ManageAppPermissionActivity"},
+            {"com.android.permissioncontroller", "com.android.permissioncontroller.permission.ui.ManageAppPermissionActivity"}
+        };
+        if (startExplicit(locationRadioIntent(pkg), targets)) return true;
+        String[] controllers = new String[] {
+            "com.samsung.android.permissioncontroller",
+            "com.google.android.permissioncontroller",
+            "com.android.permissioncontroller"
+        };
+        for (String controller : controllers) {
+            Intent intent = locationRadioIntent(pkg);
+            intent.setPackage(controller);
+            if (canStart(intent) && startExternal(intent)) return true;
+        }
+        Intent implicit = locationRadioIntent(pkg);
+        return canStart(implicit) && startExternal(implicit);
+    }
+
+    private boolean openAppPermissions() {
         String pkg = getContext().getPackageName();
         String[][] targets = new String[][] {
             {"com.samsung.android.permissioncontroller", "com.android.permissioncontroller.permission.ui.ManagePermissionsActivity"},
@@ -295,30 +407,36 @@ public class UmapLocationPlugin extends Plugin {
             {"com.google.android.permissioncontroller", "com.android.permissioncontroller.permission.ui.ManagePermissionsActivity"},
             {"com.android.permissioncontroller", "com.android.permissioncontroller.permission.ui.ManagePermissionsActivity"}
         };
-        for (String[] target : targets) {
-            Intent intent = locationGroupIntent(pkg);
-            intent.setClassName(target[0], target[1]);
-            if (canStart(intent) && startExternal(intent)) return true;
-        }
-        String[] packages = new String[] {
+        if (startExplicit(appPermissionsIntent(pkg), targets)) return true;
+        String[] controllers = new String[] {
             "com.samsung.android.permissioncontroller",
             "com.google.android.permissioncontroller",
             "com.android.permissioncontroller"
         };
-        for (String controller : packages) {
-            Intent intent = locationGroupIntent(pkg);
+        for (String controller : controllers) {
+            Intent intent = appPermissionsIntent(pkg);
             intent.setPackage(controller);
             if (canStart(intent) && startExternal(intent)) return true;
         }
-        Intent implicit = locationGroupIntent(pkg);
+        Intent implicit = appPermissionsIntent(pkg);
         return canStart(implicit) && startExternal(implicit);
     }
 
+    private boolean startExplicit(Intent template, String[][] targets) {
+        for (String[] target : targets) {
+            Intent intent = new Intent(template);
+            intent.setClassName(target[0], target[1]);
+            if (canStart(intent) && startExternal(intent)) return true;
+        }
+        return false;
+    }
+
     private boolean openPermissionPage(String permission) {
-        Intent direct = new Intent("android.intent.action.MANAGE_APP_PERMISSION");
+        Intent direct = new Intent(MANAGE_APP_PERMISSION);
         direct.putExtra(Intent.EXTRA_PACKAGE_NAME, getContext().getPackageName());
         direct.putExtra("android.intent.extra.PERMISSION_NAME", permission);
-        if (startExternal(direct)) return true;
+        if (canStart(direct) && startExternal(direct)) return true;
+        if (openAppPermissions()) return true;
         return openAppDetails();
     }
 

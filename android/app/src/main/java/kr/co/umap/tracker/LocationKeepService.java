@@ -38,7 +38,9 @@ import org.json.JSONObject;
  * does not change the OS "always allow" setting.
  *
  * Thresholds match src/lib/tracking.mjs: drop fixes older than 30s, precise
- * accuracy above 80m, jumps faster than 350 m/s.
+ * accuracy above 80m, later fixes worse than 40m, jumps faster than 350 m/s.
+ * A still fix inside the stay radius is reported at the last stable pin so the
+ * trail does not grow a multipath spike.
  */
 public class LocationKeepService extends Service {
     public static final String ACTION_STOP = "kr.co.umap.tracker.STOP_KEEPALIVE";
@@ -60,6 +62,7 @@ public class LocationKeepService extends Service {
     private JSONObject config;
     private Location lastPublished;
     private long lastPublishedAt;
+    private Location stableFix;
 
     public static void setSink(Sink next) {
         sink = next;
@@ -315,25 +318,48 @@ public class LocationKeepService extends Service {
         if (now - fixAt > 30_000 || fixAt > now + 10_000) return;
         boolean precise = config.optBoolean("precise", true);
         float accuracy = location.getAccuracy();
-        if (precise && accuracy > 80f && lastPublishedAt > 0 && now - lastPublishedAt < 180_000) return;
+        if (precise && accuracy > 80f) return;
+        if (precise && accuracy > 40f && stableFix != null) return;
         if (!precise && accuracy > 400f) return;
-        if (lastPublished != null) {
-            long dt = fixAt - lastPublished.getTime();
+        if (stableFix != null) {
+            long dt = fixAt - stableFix.getTime();
             if (dt > 0 && dt <= 180_000) {
-                float speed = lastPublished.distanceTo(location) / (dt / 1000f);
+                float speed = stableFix.distanceTo(location) / (dt / 1000f);
                 if (speed > 350f) return;
             }
         }
-        emit(location, fixAt);
+        Location reported = location;
+        if (stableFix != null && isStayJitter(stableFix, location, accuracy)) {
+            reported = new Location(stableFix);
+            reported.setTime(fixAt);
+            reported.setAccuracy(accuracy);
+            if (location.hasSpeed()) reported.setSpeed(location.getSpeed());
+        } else {
+            stableFix = new Location(location);
+            if (stableFix.getTime() <= 0) stableFix.setTime(fixAt);
+            reported = stableFix;
+        }
+        emit(reported, fixAt);
         if (lastPublishedAt > 0) {
             long since = now - lastPublishedAt;
-            float moved = lastPublished == null ? 9999f : lastPublished.distanceTo(location);
+            float moved = lastPublished == null ? 9999f : lastPublished.distanceTo(reported);
             if (since < 5_000) return;
             if (since < 15_000 && moved < 30f) return;
         }
-        lastPublished = new Location(location);
+        lastPublished = new Location(reported);
         lastPublishedAt = now;
-        io.execute(() -> publish(location));
+        Location publishFix = reported;
+        io.execute(() -> publish(publishFix));
+    }
+
+    private boolean isStayJitter(Location anchor, Location next, float accuracy) {
+        float moved = anchor.distanceTo(next);
+        float gate = Math.max(50f, accuracy * 2f);
+        if (moved <= gate) return true;
+        if (!next.hasSpeed() || next.getSpeed() < 0.8f) {
+            return moved < 80f;
+        }
+        return false;
     }
 
     private void emit(Location location, long fixAt) {

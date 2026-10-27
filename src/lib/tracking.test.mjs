@@ -14,7 +14,10 @@ import {
   seoulDayEndMs,
   seoulDayKey,
   shouldKeepTrailPoint,
+  settleTrailPoint,
   tracksWithinHistory,
+  trailDecision,
+  visibleTrail,
 } from './tracking.mjs';
 
 test('seoul day rolls at midnight KST, not UTC', () => {
@@ -52,11 +55,49 @@ test('history keeps today and 30 days ago, and drops the day before that', () =>
   assert.equal(seoulDayKey(seoulDayEndMs('2026-10-27')), '2026-10-27');
 });
 
-test('trail sampler keeps a dwell sample and a real move, drops jitter', () => {
-  const origin = { lat: 37.5, lng: 127, at: 1_000_000 };
-  assert.equal(shouldKeepTrailPoint(origin, { lat: 37.50002, lng: 127, at: origin.at + 5_000 }), false);
-  assert.equal(shouldKeepTrailPoint(origin, { lat: 37.50002, lng: 127, at: origin.at + 3 * 60 * 1000 }), true);
-  assert.equal(shouldKeepTrailPoint(origin, { lat: 37.502, lng: 127, at: origin.at + 12_000 }), true);
+function offset(point, northM, eastM, at) {
+  return {
+    ...point,
+    lat: point.lat + northM / 111_320,
+    lng: point.lng + eastM / (111_320 * Math.cos((point.lat * Math.PI) / 180)),
+    at,
+  };
+}
+
+test('trail sampler keeps a real move and does not draw a stay wiggle', () => {
+  const origin = { lat: 37.5, lng: 127, at: 1_000_000, accuracyM: 12 };
+  assert.equal(shouldKeepTrailPoint(origin, { lat: 37.50002, lng: 127, at: origin.at + 5_000, accuracyM: 12 }), false);
+  assert.equal(shouldKeepTrailPoint(origin, { lat: 37.50002, lng: 127, at: origin.at + 3 * 60 * 1000, accuracyM: 12 }), false);
+  assert.equal(shouldKeepTrailPoint(origin, { ...offset(origin, 220, 0, origin.at + 12_000), speedMps: 1.4, staying: false }), true);
+});
+
+test('a still fix with ±12m accuracy does not draw a multipath triangle', () => {
+  const t = 1_700_000_000_000;
+  const origin = { lat: 37.5, lng: 127, at: t, accuracyM: 12, speedMps: 0, staying: true };
+  const spike = offset(origin, 32, 28, t + 15_000);
+  const back = offset(origin, 6, -22, t + 30_000);
+  const drawn = visibleTrail([origin, spike, back, offset(origin, 70, 0, t + 45_000)]);
+  assert.equal(drawn.length, 1);
+  assert.equal(trailDecision(origin, offset(origin, 70, 0, t + 12_000)), 'snap');
+  assert.equal(drawn[0].lat, origin.lat);
+  assert.equal(drawn[0].lng, origin.lng);
+  const settled = settleTrailPoint([origin, spike], back, back.at);
+  assert.equal(settled.decision, 'snap');
+  assert.equal(settled.lat, origin.lat);
+  assert.equal(settled.lng, origin.lng);
+  assert.equal(visibleTrail(settled.points).length, 1);
+});
+
+test('a move inside the accuracy radius is not a new vertex, and a poor fix is dropped', () => {
+  const t = 1_700_000_000_000;
+  const origin = { lat: 37.5, lng: 127, at: t, accuracyM: 12, speedMps: 1.2, staying: false };
+  assert.equal(trailDecision(origin, { ...offset(origin, 15, 0, t + 10_000), speedMps: 1.2, staying: false }), 'snap');
+  assert.equal(trailDecision(origin, { ...offset(origin, 70, 0, t + 10_000), accuracyM: 55, speedMps: 1.4, staying: false }), 'drop');
+  const stayed = settleTrailPoint([origin], { ...origin, at: t + 4 * 60 * 1000 }, t + 4 * 60 * 1000);
+  assert.equal(visibleTrail(stayed.points).length, 1);
+  assert.equal(stayed.points.length, 2);
+  assert.equal(stayed.points[1].lat, origin.lat);
+  assert.equal(stayed.points[1].stayEnd, true);
 });
 
 test('stale cached fix is rejected and a fresh precise fix is kept', () => {
@@ -71,6 +112,9 @@ test('stale cached fix is rejected and a fresh precise fix is kept', () => {
   const coarse = acceptFix(null, { lat: 37.5, lng: 127, accuracy: 300, at: now }, { precise: true, now });
   assert.equal(coarse.ok, false);
   assert.equal(coarse.reason, 'accuracy');
+  const laterPoor = acceptFix({ lat: 37.5, lng: 127, at: now - 5_000 }, { lat: 37.5004, lng: 127, accuracy: 50, at: now }, { precise: true, now });
+  assert.equal(laterPoor.ok, false);
+  assert.equal(laterPoor.reason, 'accuracy');
 });
 
 test('a single teleport is rejected and a later real move is not', () => {

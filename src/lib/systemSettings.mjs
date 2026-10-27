@@ -22,9 +22,16 @@ export function batteryAction(native) {
   return native ? 'ignore-battery-optimizations' : 'explain-only';
 }
 
-// Android UmapLocationPlugin must open these. The location screen is the
-// permission-group radio list, not the app-info page. Battery is the system
-// popup, not the optimization list.
+// Android UmapLocationPlugin opens these in order. The location screen is the
+// permission-group radio (위치 액세스 권한). If that activity is missing or the
+// OEM closes it, the app permission list (앱 권한) opens, then app info.
+// Battery is the system popup, not the optimization list.
 export const LOCATION_PERMISSION_ACTION = 'android.intent.action.MANAGE_APP_PERMISSION';
 export const LOCATION_PERMISSION_GROUP = 'android.permission-group.LOCATION';
+export const LOCATION_PERMISSION_LIST_ACTION = 'android.intent.action.MANAGE_APP_PERMISSIONS';
+export const APP_DETAILS_ACTION = 'android.settings.APPLICATION_DETAILS_SETTINGS';
 export const BATTERY_POPUP_ACTION = 'android.settings.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS';
+
+export function alwaysAllowScreens() {
+  return ['location-radio', 'app-permissions', 'app-details'];
+}

@@ -5,4 +5,7 @@ export function motionAction(native: boolean, iosPrompt: boolean): 'activity-rec
 export function batteryAction(native: boolean): 'ignore-battery-optimizations' | 'explain-only';
 export const LOCATION_PERMISSION_ACTION: string;
 export const LOCATION_PERMISSION_GROUP: string;
+export const LOCATION_PERMISSION_LIST_ACTION: string;
+export const APP_DETAILS_ACTION: string;
 export const BATTERY_POPUP_ACTION: string;
+export function alwaysAllowScreens(): Array<'location-radio' | 'app-permissions' | 'app-details'>;

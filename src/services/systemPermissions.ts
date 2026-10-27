@@ -58,12 +58,19 @@ export async function askWhileUsing(precise: boolean): Promise<{ location: 'whil
 export async function askAlwaysLocation(precise: boolean): Promise<{ location: 'always' | 'while-using' | 'denied' | 'unavailable'; note: string | null }> {
   if (alwaysAllowAction(umapLocationNative()) === 'location-settings') {
     const result = await openAlwaysLocation();
+    const location = result.location === 'always' || result.location === 'denied' || result.location === 'while-using' ? result.location : 'unavailable';
     if (!result.opened) {
-      if (result.location === 'always') return { location: 'always', note: '위치 권한이 항상 허용입니다.' };
-      return { location: 'unavailable', note: '위치 권한 화면을 열지 못했습니다.' };
+      if (location === 'always') return { location: 'always', note: '위치 권한이 항상 허용입니다.' };
+      return { location: 'unavailable', note: '설정 화면을 열지 못했습니다. 설정 > 앱 > Umap > 권한에서 위치를 누른 뒤 항상 허용을 고르세요.' };
     }
-    if (result.location === 'always') return { location: 'always', note: '위치 권한이 항상 허용입니다.' };
-    if (result.location === 'denied') return { location: 'denied', note: '설정에서 위치 접근을 항상 허용으로 바꿀 수 있습니다. 앱이 그 스위치를 대신 바꾸지는 않습니다.' };
+    if (result.screen === 'app-permissions') {
+      return { location, note: '앱 권한 목록을 열었습니다. 위치를 누른 뒤 항상 허용을 직접 고르세요.' };
+    }
+    if (result.screen === 'app-details') {
+      return { location, note: '앱 정보를 열었습니다. 권한에서 위치를 누른 뒤 항상 허용을 직접 고르세요.' };
+    }
+    if (location === 'always') return { location: 'always', note: '위치 권한이 항상 허용입니다.' };
+    if (location === 'denied') return { location: 'denied', note: '설정에서 위치 접근을 항상 허용으로 바꿀 수 있습니다. 앱이 그 스위치를 대신 바꾸지는 않습니다.' };
     return { location: 'while-using', note: '설정에서 위치를 항상 허용으로 고른 뒤 앱으로 돌아오면 됩니다. 앱이 그 스위치를 대신 바꾸지는 않습니다.' };
   }
   const result = await browserLocation(precise);
