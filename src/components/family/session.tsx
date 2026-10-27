@@ -1,17 +1,31 @@
 import React, { createContext, useContext, useEffect, useReducer } from 'react';
-import { appendTrail, hasLocation } from '../../lib/geo';
+import {
+  classifySpeedMps,
+  mergeSegments,
+  mergeVisits,
+  placeUpdateKind,
+  pointsOnSeoulDay,
+  seoulDayKey,
+  stepActivity,
+  type ActivitySnapshot,
+  type PlaceVisit,
+  type TripSegment,
+} from '../../lib/activity';
+import { appendTrail, hasLocation, haversineMeters } from '../../lib/geo';
 import type { SharedPlace } from '../../services/familyShare';
 import { createKeyPart, isKeyPart, splitSyncToken } from '../../services/familySync';
 import {
   DEFAULT_CENTER,
   REQUIRED_TERMS,
   type AppMode,
+  type FamilyMessage,
   type FamilyNotice,
   type FamilyTab,
   type GuardianLink,
   type HomeZone,
   type LeaveAlert,
   type Member,
+  type MoveMode,
   type PermissionState,
   type Profile,
   type Session,
@@ -116,6 +130,13 @@ function fresh(stage: Stage = 'splash'): Session {
     syncWriteKey: createKeyPart(),
     syncReadKey: createKeyPart(),
     pendingSyncToken: null,
+    segments: [],
+    visits: [],
+    messages: [],
+    activity: null,
+    deviceId: createKeyPart().replace(/[^A-Za-z0-9]/g, '').slice(0, 12) || 'device',
+    trailDay: seoulDayKey(Date.now()),
+    chatReadAt: {},
   };
 }
 
@@ -171,6 +192,8 @@ function membersFor(profile: Profile): Member[] {
       lng: null,
       accuracyM: 0,
       battery: null,
+      moveMode: null,
+      speedMps: null,
       updatedAt: Date.now(),
       moving: null,
       share: 'allowed',
@@ -188,15 +211,162 @@ function isPoint(value: unknown): value is TrackPoint {
   return Number.isFinite(point.lat) && Number.isFinite(point.lng) && Number.isFinite(point.at);
 }
 
-function cleanTracks(value: unknown): Record<string, TrackPoint[]> {
+function cleanTracks(value: unknown, now = Date.now()): Record<string, TrackPoint[]> {
   if (!value || typeof value !== 'object') return {};
+  const day = seoulDayKey(now);
   const tracks: Record<string, TrackPoint[]> = {};
   for (const [id, points] of Object.entries(value as Record<string, unknown>)) {
     if (!Array.isArray(points)) continue;
-    const clean = points.filter(isPoint).slice(-300);
+    const clean = points.filter(isPoint).filter((point) => seoulDayKey(point.at) === day).slice(-300);
     if (clean.length > 0) tracks[id] = clean;
   }
   return tracks;
+}
+
+function finite(value: unknown, fallback = 0): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
+function asMoveMode(value: unknown): MoveMode | null {
+  if (value === 'walk' || value === 'bike' || value === 'car' || value === 'plane' || value === 'still') return value;
+  return null;
+}
+
+function withMove(member: Member): Member {
+  const battery = typeof member.battery === 'number' && member.battery >= 0 && member.battery <= 100 ? Math.round(member.battery) : null;
+  const speedMps = typeof member.speedMps === 'number' && Number.isFinite(member.speedMps) ? member.speedMps : null;
+  return { ...member, battery, moveMode: asMoveMode(member.moveMode), speedMps };
+}
+
+function cleanSegment(value: unknown): TripSegment | null {
+  if (!value || typeof value !== 'object') return null;
+  const item = value as TripSegment;
+  if (typeof item.id !== 'string' || (item.mode !== 'walk' && item.mode !== 'bike' && item.mode !== 'car' && item.mode !== 'plane')) return null;
+  if (!Number.isFinite(item.startAt) || !Number.isFinite(item.endAt) || !Number.isFinite(item.distanceM)) return null;
+  if (!Number.isFinite(item.startLat) || !Number.isFinite(item.startLng) || !Number.isFinite(item.endLat) || !Number.isFinite(item.endLng)) return null;
+  return {
+    id: item.id.slice(0, 80),
+    memberId: typeof item.memberId === 'string' ? item.memberId : 'self',
+    startAt: item.startAt,
+    endAt: item.endAt,
+    startLat: item.startLat,
+    startLng: item.startLng,
+    endLat: item.endLat,
+    endLng: item.endLng,
+    distanceM: item.distanceM,
+    mode: item.mode,
+    steps: typeof item.steps === 'number' ? item.steps : null,
+    stepsSource: item.stepsSource === 'device' || item.stepsSource === 'estimate' ? item.stepsSource : null,
+    topSpeedMps: finite(item.topSpeedMps),
+    path: Array.isArray(item.path) ? item.path.filter(isPoint).slice(-40) : [],
+  };
+}
+
+function cleanVisit(value: unknown): PlaceVisit | null {
+  if (!value || typeof value !== 'object') return null;
+  const item = value as PlaceVisit;
+  if (typeof item.id !== 'string' || typeof item.label !== 'string') return null;
+  if (!Number.isFinite(item.lat) || !Number.isFinite(item.lng) || !Number.isFinite(item.startedAt)) return null;
+  if (item.endedAt != null && !Number.isFinite(item.endedAt)) return null;
+  return {
+    id: item.id.slice(0, 80),
+    memberId: typeof item.memberId === 'string' ? item.memberId : 'self',
+    lat: item.lat,
+    lng: item.lng,
+    startedAt: item.startedAt,
+    endedAt: item.endedAt ?? null,
+    label: item.label.slice(0, 40),
+  };
+}
+
+function cleanMessage(value: unknown): FamilyMessage | null {
+  if (!value || typeof value !== 'object') return null;
+  const item = value as FamilyMessage;
+  if (typeof item.id !== 'string' || typeof item.body !== 'string' || !Number.isFinite(item.at)) return null;
+  const code = typeof item.code === 'string' ? item.code.replace(/\D/g, '').slice(0, 6) : '';
+  const body = item.body.trim().slice(0, 500);
+  if (code.length < 4 || !body) return null;
+  return {
+    id: item.id.slice(0, 80),
+    code,
+    from: (typeof item.from === 'string' && item.from.trim() ? item.from : '가족').slice(0, 80),
+    fromId: (typeof item.fromId === 'string' && item.fromId.trim() ? item.fromId : 'member').replace(/[^\w.:@-]/g, '').slice(0, 80) || 'member',
+    body,
+    at: item.at,
+  };
+}
+
+function cleanActivity(value: unknown): ActivitySnapshot | null {
+  if (!value || typeof value !== 'object') return null;
+  const item = value as ActivitySnapshot;
+  if (item.phase !== 'settling' && item.phase !== 'moving' && item.phase !== 'stopped') return null;
+  if (!Number.isFinite(item.dwellLat) || !Number.isFinite(item.dwellLng) || !Number.isFinite(item.dwellSince)) return null;
+  const meters = item.modeMeters ?? { walk: 0, bike: 0, car: 0, plane: 0 };
+  return {
+    phase: item.phase,
+    dwellLat: item.dwellLat,
+    dwellLng: item.dwellLng,
+    dwellSince: item.dwellSince,
+    lastLat: finite(item.lastLat, item.dwellLat),
+    lastLng: finite(item.lastLng, item.dwellLng),
+    lastAt: finite(item.lastAt, item.dwellSince),
+    departLat: finite(item.departLat, item.dwellLat),
+    departLng: finite(item.departLng, item.dwellLng),
+    departAt: finite(item.departAt, item.dwellSince),
+    distanceM: Math.max(0, finite(item.distanceM)),
+    modeMeters: {
+      walk: Math.max(0, finite(meters.walk)),
+      bike: Math.max(0, finite(meters.bike)),
+      car: Math.max(0, finite(meters.car)),
+      plane: Math.max(0, finite(meters.plane)),
+    },
+    topSpeedMps: Math.max(0, finite(item.topSpeedMps)),
+    path: Array.isArray(item.path) ? item.path.filter(isPoint).slice(-60) : [],
+    openVisit: cleanVisit(item.openVisit),
+    deviceStepsAtDepart: typeof item.deviceStepsAtDepart === 'number' ? item.deviceStepsAtDepart : null,
+  };
+}
+
+function listOf<T>(value: unknown, clean: (item: unknown) => T | null, max: number): T[] {
+  if (!Array.isArray(value)) return [];
+  const items: T[] = [];
+  for (const item of value) {
+    const next = clean(item);
+    if (next) items.push(next);
+  }
+  return items.slice(-max);
+}
+
+function withToday(state: Session, at: number): Session {
+  const day = seoulDayKey(at);
+  const minAt = at - 8 * 24 * 60 * 60 * 1000;
+  if (state.trailDay === day) return state;
+  const tracks: Record<string, TrackPoint[]> = {};
+  for (const [id, points] of Object.entries(state.tracks)) {
+    const kept = points.filter((point) => seoulDayKey(point.at) === day);
+    if (kept.length > 0) tracks[id] = kept;
+  }
+  return {
+    ...state,
+    trailDay: day,
+    tracks,
+    segments: state.segments.filter((segment) => segment.endAt >= minAt),
+    visits: state.visits.filter((visit) => (visit.endedAt ?? visit.startedAt) >= minAt),
+    messages: state.messages.filter((message) => message.at >= minAt),
+  };
+}
+
+function segmentFromPlace(memberId: string, segment: SharedPlace['segment']): TripSegment | null {
+  if (!segment) return null;
+  return cleanSegment({
+    ...segment,
+    memberId,
+    path: segment.path.map((point, index) => ({ ...point, at: index === 0 ? segment.startAt : segment.endAt })),
+  });
+}
+
+function visitsFromPlace(memberId: string, visits: SharedPlace['visits']): PlaceVisit[] {
+  return listOf(visits ?? [], (item) => cleanVisit(item && typeof item === 'object' ? { ...(item as object), memberId } : item), 8);
 }
 
 function asShare(value: unknown, self: boolean): ShareState {
@@ -242,8 +412,8 @@ function withoutDemo(session: Session): Session {
     .map((member) => {
       const renamed = member.id === 'self' && previewAlias ? { ...member, name: '나' } : member;
       const share = asShare(renamed.share, renamed.id === 'self');
-      if (renamed.id !== 'self' && share !== 'allowed') return { ...renamed, share, lat: null, lng: null };
-      return scrubSeed(renamed, share);
+      if (renamed.id !== 'self' && share !== 'allowed') return withMove({ ...renamed, share, lat: null, lng: null });
+      return withMove(scrubSeed(renamed, share));
     });
   const kept = new Set(members.filter((member) => member.id === 'self' || hasLocation(member)).map((member) => member.id));
   const tracks: Record<string, TrackPoint[]> = {};
@@ -292,9 +462,16 @@ function load(): Session {
       syncWriteKey: isKeyPart(parsed.syncWriteKey) ? parsed.syncWriteKey : base.syncWriteKey,
       syncReadKey: isKeyPart(parsed.syncReadKey) ? parsed.syncReadKey : base.syncReadKey,
       pendingSyncToken: pendingSyncToken || cleanSyncToken(parsed.pendingSyncToken),
+      segments: listOf(parsed.segments, cleanSegment, 40),
+      visits: listOf(parsed.visits, cleanVisit, 40),
+      messages: listOf(parsed.messages, cleanMessage, 80),
+      activity: cleanActivity(parsed.activity),
+      deviceId: typeof parsed.deviceId === 'string' && /^[A-Za-z0-9]{6,16}$/.test(parsed.deviceId) ? parsed.deviceId : base.deviceId,
+      trailDay: typeof parsed.trailDay === 'string' ? parsed.trailDay : base.trailDay,
+      chatReadAt: parsed.chatReadAt && typeof parsed.chatReadAt === 'object' ? Object.fromEntries(Object.entries(parsed.chatReadAt).filter((entry) => typeof entry[1] === 'number')) : {},
     };
     if (session.profile && session.permissions.completed) session.stage = session.mode ? 'map' : 'mode';
-    return withoutDemo(session);
+    return withToday(withoutDemo(session), Date.now());
   } catch {
     return { ...fresh(), pendingSyncToken };
   }
@@ -325,8 +502,12 @@ type Action =
   | { type: 'leave-guardian'; id: string }
   | { type: 'dismiss-invite' }
   | { type: 'mark-alerts-read' }
-  | { type: 'update-self'; lat: number; lng: number; accuracyM: number }
+  | { type: 'update-self'; fix: { lat: number; lng: number; accuracyM: number; at: number; speedMps: number | null; heartbeat: boolean; battery: number | null; deviceSteps: number | null } }
   | { type: 'apply-shared-place'; place: SharedPlace }
+  | { type: 'ingest-message'; message: FamilyMessage }
+  | { type: 'mark-chat-read'; code: string; at: number }
+  | { type: 'set-location-mode'; locationMode: PermissionState['locationMode'] }
+  | { type: 'roll-day'; at: number }
   | { type: 'set-motion'; moving: boolean }
   | { type: 'notice'; notice: FamilyNotice }
   | { type: 'logout' }
@@ -410,6 +591,8 @@ function reducer(state: Session, action: Action): Session {
         lng: null,
         accuracyM: 0,
         battery: null,
+        moveMode: null,
+        speedMps: null,
         updatedAt: Date.now(),
         moving: null,
         inviteCode: action.code,
@@ -485,49 +668,87 @@ function reducer(state: Session, action: Action): Session {
     case 'mark-alerts-read':
       return { ...state, notices: state.notices.map((item) => ({ ...item, read: true })) };
     case 'update-self': {
-      const at = Date.now();
+      const fix = action.fix;
+      const rolled = withToday(state, fix.at);
+      const home = rolled.home;
+      const insideHome = home != null && haversineMeters(fix, home) <= home.radiusM;
+      const speed = fix.speedMps ?? 0;
+      const moveMode = fix.heartbeat || speed < 0.5 ? 'still' : classifySpeedMps(speed);
+      const stepped = stepActivity(rolled.activity, {
+        lat: fix.lat,
+        lng: fix.lng,
+        at: fix.at,
+        accuracyM: fix.accuracyM,
+        speedMps: fix.speedMps,
+      }, {
+        memberId: 'self',
+        deviceSteps: fix.deviceSteps,
+        label: home && insideHome ? home.label : '머문 곳',
+      });
+      const tracks = { ...rolled.tracks };
+      if (!fix.heartbeat) tracks.self = appendTrail(pointsOnSeoulDay(tracks.self, fix.at), { lat: fix.lat, lng: fix.lng, at: fix.at });
       return {
-        ...state,
-        members: state.members.map((member) =>
+        ...rolled,
+        activity: stepped.snapshot,
+        segments: mergeSegments(rolled.segments, stepped.segment),
+        visits: stepped.visit ? mergeVisits(rolled.visits, [stepped.visit]) : rolled.visits,
+        members: rolled.members.map((member) =>
           member.id === 'self'
-            ? { ...member, lat: action.lat, lng: action.lng, accuracyM: Math.max(1, Math.round(action.accuracyM)), updatedAt: at }
+            ? {
+                ...member,
+                lat: fix.lat,
+                lng: fix.lng,
+                accuracyM: Math.max(1, Math.round(fix.accuracyM)),
+                battery: fix.battery == null ? member.battery : fix.battery,
+                moveMode,
+                speedMps: fix.speedMps,
+                updatedAt: fix.at,
+                moving: moveMode !== 'still',
+              }
             : member,
         ),
-        tracks: {
-          ...state.tracks,
-          self: appendTrail(state.tracks.self, { lat: action.lat, lng: action.lng, at }),
-        },
+        tracks,
       };
     }
     case 'apply-shared-place': {
       if (state.mode !== 'admin') return state;
       const place = action.place;
-      const children = state.members.filter((member) => member.id !== 'self' && member.role !== 'guardian' && member.inviteCode === place.code);
+      const rolled = withToday(state, Number.isFinite(place.at) ? place.at : Date.now());
+      const children = rolled.members.filter((member) => member.id !== 'self' && member.role !== 'guardian' && member.inviteCode === place.code);
       const member = children.find((item) => item.name === place.name) ?? (children.length === 1 ? children[0] : undefined);
-      if (!member) return state;
+      if (!member) return rolled === state ? state : rolled;
       if (!place.sharing) {
-        if (member.share !== 'allowed' && !hasLocation(member)) return state;
-        const tracks = { ...state.tracks };
+        if (member.share !== 'allowed' && !hasLocation(member)) return rolled === state ? state : rolled;
+        const tracks = { ...rolled.tracks };
         delete tracks[member.id];
         return {
-          ...state,
-          members: state.members.map((item) => (item.id === member.id ? { ...item, share: 'revoked', lat: null, lng: null, updatedAt: place.at } : item)),
+          ...rolled,
+          members: rolled.members.map((item) => (item.id === member.id ? { ...item, share: 'revoked', lat: null, lng: null, battery: null, moveMode: null, speedMps: null, updatedAt: place.at } : item)),
           tracks,
+          segments: rolled.segments.filter((segment) => segment.memberId !== member.id),
+          visits: rolled.visits.filter((visit) => visit.memberId !== member.id),
         };
       }
       if (place.lat == null || place.lng == null || !Number.isFinite(place.lat) || !Number.isFinite(place.lng)) {
-        if (member.share === 'allowed' && !hasLocation(member)) return state;
+        if (member.share === 'allowed' && !hasLocation(member)) return rolled === state ? state : rolled;
         return {
-          ...state,
-          members: state.members.map((item) => (item.id === member.id ? { ...item, share: 'allowed', lat: null, lng: null } : item)),
+          ...rolled,
+          members: rolled.members.map((item) => (item.id === member.id ? { ...item, share: 'allowed', lat: null, lng: null } : item)),
         };
       }
-      if (isSeedLocation(place.lat, place.lng) && place.accuracyM === 18) return state;
-      if (member.share === 'allowed' && member.lat === place.lat && member.lng === place.lng) return state;
-      if (member.updatedAt > place.at && hasLocation(member)) return state;
+      if (isSeedLocation(place.lat, place.lng) && place.accuracyM === 18) return rolled === state ? state : rolled;
+      const battery = Object.prototype.hasOwnProperty.call(place, 'battery') ? (typeof place.battery === 'number' ? place.battery : null) : member.battery;
+      const moveMode = Object.prototype.hasOwnProperty.call(place, 'mode') ? asMoveMode(place.mode) : member.moveMode;
+      const speedMps = Object.prototype.hasOwnProperty.call(place, 'speedMps') ? (typeof place.speedMps === 'number' ? place.speedMps : null) : member.speedMps;
+      const kind = placeUpdateKind(member, { lat: place.lat, lng: place.lng, at: place.at, battery, mode: moveMode });
+      if (kind === 'ignore') return rolled === state ? state : rolled;
+      const segment = Object.prototype.hasOwnProperty.call(place, 'segment') ? segmentFromPlace(member.id, place.segment) : null;
+      const visits = Object.prototype.hasOwnProperty.call(place, 'visits') ? visitsFromPlace(member.id, place.visits) : [];
       return {
-        ...state,
-        members: state.members.map((item) =>
+        ...rolled,
+        segments: mergeSegments(rolled.segments, segment),
+        visits: visits.length > 0 ? mergeVisits(rolled.visits, visits) : rolled.visits,
+        members: rolled.members.map((item) =>
           item.id === member.id
             ? {
                 ...item,
@@ -535,16 +756,32 @@ function reducer(state: Session, action: Action): Session {
                 lat: place.lat,
                 lng: place.lng,
                 accuracyM: Math.max(1, Math.round(place.accuracyM || item.accuracyM || 1)),
+                battery,
+                moveMode,
+                speedMps,
                 updatedAt: place.at,
+                moving: moveMode != null && moveMode !== 'still',
               }
             : item,
         ),
-        tracks: {
-          ...state.tracks,
-          [member.id]: appendTrail(state.tracks[member.id], { lat: place.lat, lng: place.lng, at: place.at }),
-        },
+        tracks: kind === 'move'
+          ? {
+              ...rolled.tracks,
+              [member.id]: appendTrail(pointsOnSeoulDay(rolled.tracks[member.id], place.at), { lat: place.lat, lng: place.lng, at: place.at }),
+            }
+          : rolled.tracks,
       };
     }
+    case 'ingest-message': {
+      if (state.messages.some((item) => item.id === action.message.id)) return state;
+      return { ...state, messages: [...state.messages, action.message].sort((left, right) => left.at - right.at).slice(-80) };
+    }
+    case 'mark-chat-read':
+      return { ...state, chatReadAt: { ...state.chatReadAt, [action.code]: action.at } };
+    case 'set-location-mode':
+      return { ...state, permissions: { ...state.permissions, locationMode: action.locationMode } };
+    case 'roll-day':
+      return withToday(state, action.at);
     case 'set-motion':
       return {
         ...state,
@@ -587,7 +824,11 @@ interface FamilyApi {
   leaveGuardian: (id: string) => void;
   dismissInvite: () => void;
   markAlertsRead: () => void;
-  updateSelf: (lat: number, lng: number, accuracyM: number) => void;
+  updateSelf: (fix: { lat: number; lng: number; accuracyM: number; at: number; speedMps: number | null; heartbeat: boolean; battery: number | null; deviceSteps: number | null }) => void;
+  ingestMessage: (message: FamilyMessage) => void;
+  markChatRead: (code: string, at: number) => void;
+  setLocationMode: (locationMode: PermissionState['locationMode']) => void;
+  rollDay: (at: number) => void;
   applySharedPlace: (place: SharedPlace) => void;
   setMotion: (moving: boolean) => void;
   pushNotice: (title: string, body: string) => void;
@@ -640,7 +881,11 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
     leaveGuardian: (id) => dispatch({ type: 'leave-guardian', id }),
     dismissInvite: () => dispatch({ type: 'dismiss-invite' }),
     markAlertsRead: () => dispatch({ type: 'mark-alerts-read' }),
-    updateSelf: (lat, lng, accuracyM) => dispatch({ type: 'update-self', lat, lng, accuracyM }),
+    updateSelf: (fix) => dispatch({ type: 'update-self', fix }),
+    ingestMessage: (message) => dispatch({ type: 'ingest-message', message }),
+    markChatRead: (code, at) => dispatch({ type: 'mark-chat-read', code, at }),
+    setLocationMode: (locationMode) => dispatch({ type: 'set-location-mode', locationMode }),
+    rollDay: (at) => dispatch({ type: 'roll-day', at }),
     applySharedPlace: (place) => dispatch({ type: 'apply-shared-place', place }),
     setMotion: (moving) => dispatch({ type: 'set-motion', moving }),
     pushNotice: (title, body) => dispatch({ type: 'notice', notice: notice(title, body) }),

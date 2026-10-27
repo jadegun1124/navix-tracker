@@ -37,7 +37,11 @@ Google Play, App Store, TestFlight에는 올리지 않았습니다. iOS는 아�
 
 마이크, 문자, 주변 소리, 원격으로 소리를 울리는 기능은 없습니다. 전화번호만으로 다른 사람을 찾지 않습니다.
 
-항상 허용은 선호로 저장됩니다. 이 버전은 앱이 열려 있는 동안 위치를 갱신하고, 권한을 몰래 올리지 않습니다.
+항상 허용은 화면에서 한 번 더 확인한 뒤에만 선호로 저장됩니다. 확인 없이 백그라운드 권한으로 올리지 않습니다.
+
+안드로이드에서 설정 → 앱 → Umap → 권한 → 위치를 **항상 허용**으로 바꾸면, 앱을 내려 둔 동안 "가족에게 위치를 공유하는 중" 알림을 켜고 좌표를 보냅니다. **앱 사용 중에만**이면 화면이 꺼지거나 다음 날 프로세스가 죽으면 갱신이 멈춥니다. 앱을 강제 종료해도 안드로이드가 그 알림을 다시 켜지 않습니다. 배터리에서 제한 없음을 고르면 아침에 덜 끊깁니다. 브라우저 `?app=1` 은 그 탭이 열려 있을 때만 갱신됩니다.
+
+Google 로그인은 [Google Identity Services](https://developers.google.com/identity/gsi/web/guides/overview)의 ID 토큰만 씁니다. 요청 범위는 `openid`, `email`, `profile` 이고, 받는 값은 이름, 이메일, 프로필 사진입니다. 유료 Google API 범위는 넣지 않습니다.
 
 ## Google 로그인과 지도
 
@@ -50,13 +54,13 @@ VITE_VWORLD_API_KEY=
 VITE_FAMILY_SYNC_URL=
 ```
 
-- 로그인: [Google Identity Services](https://developers.google.com/identity/gsi/web/guides/overview) 웹 클라이언트. 승인된 자바스크립트 원본에 사이트 주소와 Capacitor의 `https://localhost` 를 넣습니다.
+- 로그인: [Google Identity Services](https://developers.google.com/identity/gsi/web/guides/overview) 웹 클라이언트. 범위는 `openid`, `email`, `profile` 만입니다. 승인된 자바스크립트 원본에 사이트 주소와 Capacitor의 `https://localhost` 를 넣습니다.
 - 지도: 국토교통부 [VWorld](https://www.vworld.kr/) 2D Base 한 종류입니다. 위성, CARTO, OpenStreetMap 전환은 없습니다.
   - `https://api.vworld.kr/req/wmts/1.0.0/{API_KEY}/Base/{z}/{y}/{x}.png`
   - 키는 `import.meta.env.VITE_VWORLD_API_KEY`만 읽습니다. 빌드 시점에 JS 안에 들어갑니다.
   - 키가 없으면 "키가 이 빌드에 없습니다"만 보여 주고 타일을 요청하지 않습니다. 키가 있는데 타일이 실패하면, 그 페이지의 주소(origin)를 인증키 도메인에 넣으라는 안내가 나옵니다. 타일이 한 장이라도 오면 안내는 사라집니다.
   - 인증키 서비스 URL: `https://jadegun1124.github.io`, 앱 `https://localhost`, 로컬 개발 `http://localhost:5173`.
-- 이동 경로: 내 위치는 앱이 열려 있는 동안 약 12m 이상 움직이면 이 브라우저에 최대 300점까지 쌓입니다. 샘플 사람이나 예시 좌표는 없습니다.
+- 이동 경로: 선택한 사람의 오늘(서울 날짜) 선만 지도에 있습니다. 약 12m 이상 움직이면 이 기기에 최대 300점까지 쌓입니다. 자정이 지나면 선은 비우고 현재 핀은 남습니다. 샘플 사람이나 예시 좌표는 없습니다. 속도는 도보, 자전거, 차량, 비행기로 나눕니다. 걸음 수는 기기 만보계가 있으면 그 값을, 없으면 거리로 추정하고 화면에 추정이라고 적습니다.
 
 클라이언트 ID가 없으면 로그인은 미리보기로 이어집니다. 미리보기라고 화면에 적습니다. `VITE_GOOGLE_MAPS_API_KEY`는 가족 지도에서 쓰지 않습니다.
 
@@ -105,7 +109,8 @@ npm run dev
 3. 위치 공유를 허용한 피관리자 폰이 최신 점 하나를 `PUT /v1/rooms/{코드}/place` 로 보냅니다. 약 8m 이상 움직이거나 잠시 머문 뒤 다시 보냅니다.
 4. 관리자 화면은 약 2.5초마다 읽기 키로 그 방을 읽습니다. 쓰기 키만 가진 폰은 좌표를 읽을 수 없습니다.
 5. 집 이탈과 SOS도 같은 방으로 갑니다. 다른 폰의 관리자 화면에서 사이렌이 울립니다.
-6. 서버에는 이름별 최신 좌표와 최근 알림만 있습니다. 이동 경로 전체는 각 기기에만 쌓입니다.
+6. 서버에는 이름별 최신 좌표(배터리, 이동 수단, 최근 여정, 최근 장소가 있으면 함께)와 최근 알림, 최근 대화 80개만 있습니다. 이동 경로 전체는 각 기기에만 쌓이고, 서울 날짜가 바뀌면 지도의 선만 지웁니다. 장소와 끝난 여정은 약 8일 둡니다.
+7. 가족 대화는 `POST /v1/rooms/{코드}/message` 로 보내고, 관리자는 방 조회에 섞여 받는 메시지를 봅니다. 피관리자는 `GET /v1/rooms/{코드}/messages` 만 읽습니다. 이 조회는 읽기 키가 없어도 되고, 좌표는 돌려주지 않습니다. 전화번호는 받지 않습니다. Stream, Sendbird, Firebase 같은 유료 채팅 API는 쓰지 않습니다.
 
 같은 브라우저의 `localStorage`와 `BroadcastChannel`은 그대로 둡니다. 서버가 죽어도 그 경로로 같은 브라우저 안에서는 핀이 움직입니다.
 
@@ -121,13 +126,27 @@ https://umap-family-sync.umap-jadegun.workers.dev
 
 `deploy.yml`과 `build-apk.yml`은 Actions secret `VITE_FAMILY_SYNC_URL`이 있을 때만 그 값으로 바꿉니다. secret은 필수가 아닙니다. 로그에는 기본 주소인지, secret으로 바꿨는지만 남기고 다른 주소 문자열은 찍지 않습니다. 로컬 `npm run dev`는 gitignore된 `.env`의 `VITE_FAMILY_SYNC_URL`을 읽습니다. 그 값이 없으면 개발 서버는 같은 브라우저 공유만 합니다.
 
-Worker를 다시 올릴 때만 Cloudflare에 배포합니다. 계정 토큰은 저장소에 커밋하지 않습니다.
+Worker를 다시 올릴 때만 Cloudflare에 배포합니다. 계정 토큰은 저장소에 커밋하지 않습니다. 주소는 바꾸지 않습니다.
+
+배터리, 이동 수단, 최근 여정, 장소, 가족 대화를 다른 폰에서 보려면 이 프로토콜이 올라간 Worker가 필요합니다. 지금 떠 있는 Worker는 좌표와 알림만 저장하고, 추가 필드는 버리고 `/message` 는 404를 돌려줍니다. 그 경우에도 위치 공유는 그대로 동작하고, 대화는 그 폰 안에만 남습니다. 배포 후에 같은 주소로 대화와 배터리가 오갑니다.
 
 ```bash
 cd sync
 npx wrangler@4 login
 npx wrangler@4 deploy
 ```
+
+배포 확인:
+
+```bash
+curl -s https://umap-family-sync.umap-jadegun.workers.dev/health
+```
+
+`{"ok":true,"service":"umap-family-sync"}` 이면 같은 주소입니다.
+
+### 다음 날 위치가 안 바뀌던 이유
+
+관리자 화면은 좌표가 같으면 갱신 시각을 무시했습니다. 집 안에 하룻밤 머문 폰이 같은 점을 다시 보내도 카드는 어제 시각으로 남았습니다. 피관리자 쪽은 페이지가 살아 있는 동안의 `watchPosition` 뿐이었고, 오류나 화면 복귀 때 감시를 다시 걸지 않았습니다. 안드로이드 "앱 사용 중"은 화면이 꺼지면 위치를 멈추고, 백그라운드 위치 권한과 포그라운드 알림이 없어 프로세스가 죽으면 서버의 마지막 점이 그대로였습니다. 일일 궤적 삭제는 원래 없었고, 이번에도 핀과 마지막 공유 점은 지우지 않습니다. 선만 서울 자정에 비웁니다.
 
 `sync/wrangler.toml`이 Durable Object `FamilyRoom`을 만듭니다. 무료 한도에서 관리자 화면 하나가 켜져 있으면 조회가 하루 약 3만 번을 넘습니다. 한도에 닿으면 `src/services/familySync.ts`의 폴링 간격을 늘립니다.
 

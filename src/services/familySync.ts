@@ -1,3 +1,4 @@
+import type { FamilyMessage } from '../types/family';
 import type { FamilyAlert } from './familyAlert';
 import type { SharedPlace } from './familyShare';
 
@@ -107,11 +108,34 @@ function classify(response: Response) {
 
 let placeQueue: { place: SharedPlace; token: string } | null = null;
 let alertQueue: { alert: FamilyAlert; token: string } | null = null;
+const messageQueue: { message: FamilyMessage; token: string }[] = [];
 let flushing = false;
 let retryMs = 3000;
 
 function hasPending() {
-  return placeQueue != null || alertQueue != null;
+  return placeQueue != null || alertQueue != null || messageQueue.length > 0;
+}
+
+type ChatTransport = 'unknown' | 'remote' | 'legacy';
+let chatTransport: ChatTransport = 'unknown';
+const chatListeners = new Set<(mode: ChatTransport) => void>();
+
+function setChatTransport(next: ChatTransport) {
+  if (chatTransport === next) return;
+  chatTransport = next;
+  for (const listener of chatListeners) listener(chatTransport);
+}
+
+export function currentChatTransport(): ChatTransport {
+  return chatTransport;
+}
+
+export function subscribeChatTransport(listener: (mode: ChatTransport) => void): () => void {
+  chatListeners.add(listener);
+  listener(chatTransport);
+  return () => {
+    chatListeners.delete(listener);
+  };
 }
 
 export function publishPlaceRemote(place: SharedPlace, syncToken?: string | null) {
@@ -126,8 +150,20 @@ export function publishPlaceRemote(place: SharedPlace, syncToken?: string | null
       accuracyM: place.accuracyM,
       at: place.at,
       sharing: place.sharing,
+      battery: place.battery ?? null,
+      mode: place.mode ?? null,
+      speedMps: place.speedMps ?? null,
+      segment: place.segment ?? null,
+      visits: place.visits ?? [],
     },
   };
+  void flushQueues();
+}
+
+export function publishMessageRemote(message: FamilyMessage, syncToken?: string | null) {
+  if (!syncToken || !splitSyncToken(syncToken) || !familySyncUrl()) return;
+  messageQueue.push({ message, token: syncToken });
+  if (messageQueue.length > 20) messageQueue.splice(0, messageQueue.length - 20);
   void flushQueues();
 }
 
@@ -166,6 +202,26 @@ async function flushQueues() {
         if (alertQueue === alert) alertQueue = null;
       });
       if (!ok) failed = true;
+    }
+    const message = messageQueue[0];
+    if (message) {
+      const response = await request(`/v1/rooms/${message.message.code}/message`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-umap-sync-key': message.token },
+        body: JSON.stringify(message.message),
+      });
+      classify(response);
+      if (response.ok) {
+        setChatTransport('remote');
+        if (messageQueue[0] === message) messageQueue.shift();
+      } else if (response.status === 404 || response.status === 405) {
+        setChatTransport('legacy');
+        if (messageQueue[0] === message) messageQueue.shift();
+      } else if (response.status === 400) {
+        if (messageQueue[0] === message) messageQueue.shift();
+      } else {
+        failed = true;
+      }
     }
     retryMs = failed ? Math.min(retryMs * 2, 20000) : 3000;
   } catch {
@@ -227,16 +283,82 @@ function isRemoteAlert(value: unknown): value is FamilyAlert {
   return typeof alert.id === 'string' && (alert.kind === 'sos' || alert.kind === 'leave') && typeof alert.code === 'string' && typeof alert.at === 'number';
 }
 
+function isFamilyMessage(value: unknown): value is FamilyMessage {
+  if (!value || typeof value !== 'object') return false;
+  const message = value as FamilyMessage;
+  return typeof message.id === 'string' && typeof message.code === 'string' && typeof message.from === 'string' && typeof message.fromId === 'string' && typeof message.body === 'string' && typeof message.at === 'number';
+}
+
+export function startWriterMessageSync(
+  source: { code: string; token: string } | null,
+  onMessage: (message: FamilyMessage) => void,
+): () => void {
+  if (!source || !splitSyncToken(source.token) || !familySyncUrl() || !/^\d{4,6}$/.test(source.code)) return () => {};
+  let stopped = false;
+  let since = 0;
+  let timer = 0;
+  const schedule = (delay: number) => {
+    window.clearTimeout(timer);
+    timer = window.setTimeout(() => void tick(), delay);
+  };
+  const tick = async () => {
+    if (stopped) return;
+    let delay = 8000;
+    try {
+      const response = await request(`/v1/rooms/${source.code}/messages?since=${since}`, {
+        method: 'GET',
+        headers: { 'x-umap-sync-key': source.token },
+      });
+      classify(response);
+      if (response.ok) {
+        setChatTransport('remote');
+        const body: unknown = await response.json();
+        const messages = body && typeof body === 'object' && Array.isArray((body as { messages?: unknown[] }).messages) ? (body as { messages: unknown[] }).messages : [];
+        for (const message of messages) {
+          if (!isFamilyMessage(message) || message.code !== source.code) continue;
+          onMessage(message);
+          if (message.at > since) since = message.at;
+        }
+      } else if (response.status === 404 || response.status === 405) {
+        setChatTransport('legacy');
+        delay = 60_000;
+      } else {
+        delay = 15_000;
+      }
+    } catch {
+      if (!stopped && familySyncUrl()) setPhase('down');
+      delay = 15_000;
+    }
+    if (stopped) return;
+    if (document.visibilityState === 'hidden') delay = Math.max(delay, 25_000);
+    schedule(delay);
+  };
+  void tick();
+  const onVisible = () => {
+    if (document.visibilityState !== 'visible' || stopped) return;
+    window.clearTimeout(timer);
+    void tick();
+  };
+  document.addEventListener('visibilitychange', onVisible);
+  return () => {
+    stopped = true;
+    window.clearTimeout(timer);
+    document.removeEventListener('visibilitychange', onVisible);
+  };
+}
+
 export function startAdminRemoteSync(
   link: RemoteLink | null,
   handlers: {
     onPlace: (place: SharedPlace) => void;
     onAlert: (alert: FamilyAlert) => void;
+    onMessage?: (message: FamilyMessage) => void;
   },
 ): () => void {
   if (!link || !familySyncUrl() || !isKeyPart(link.writeKey) || !isKeyPart(link.readKey) || !/^\d{4,6}$/.test(link.code)) return () => {};
   let stopped = false;
   let since = 0;
+  let chatSince = 0;
   let timer = 0;
 
   const schedule = (delay: number) => {
@@ -249,7 +371,7 @@ export function startAdminRemoteSync(
     let delay = 2500;
     try {
       const token = await syncTokenFor(link.writeKey, link.readKey);
-      const response = await request(`/v1/rooms/${link.code}?since=${since}`, {
+      const response = await request(`/v1/rooms/${link.code}?since=${since}&chatSince=${chatSince}`, {
         method: 'GET',
         headers: {
           'x-umap-sync-key': token,
@@ -261,8 +383,14 @@ export function startAdminRemoteSync(
         const body: unknown = await response.json();
         const places = body && typeof body === 'object' && Array.isArray((body as { places?: unknown[] }).places) ? (body as { places: unknown[] }).places : [];
         const alerts = body && typeof body === 'object' && Array.isArray((body as { alerts?: unknown[] }).alerts) ? (body as { alerts: unknown[] }).alerts : [];
+        const messages = body && typeof body === 'object' && Array.isArray((body as { messages?: unknown[] }).messages) ? (body as { messages: unknown[] }).messages : [];
         for (const place of places) {
           if (isSharedPlace(place)) handlers.onPlace(place);
+        }
+        for (const message of messages) {
+          if (!isFamilyMessage(message) || message.code !== link.code) continue;
+          handlers.onMessage?.(message);
+          if (message.at > chatSince) chatSince = message.at;
         }
         for (const alert of alerts) {
           if (!isRemoteAlert(alert)) continue;

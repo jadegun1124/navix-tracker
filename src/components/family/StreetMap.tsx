@@ -24,8 +24,10 @@ export const StreetMap = forwardRef<StreetMapHandle, {
   trail: TrackPoint[];
   trailColor: string;
   selectedId?: string;
+  visits?: { lat: number; lng: number; minutes: number }[];
+  selfPicture?: string | null;
   onSelect: (id: string) => void;
-}>(function StreetMap({ center, zoom, members, home, trail, trailColor, selectedId, onSelect }, ref) {
+}>(function StreetMap({ center, zoom, members, home, trail, trailColor, selectedId, visits = [], selfPicture, onSelect }, ref) {
   const nodeRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
   const layersRef = useRef<L.LayerGroup | null>(null);
@@ -171,19 +173,34 @@ export const StreetMap = forwardRef<StreetMapHandle, {
       }).addTo(group);
     }
 
+    for (const visit of visits) {
+      const radius = Math.max(18, Math.min(42, 12 + Math.sqrt(visit.minutes) * 3));
+      L.circleMarker([visit.lat, visit.lng], {
+        radius,
+        color: '#0084FF',
+        weight: 1,
+        fillColor: '#0084FF',
+        fillOpacity: 0.18,
+      }).addTo(group);
+    }
+
     for (const member of members) {
       if (!hasLocation(member)) continue;
       const selected = member.id === selectedId;
-      const color = '#0084FF';
+      const self = member.id === 'self';
+      const color = self ? '#0f172a' : '#0084FF';
       const label = escapeHtml(member.name);
       const initial = escapeHtml(member.name.slice(0, 1));
+      const photo = self && selfPicture && selfPicture.startsWith('https://')
+        ? `<img src="${escapeHtml(selfPicture)}" alt="" style="width:42px;height:42px;border-radius:999px;object-fit:cover;border:4px solid #fff;box-shadow:0 6px 16px rgba(15,23,42,.2)" />`
+        : `<span style="width:42px;height:42px;border-radius:999px;border:4px solid #fff;background:${color};color:#fff;display:flex;align-items:center;justify-content:center;font-weight:900;box-shadow:0 6px 16px rgba(15,23,42,.2)">${initial}</span>`;
       const marker = L.marker([member.lat, member.lng], {
         zIndexOffset: selected ? 800 : 400,
         icon: L.divIcon({
           className: 'umap-member-pin',
           html: `<div style="display:flex;flex-direction:column;align-items:center;transform:translate(-50%,-100%)">
-            <span style="margin-bottom:4px;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;box-shadow:0 1px 4px rgba(15,23,42,.16);background:${selected ? '#0084FF' : '#fff'};color:${selected ? '#fff' : '#0f172a'}">${label}</span>
-            <span style="width:42px;height:42px;border-radius:999px;border:4px solid #fff;background:${color};color:#fff;display:flex;align-items:center;justify-content:center;font-weight:900;box-shadow:0 6px 16px rgba(15,23,42,.2)">${initial}</span>
+            <span style="margin-bottom:4px;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;box-shadow:0 1px 4px rgba(15,23,42,.16);background:${selected ? '#0084FF' : '#fff'};color:${selected ? '#fff' : '#0f172a'}">${self && label !== '나' ? `${label} · 나` : label}</span>
+            ${photo}
           </div>`,
           iconSize: [0, 0],
           iconAnchor: [0, 0],
@@ -192,7 +209,7 @@ export const StreetMap = forwardRef<StreetMapHandle, {
       marker.on('click', () => onSelectRef.current(member.id));
       marker.addTo(group);
     }
-  }, [home, members, ready, selectedId, trail, trailColor]);
+  }, [home, members, ready, selectedId, selfPicture, trail, trailColor, visits]);
 
   const missingKey = !key;
 

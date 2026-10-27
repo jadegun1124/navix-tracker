@@ -8,7 +8,7 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
-    "test": "node --test sync/protocol.test.mjs",
+    "test": "node --test sync/protocol.test.mjs src/lib/activity.test.ts src/lib/googleScopes.test.ts",
     "sync": "node sync/dev-server.mjs"
   },
   "dependencies": {
