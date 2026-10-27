@@ -49,17 +49,15 @@
                 android:resource="@xml/file_paths"></meta-data>
         </provider>
 
-        <service
-            android:name=".LocationKeepService"
-            android:exported="false"
-            android:foregroundServiceType="location"
-            android:stopWithTask="false" />
+        <!-- Location and SOS polling are receivers. A foreground service would
+             force an ongoing shade card on Android 12+. -->
+        <receiver
+            android:name=".LocationKeepReceiver"
+            android:exported="false" />
 
-        <service
-            android:name=".AlertWatchService"
-            android:exported="false"
-            android:foregroundServiceType="dataSync"
-            android:stopWithTask="false" />
+        <receiver
+            android:name=".AlertWatchReceiver"
+            android:exported="false" />
     </application>
 
     <!-- ACCESS_BACKGROUND_LOCATION is declared so the location permission screen can offer 항상 허용.
@@ -69,9 +67,8 @@
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- SOS polling while the screen is off. This does not create a shade card. -->
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
     <!-- Invite QR only. The app asks at the scan button and does not record audio. -->

@@ -373,7 +373,7 @@ function Permissions({
           <h1 className="mt-4 text-[26px] font-black leading-snug">가족 위치 공유를 시작할까요?</h1>
           <p className="mt-2 text-sm leading-6 text-slate-500">쓰는 권한만 차례로 묻습니다. 마이크, 문자, 주변 소리는 요청하지 않습니다.</p>
           <div className="mt-5 space-y-3 rounded-3xl bg-white p-4 shadow-sm">
-            <Row icon={<Bell className="h-5 w-5" />} title="위치 유지 알림" body="위치 화면에서 함께 묻습니다. 허용을 누르면 알림 창이 열리고, 그 전에는 켜지지 않습니다." />
+            <Row icon={<Bell className="h-5 w-5" />} title="알림" body="SOS와 집 반경 알림에 씁니다. 위치 공유 중에는 알림 목록에 Umap 카드가 나오지 않습니다." />
             <Row icon={<MapPin className="h-5 w-5" />} title="위치" body="정확한 위치 또는 대략적인 위치를 고릅니다. 항상 허용은 설정 화면에서 직접 바꿉니다." />
             <Row icon={<Footprints className="h-5 w-5" />} title="움직임" body="안드로이드에서는 신체 활동 권한 창을 엽니다. 선택입니다." />
             <Row icon={<BatteryCharging className="h-5 w-5" />} title="배터리" body="항상 허용을 고르면 배터리 제한 없음 창을 엽니다. 스위치는 직접 고릅니다." />
@@ -389,11 +389,11 @@ function Permissions({
       {step === 'location' && !keepSeen && (
         <Dialog
           icon={<Bell className="h-7 w-7 text-[#0084FF]" />}
-          title="위치 유지 알림을 켤까요?"
-          body="위치를 백그라운드에서 보내려면 알림 권한이 필요합니다. 허용을 누르면 알림 창이 열립니다. 알림 목록에는 위치 공유 문구를 띄우지 않습니다. 앱이 혼자 알림을 켜거나 위치를 백그라운드로 올리지 않습니다. 전화번호는 쓰지 않습니다."
+          title="알림을 허용할까요?"
+          body="알림 권한은 SOS와 집 반경 알림에 씁니다. 허용을 누르면 알림 창이 열립니다. 위치 공유 중에는 알림 목록에 Umap 카드가 나오지 않습니다. 앱이 혼자 위치를 백그라운드로 올리지 않습니다. 전화번호는 쓰지 않습니다."
           note={note}
           busy={busy}
-          primary="위치 유지 알림 켜기"
+          primary="알림 허용"
           onPrimary={async () => {
             setBusy(true);
             const result = await askNotifications();
@@ -434,9 +434,9 @@ function Permissions({
           </div>
           <p className="mt-3 text-center text-xs leading-5 text-slate-500">
             {draft.notifications === 'granted'
-              ? '위치 유지 알림을 허용했습니다. 항상 허용을 고른 뒤 지도에서 알림을 켭니다. 앱이 혼자 켜지 않습니다.'
+              ? '알림을 허용했습니다. 항상 허용을 고른 뒤 지도에서 위치 유지를 켭니다. 알림 목록에 Umap 카드는 나오지 않습니다.'
               : draft.notifications === 'denied'
-                ? '위치 유지 알림을 허용하지 않았습니다. 메뉴의 권한 안내에서 다시 켤 수 있습니다.'
+                ? '알림을 허용하지 않았습니다. 위치 유지는 항상 허용 뒤에 켤 수 있습니다. SOS 알림만 알림 권한이 필요합니다.'
                 : '이 브라우저에는 알림 창이 없습니다.'}
           </p>
           {note && <p className="mt-3 text-center text-sm leading-6 text-slate-600">{note}</p>}

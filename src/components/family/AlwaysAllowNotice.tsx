@@ -41,7 +41,7 @@ export function AlwaysAllowNotice({
           )}
           {!live && locationMode === 'always' && (
             <button type="button" onClick={onStart} className="rounded-full bg-[#0084FF] px-3 py-1.5 text-[11px] font-bold text-white">
-              위치 유지 알림 켜기
+              위치 유지 켜기
             </button>
           )}
         </div>

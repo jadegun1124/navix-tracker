@@ -63,6 +63,10 @@ public class UmapLocationPlugin extends Plugin {
 
     @Override
     public void load() {
+        Context context = getContext();
+        LocationKeepService.attach(context);
+        AlertWatchService.attach(context);
+        OngoingNotificationCleanup.clear(context);
         LocationKeepService.setSink(this::emitFix);
     }
 
