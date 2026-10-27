@@ -4,6 +4,8 @@ export interface Profile {
   email: string;
   picture: string | null;
   preview: boolean;
+  /** Set only when the ID token itself says the phone is verified. Never a typed number. */
+  verifiedPhone: string | null;
 }
 
 export interface TrackPoint {
@@ -92,6 +94,7 @@ export interface Session {
   survey: string | null;
   terms: Record<string, boolean>;
   phone: string;
+  phoneVerified: boolean;
   permissions: PermissionState;
   members: Member[];
   tracks: Record<string, TrackPoint[]>;

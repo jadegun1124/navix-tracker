@@ -6,7 +6,7 @@ import { readSharedPlaces, publishSharedPlace, subscribeSharedPlaces, type Share
 import { familyEndpointAvailable, familySyncUrl, splitSyncToken, startManagedFamilySync, syncTokenFor } from '../../services/familySync';
 import { startLocationWatch } from '../../services/locationWatch';
 import { reverseGeocode } from '../../services/placeGeocode';
-import { openAppSettings, umapLocation, umapLocationNative, type KeepAliveTarget } from '../../services/umapLocation';
+import { openAlwaysLocation, readNativeBattery, umapLocation, umapLocationNative, type KeepAliveTarget } from '../../services/umapLocation';
 import { vworldApiKey } from '../../services/vworld';
 import { useFamily } from './session';
 
@@ -26,7 +26,7 @@ interface BatteryLike {
   removeEventListener: (type: string, listener: () => void) => void;
 }
 
-export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void): { waiting: string | null; familyShareNote: string | null; native: boolean; openSettings: () => Promise<boolean> } {
+export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void): { waiting: string | null; familyShareNote: string | null; native: boolean; openSettings: () => ReturnType<typeof openAlwaysLocation> } {
   const family = useFamily();
   const { state } = family;
   const familyRef = useRef(family);
@@ -89,6 +89,23 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
       window.clearInterval(timer);
       battery?.removeEventListener('levelchange', emit);
       battery?.removeEventListener('chargingchange', emit);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!umapLocationNative()) return;
+    let dead = false;
+    const pull = () => {
+      void readNativeBattery().then((battery) => {
+        if (dead || battery.pct == null) return;
+        familyRef.current.setBattery(battery.pct, battery.charging);
+      });
+    };
+    pull();
+    const timer = window.setInterval(pull, 60_000);
+    return () => {
+      dead = true;
+      window.clearInterval(timer);
     };
   }, []);
 
@@ -328,5 +345,5 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
     };
   }, [state.visits]);
 
-  return { waiting, familyShareNote, native: umapLocationNative(), openSettings: openAppSettings };
+  return { waiting, familyShareNote, native: umapLocationNative(), openSettings: openAlwaysLocation };
 }

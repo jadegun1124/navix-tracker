@@ -165,7 +165,19 @@ public class LocationKeepService extends Service {
             shutdown();
             return START_NOT_STICKY;
         }
-        becomeForeground();
+        if (Build.VERSION.SDK_INT >= 33
+            && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            lastError = "notifications";
+            stopSelf();
+            return START_NOT_STICKY;
+        }
+        try {
+            becomeForeground();
+        } catch (Exception error) {
+            lastError = "notifications";
+            stopSelf();
+            return START_NOT_STICKY;
+        }
         String raw = prefs(this).getString("config", "");
         if (raw == null || raw.isEmpty() || !hasLocationPermission()) {
             lastError = hasLocationPermission() ? "config" : "permission";

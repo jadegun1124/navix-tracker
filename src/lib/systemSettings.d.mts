@@ -1,0 +1,5 @@
+export function notificationAction(native: boolean): 'post-notifications' | 'web-notification';
+export function whileUsingAction(native: boolean): 'foreground-location' | 'browser-geolocation';
+export function alwaysAllowAction(native: boolean): 'location-settings' | 'browser-geolocation';
+export function motionAction(native: boolean, iosPrompt: boolean): 'activity-recognition' | 'ios-motion-prompt' | 'explain-only';
+export function batteryAction(native: boolean): 'ignore-battery-optimizations' | 'explain-only';

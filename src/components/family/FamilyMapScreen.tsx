@@ -11,6 +11,7 @@ import { AlwaysAllowNotice } from './AlwaysAllowNotice';
 import { InviteQrImage, InviteQrScan } from './InviteQr';
 import { StreetMap, type StreetMapHandle } from './StreetMap';
 import { TodayRecord } from './TodayRecord';
+import { askAlwaysLocation, askBattery, askNotifications } from '../../services/systemPermissions';
 import { useFamilyTracking } from './useFamilyTracking';
 import { useFamily } from './session';
 
@@ -39,6 +40,7 @@ export function FamilyMapScreen() {
   const [syncPhase, setSyncPhase] = useState<SyncPhase>(() => currentSyncPhase());
   const [now, setNow] = useState(() => Date.now());
   const tracking = useFamilyTracking((lat, lng) => mapRef.current?.panTo(lat, lng));
+  const [settingsNote, setSettingsNote] = useState<string | null>(null);
 
   useEffect(() => subscribeSyncPhase(setSyncPhase), []);
   useEffect(() => startSyncMonitor(), []);
@@ -234,24 +236,7 @@ export function FamilyMapScreen() {
             }}
           />
 
-          <div className="pointer-events-none absolute left-3 top-3 z-30 max-w-[230px] rounded-2xl bg-white/95 px-3 py-1.5 text-[11px] font-semibold leading-4 text-slate-600 shadow">
-            VWorld 2D · 국토교통부
-            <span className="mt-0.5 block text-slate-500">
-              {state.mode === 'admin' ? '내 위치와 공유를 허용한 아이' : state.members.some((member) => member.role === 'admin-share' && hasLocation(member)) ? '내 위치와 공유한 관리자' : '내 위치 · 관리자 위치는 상대가 공유할 때만'}
-            </span>
-            {self?.battery != null && (
-              <span className="mt-0.5 block text-slate-500">배터리 {self.battery}%{self.charging ? ' · 충전 중' : ''}</span>
-            )}
-            {tracking.waiting && <span className="mt-0.5 block text-amber-700">{tracking.waiting}</span>}
-            <span className="mt-0.5 block text-slate-500">{syncPhaseLine(syncPhase)}</span>
-            {showTrail && selected && (
-              <span className="mt-0.5 block text-slate-500">
-                {selected.name} 경로 {trail.length}점 · 이 기기에만 저장
-              </span>
-            )}
-          </div>
-
-          <div className="absolute right-3 top-14 z-30 flex flex-col gap-2">
+          <div className="absolute right-3 top-3 z-30 flex flex-col gap-2">
             <RoundButton label="안심존 표시" onClick={() => setShowZone((value) => !value)}>
               <Home className={`h-5 w-5 ${showZone ? 'text-[#0084FF]' : 'text-slate-400'}`} />
             </RoundButton>
@@ -286,8 +271,10 @@ export function FamilyMapScreen() {
             </RoundButton>
           </div>
 
-          {syncBanner && (
+          {(syncBanner || tracking.waiting) && (
             <p className="absolute inset-x-3 bottom-16 z-30 rounded-2xl bg-amber-50 px-3 py-2 text-[11px] font-semibold leading-4 text-amber-950 shadow">
+              {tracking.waiting}
+              {tracking.waiting && syncBanner ? ' ' : ''}
               {syncBanner}
             </p>
           )}
@@ -341,13 +328,37 @@ export function FamilyMapScreen() {
               locationMode={state.permissions.locationMode}
               keepAlive={state.backgroundKeepAlive}
               native={tracking.native}
-              onOpenSettings={() => void tracking.openSettings()}
+              note={settingsNote}
+              onOpenSettings={() => {
+                void askAlwaysLocation(state.permissions.accuracy === 'precise').then((result) => {
+                  setSettingsNote(result.note);
+                  if (result.location === 'always' || result.location === 'while-using' || result.location === 'denied') {
+                    family.finishPermissions({ ...state.permissions, locationMode: result.location, completed: true });
+                  }
+                });
+              }}
+              onBattery={() => {
+                void askBattery().then((result) => setSettingsNote(result.note));
+              }}
               onReview={family.revisitPermissions}
-              onStart={() => family.setKeepAlive(true)}
+              onStart={() => {
+                void (async () => {
+                  const notifications = await askNotifications();
+                  if (notifications.note) setSettingsNote(notifications.note);
+                  if (tracking.native) {
+                    const battery = await askBattery();
+                    if (battery.note) setSettingsNote(battery.note);
+                  }
+                  family.setKeepAlive(true);
+                })();
+              }}
               onStop={() => family.setKeepAlive(false)}
             />
             <div className="mb-2 flex items-center justify-between">
-              <h2 className="text-lg font-black">우리 가족</h2>
+              <div>
+                <h2 className="text-lg font-black">우리 가족</h2>
+                <p className="text-[11px] font-semibold text-slate-400">{syncPhaseLine(syncPhase)}</p>
+              </div>
               <div className="flex gap-2">
                 <button type="button" onClick={() => setSheet('today')} className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-bold text-slate-700">
                   오늘 이동{todayRecord.segments.length > 0 ? ` ${todayRecord.segments.length}` : ''}
@@ -443,7 +454,11 @@ export function FamilyMapScreen() {
             <p className="mt-3 text-xs font-bold text-[#0084FF]">{state.mode === 'admin' ? '관리자 모드' : '피관리자 모드'}</p>
             <p className="mt-1 font-bold">{state.profile?.name}</p>
             <p className="text-slate-500">{state.profile?.email || (state.profile?.preview ? '미리보기 계정' : 'Google 계정')}</p>
-            {state.phone && <p className="mt-1 text-slate-500">연락처 {state.phone}</p>}
+            {state.phoneVerified && state.phone ? (
+              <p className="mt-1 text-slate-500">확인된 전화번호 {state.phone}. 위치 찾기에는 쓰지 않습니다.</p>
+            ) : (
+              <p className="mt-1 text-xs leading-5 text-slate-400">본인 확인은 Google 계정입니다. 전화번호는 받지 않고, 번호로 가족을 찾지 않습니다.</p>
+            )}
             <dl className="mt-4 space-y-2 rounded-2xl bg-slate-50 p-3 text-slate-600">
               <Line k="알림" v={labelOf(state.permissions.notifications)} />
               <Line k="위치 정확도" v={state.permissions.accuracy === 'precise' ? '정확한 위치' : '대략적인 위치'} />
@@ -452,7 +467,7 @@ export function FamilyMapScreen() {
               <Line k="배터리 안내" v={state.permissions.battery === 'acknowledged' ? '확인함' : state.permissions.battery === 'skipped' ? '나중에' : '해당 없음'} />
             </dl>
             <p className="mt-3 text-xs leading-5 text-slate-400">
-              항상 허용은 화면에서 다시 확인한 선호입니다. Umap은 OS 권한을 대신 바꾸지 않습니다. 위치 유지 알림을 켜면, 알림이 떠 있는 동안 앱을 닫아도 위치를 보냅니다. 프로세스가 꺼지면 설정에서 위치 항상 허용과 배터리 제한 없음이 있어야 다음 날까지 이어집니다.
+              항상 허용과 배터리 제한 없음은 누른 뒤에 열리는 시스템 화면에서 직접 고릅니다. Umap은 그 스위치를 대신 바꾸지 않습니다. 위치 유지 알림을 켜면 알림 허용 창을 먼저 띄우고, 알림이 떠 있는 동안 위치를 보냅니다.
             </p>
             <div className="mt-4 space-y-2">
               <button type="button" onClick={family.reopenMode} className="w-full rounded-full bg-slate-100 py-3 font-bold">

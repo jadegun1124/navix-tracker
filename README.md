@@ -30,14 +30,14 @@ Google Play, App Store, TestFlight에는 올리지 않았습니다. iOS는 아�
 
 | 권한 | 쓰는 이유 |
 | :--- | :--- |
-| 알림 | 집 도착·출발 |
-| 위치 | 정확한 위치 또는 대략적인 위치. 앱 사용 중과 항상 허용을 사용자가 고릅니다. |
-| 움직임 | 이동과 머무름을 구분해 위치 점을 안정시킬 때만 |
-| 배터리 안내 | 항상 허용을 고른 경우에만 설정 경로를 알려 줍니다. 최적화 예외를 자동으로 요청하지 않습니다. |
+| 알림 | 집 도착·출발과 위치 유지. 허용을 누르면 시스템 알림 창이 열립니다. |
+| 위치 | 정확한 위치 또는 대략적인 위치. 앱 사용 중은 위치 권한 창, 항상 허용은 위치 설정 화면을 엽니다. |
+| 움직임 | 안드로이드 신체 활동 권한 창. 다시 물을 수 없으면 설정으로 이동합니다. |
+| 배터리 | 항상 허용을 고른 경우 배터리 제한 없음 창을 엽니다. 스위치는 직접 고릅니다. |
 
 마이크, 문자, 주변 소리, 원격으로 소리를 울리는 기능은 없습니다. 전화번호만으로 다른 사람을 찾지 않습니다.
 
-항상 허용은 화면에서 다시 확인한 선호로만 저장됩니다. 앱은 OS 권한을 대신 바꾸지 않고, 설정 화면으로만 안내합니다. 위치 유지 알림을 켜면 알림이 떠 있는 동안 백그라운드에서 위치를 보냅니다. 알림을 끄거나 제조사가 프로세스를 종료하면, 설정에서 위치 항상 허용과 배터리 제한 없음이 있어야 다음 날까지 이어집니다.
+항상 허용은 화면에서 다시 확인한 뒤에 위치 설정 화면을 엽니다. 앱은 OS 스위치를 대신 바꾸지 않습니다. 위치 유지 알림을 켜면 알림 허용 창을 먼저 띄우고, 알림이 떠 있는 동안 백그라운드에서 위치를 보냅니다. 배터리 제한 없음도 버튼을 눌렀을 때만 시스템 창으로 엽니다.
 
 ## Google 로그인과 지도
 
@@ -50,7 +50,7 @@ VITE_VWORLD_API_KEY=
 VITE_FAMILY_SYNC_URL=
 ```
 
-- 로그인: [Google Identity Services](https://developers.google.com/identity/gsi/web/guides/overview) 웹 클라이언트. 범위는 `openid`, `email`, `profile` 만 사용하고 이름, 이메일, 프로필 사진만 받습니다. 승인된 자바스크립트 원본에 사이트 주소와 Capacitor의 `https://localhost` 를 넣습니다.
+- 로그인: 브라우저에서는 [Google Identity Services](https://developers.google.com/identity/gsi/web/guides/overview) 버튼입니다. 범위는 `openid`, `email`, `profile` 만 사용하고 이름, 이메일, 프로필 사진만 받습니다. 안드로이드 앱은 WebView 버튼 대신 Credential Manager로 같은 ID 토큰을 받습니다. 웹 클라이언트 ID와 함께, 패키지 `kr.co.umap.tracker` 와 서명 SHA-1이 들어간 Android OAuth 클라이언트가 같은 Google Cloud 프로젝트에 있어야 합니다. 승인된 자바스크립트 원본에는 사이트 주소와 `https://localhost` 를 넣습니다. Google 기본 범위에는 전화번호가 없고, 앱은 번호를 입력받아 본인 확인으로 쓰지 않습니다.
 - 지도: 국토교통부 [VWorld](https://www.vworld.kr/) 2D Base 한 종류입니다. 위성, CARTO, OpenStreetMap 전환은 없습니다.
   - `https://api.vworld.kr/req/wmts/1.0.0/{API_KEY}/Base/{z}/{y}/{x}.png`
   - 키는 `import.meta.env.VITE_VWORLD_API_KEY`만 읽습니다. 빌드 시점에 JS 안에 들어갑니다.

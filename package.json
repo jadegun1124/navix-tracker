@@ -8,7 +8,7 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
-    "test": "node --test sync/protocol.test.mjs src/lib/tracking.test.mjs src/lib/authScopes.test.mjs",
+    "test": "node --test sync/protocol.test.mjs src/lib/tracking.test.mjs src/lib/authScopes.test.mjs src/lib/googleIdToken.test.mjs src/lib/systemSettings.test.mjs",
     "sync": "node sync/dev-server.mjs"
   },
   "dependencies": {

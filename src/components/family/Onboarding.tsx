@@ -1,8 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Bell, BatteryCharging, ChevronLeft, Footprints, MapPin, Shield, UserRound, Users } from 'lucide-react';
 import { GOOGLE_SIGN_IN_SCOPES } from '../../lib/authScopes.mjs';
-import { decodeGoogleCredential, googleClientId, loadGoogleIdentity, previewProfile } from '../../services/googleAuth';
-import { openAppSettings } from '../../services/umapLocation';
+import { decodeGoogleCredential, googleClientId, loadGoogleIdentity, previewProfile, signInFailureCopy } from '../../services/googleAuth';
+import { askAlwaysLocation, askBattery, askMotion, askNotifications, askWhileUsing } from '../../services/systemPermissions';
+import { nativeGoogleSignIn, umapLocationNative } from '../../services/umapLocation';
 import { REQUIRED_TERMS, type AppMode, type PermissionState, type Profile } from '../../types/family';
 import { useFamily } from './session';
 
@@ -54,7 +55,6 @@ export function Onboarding() {
           onBack={family.back}
         />
       )}
-      {stage === 'phone' && <Phone onSave={family.savePhone} onSkip={family.skipPhone} onBack={family.back} />}
       {stage === 'permissions' && (
         <Permissions
           initial={family.state.permissions}
@@ -142,35 +142,51 @@ function Login({ onGoogle }: { onGoogle: (profile: Profile) => void }) {
     onGoogleRef.current = onGoogle;
   });
   const clientId = googleClientId();
+  const native = umapLocationNative();
   const [help, setHelp] = useState(false);
   const [gisError, setGisError] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const acceptCredential = (credential: string | undefined) => {
+    const profile = credential ? decodeGoogleCredential(credential) : null;
+    if (profile) onGoogleRef.current(profile);
+    else setMessage(signInFailureCopy('token'));
+  };
 
   useEffect(() => {
-    if (!clientId || !hostRef.current) return;
+    if (native || !clientId || !hostRef.current) return;
     let dead = false;
     loadGoogleIdentity()
       .then(() => {
         if (dead || !hostRef.current || !window.google?.accounts?.id) return;
+        const host = hostRef.current;
         window.google.accounts.id.initialize({
           client_id: clientId,
-          callback: (response) => {
-            const profile = decodeGoogleCredential(response.credential);
-            if (profile) onGoogleRef.current(profile);
-          },
-          // GIS ID token only. Scopes stay openid, email, profile. No oauth2 token client.
+          callback: (response) => acceptCredential(response.credential),
+          // ID token only. FedCM keeps the button working when third-party cookies are blocked.
           ux_mode: 'popup',
           auto_select: false,
           cancel_on_tap_outside: true,
+          itp_support: true,
+          use_fedcm_for_button: true,
+          context: 'signin',
         });
-        hostRef.current.innerHTML = '';
-        window.google.accounts.id.renderButton(hostRef.current, {
-          theme: 'outline',
-          size: 'large',
-          shape: 'pill',
-          text: 'continue_with',
-          width: Math.min(340, hostRef.current.clientWidth || 320),
-          locale: 'ko',
-        });
+        host.innerHTML = '';
+        const width = Math.max(200, Math.min(400, host.clientWidth || 320));
+        try {
+          window.google.accounts.id.renderButton(host, {
+            theme: 'outline',
+            size: 'large',
+            shape: 'pill',
+            text: 'continue_with',
+            width,
+            locale: 'ko',
+            click_listener: () => setMessage(null),
+          });
+        } catch {
+          if (!dead) setGisError(true);
+        }
       })
       .catch(() => {
         if (!dead) setGisError(true);
@@ -178,7 +194,24 @@ function Login({ onGoogle }: { onGoogle: (profile: Profile) => void }) {
     return () => {
       dead = true;
     };
-  }, [clientId]);
+  }, [clientId, native]);
+
+  const startNative = async () => {
+    if (!clientId) {
+      setHelp(true);
+      return;
+    }
+    setBusy(true);
+    setMessage(null);
+    const result = await nativeGoogleSignIn(clientId);
+    setBusy(false);
+    if (result.credential) {
+      acceptCredential(result.credential);
+      return;
+    }
+    if (result.error && result.error !== 'cancelled') setMessage(signInFailureCopy(result.error));
+    else if (result.error === 'cancelled') setMessage(signInFailureCopy('cancelled'));
+  };
 
   return (
     <div className="flex h-full flex-col px-6 pb-10 pt-16">
@@ -188,11 +221,21 @@ function Login({ onGoogle }: { onGoogle: (profile: Profile) => void }) {
         가족 위치는 초대한 사람과 초대를 받은 사람만 나눕니다. 다른 사람의 번호만으로 위치를 찾지 않습니다.
       </p>
       <p className="mt-2 text-xs leading-5 text-slate-500">
-        Google 로그인은 {GOOGLE_SIGN_IN_SCOPES.join(', ')} 만 사용합니다. 이름, 이메일, 프로필 사진 외의 권한은 요청하지 않습니다.
+        Google 로그인은 {GOOGLE_SIGN_IN_SCOPES.join(', ')} 만 사용합니다. 이 범위에는 전화번호가 없습니다. 번호를 적는 칸은 두지 않으며, 입력한 번호를 본인 확인으로 쓰지 않습니다.
       </p>
       <div className="mt-10">
-        {clientId && !gisError ? (
-          <div ref={hostRef} className="flex min-h-12 justify-center" />
+        {native ? (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void startNative()}
+            className="flex h-12 w-full items-center justify-center gap-3 rounded-full border border-slate-300 bg-white text-sm font-bold shadow-sm disabled:opacity-40"
+          >
+            <GoogleMark />
+            {busy ? 'Google 계정 여는 중…' : 'Google로 로그인'}
+          </button>
+        ) : clientId && !gisError ? (
+          <div ref={hostRef} className="flex min-h-12 w-full justify-center" />
         ) : (
           <button
             type="button"
@@ -203,13 +246,14 @@ function Login({ onGoogle }: { onGoogle: (profile: Profile) => void }) {
             Google로 로그인
           </button>
         )}
+        {message && <p className="mt-4 text-sm leading-6 text-slate-600">{message}</p>}
         {(help || gisError) && (
           <div className="mt-4 rounded-2xl bg-white p-4 text-sm leading-6 text-slate-600 shadow-sm">
             <p>
               {gisError
                 ? 'Google 로그인 스크립트를 불러오지 못했습니다.'
                 : 'VITE_GOOGLE_CLIENT_ID 에 Google Cloud OAuth 웹 클라이언트 ID를 넣으면 이 버튼이 계정 선택으로 연결됩니다.'}
-              {' '}키는 저장소에 넣지 않습니다.
+              {' '}키는 저장소에 넣지 않습니다. 안드로이드 앱은 웹 버튼 대신 기기 계정 선택을 쓰고, 같은 프로젝트에 Android 클라이언트가 있어야 합니다.
             </p>
             <button
               type="button"
@@ -293,7 +337,7 @@ const TERM_COPY: { id: string; title: string; required: boolean; body: string }[
     id: 'privacy',
     title: '개인정보 수집·이용 동의',
     required: true,
-    body: 'Google 계정 이름과 이메일, 선택한 위치 권한, 직접 입력한 연락처, 가족 이름, 이동 경로를 이 기기에 저장합니다.',
+    body: 'Google 계정 이름과 이메일, 선택한 위치 권한, 가족 이름, 이동 경로를 이 기기에 저장합니다. 전화번호는 받지 않고, 번호로 사람을 찾지 않습니다.',
   },
   {
     id: 'guardian',
@@ -376,81 +420,6 @@ function Terms({
   );
 }
 
-function Phone({ onSave, onSkip, onBack }: { onSave: (phone: string) => void; onSkip: () => void; onBack: () => void }) {
-  const [phone, setPhone] = useState('');
-  return (
-    <div className="flex h-full flex-col bg-white">
-      <div className="flex items-center justify-between px-2 pt-3">
-        <button type="button" onClick={onBack} className="p-2 text-slate-500" aria-label="이전">
-          <ChevronLeft className="h-5 w-5" />
-        </button>
-        <button type="button" onClick={onSkip} className="px-3 text-sm font-semibold text-slate-500">
-          건너뛰기
-        </button>
-      </div>
-      <div className="flex-1 px-6">
-        <h1 className="mt-6 text-2xl font-black">전화번호</h1>
-        <p className="mt-2 text-sm leading-6 text-slate-500">
-          가족에게 보여 줄 보호자 연락처입니다. 다른 사람의 번호로 위치를 조회하지 않습니다.
-        </p>
-        <label className="mt-8 block text-xs font-semibold text-slate-400" htmlFor="umap-phone">
-          전화번호
-        </label>
-        <input
-          id="umap-phone"
-          inputMode="tel"
-          value={phone}
-          onChange={(event) => setPhone(event.target.value)}
-          placeholder="010-0000-0000"
-          className="mt-2 w-full rounded-2xl border border-slate-200 px-4 py-4 text-lg outline-none focus:border-[#0084FF]"
-        />
-      </div>
-      <div className="px-6 pb-8">
-        <button
-          type="button"
-          disabled={phone.replace(/\D/g, '').length < 8}
-          onClick={() => onSave(phone)}
-          className="w-full rounded-full bg-[#0084FF] py-3.5 font-bold text-white disabled:opacity-40"
-        >
-          저장
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function requestNotifications(): Promise<PermissionState['notifications']> {
-  if (!('Notification' in window)) return Promise.resolve('skipped');
-  return Notification.requestPermission()
-    .then((result) => (result === 'granted' ? 'granted' : 'denied'))
-    .catch(() => 'denied');
-}
-
-function requestLocation(precise: boolean): Promise<'granted' | 'denied' | 'unavailable'> {
-  return new Promise((resolve) => {
-    if (!navigator.geolocation) {
-      resolve('unavailable');
-      return;
-    }
-    navigator.geolocation.getCurrentPosition(
-      () => resolve('granted'),
-      (error) => resolve(error.code === error.PERMISSION_DENIED ? 'denied' : 'unavailable'),
-      { enableHighAccuracy: precise, timeout: 8000, maximumAge: 60_000 },
-    );
-  });
-}
-
-async function requestMotion(): Promise<'granted' | 'denied'> {
-  const ctor = DeviceMotionEvent as unknown as { requestPermission?: () => Promise<'granted' | 'denied'> };
-  if (typeof ctor.requestPermission !== 'function') return 'granted';
-  try {
-    const result = await ctor.requestPermission();
-    return result === 'granted' ? 'granted' : 'denied';
-  } catch {
-    return 'denied';
-  }
-}
-
 function Permissions({
   initial,
   canClose,
@@ -468,10 +437,13 @@ function Permissions({
   const [draft, setDraft] = useState<PermissionState>({ ...initial, completed: false });
   const [busy, setBusy] = useState(false);
   const [confirmAlways, setConfirmAlways] = useState(false);
+  const [askedAlways, setAskedAlways] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
 
-  const finish = (next: PermissionState) => {
-    if (next.locationMode === 'always' && step !== 'battery') {
+  const finish = (next: PermissionState, wantsBackground = false) => {
+    if ((next.locationMode === 'always' || wantsBackground) && step !== 'battery') {
       setDraft(next);
+      setNote(null);
       setStep('battery');
       return;
     }
@@ -496,9 +468,9 @@ function Permissions({
           <p className="mt-2 text-sm leading-6 text-slate-500">쓰는 권한만 차례로 묻습니다. 마이크, 문자, 주변 소리는 요청하지 않습니다.</p>
           <div className="mt-5 space-y-3 rounded-3xl bg-white p-4 shadow-sm">
             <Row icon={<Bell className="h-5 w-5" />} title="알림" body="집에 도착하거나 나갔을 때 알려 드립니다." />
-            <Row icon={<MapPin className="h-5 w-5" />} title="위치" body="정확한 위치 또는 대략적인 위치, 앱 사용 중 또는 항상 허용을 직접 고릅니다." />
-            <Row icon={<Footprints className="h-5 w-5" />} title="움직임" body="이동 중인지 머무르는지 구분해 위치 점을 안정시킵니다. 선택입니다." />
-            <Row icon={<BatteryCharging className="h-5 w-5" />} title="배터리" body="항상 허용을 고른 뒤에만, 절전 때문에 공유가 끊길 수 있다고 안내합니다." />
+            <Row icon={<MapPin className="h-5 w-5" />} title="위치" body="정확한 위치 또는 대략적인 위치를 고릅니다. 항상 허용은 설정 화면에서 직접 바꿉니다." />
+            <Row icon={<Footprints className="h-5 w-5" />} title="움직임" body="안드로이드에서는 신체 활동 권한 창을 엽니다. 선택입니다." />
+            <Row icon={<BatteryCharging className="h-5 w-5" />} title="배터리" body="항상 허용을 고르면 배터리 제한 없음 창을 엽니다. 스위치는 직접 고릅니다." />
           </div>
           <div className="mt-auto pt-6">
             <button type="button" onClick={() => setStep('notifications')} className="w-full rounded-full bg-[#0084FF] py-3.5 font-bold text-white">
@@ -512,14 +484,16 @@ function Permissions({
         <Dialog
           icon={<Bell className="h-7 w-7 text-[#0084FF]" />}
           title="Umap에서 알림을 보내도록 허용하시겠습니까?"
-          body="집 도착과 출발 알림에만 사용합니다."
+          body="집 도착, 출발, 위치 유지 알림에 씁니다. 허용을 누르면 기기의 알림 창이 열립니다."
+          note={note}
           busy={busy}
           primary="허용"
           onPrimary={async () => {
             setBusy(true);
-            const notifications = await requestNotifications();
+            const result = await askNotifications();
             setBusy(false);
-            const next = { ...draft, notifications };
+            setNote(result.note);
+            const next = { ...draft, notifications: result.state };
             setDraft(next);
             setStep('location');
           }}
@@ -553,38 +527,41 @@ function Permissions({
           </div>
           {confirmAlways && (
             <div className="mt-4 rounded-2xl bg-white p-4 text-sm leading-6 text-slate-600 shadow-sm">
-              <p>다음날에도 위치를 보내려면 휴대폰 위치 접근을 항상 허용으로 바꿔야 합니다. 앱을 쓰는 동안에만 허용하면 화면이 꺼진 뒤나 다음 날에 갱신이 멈출 수 있습니다.</p>
-              <p className="mt-2">Umap은 이 권한을 대신 바꾸지 않습니다. 아래 버튼은 앱 설정만 엽니다. 설정 &gt; 권한 &gt; 위치 &gt; 항상 허용을 직접 고르세요.</p>
-              <button type="button" onClick={() => void openAppSettings()} className="mt-3 w-full rounded-full bg-slate-100 py-2 text-sm font-bold text-slate-700">
-                앱 설정 열기
-              </button>
+              <p>다음날에도 위치를 보내려면 위치 접근을 항상 허용으로 바꿔야 합니다. 앱을 쓰는 동안에만 허용하면 화면이 꺼진 뒤 갱신이 멈출 수 있습니다.</p>
+              <p className="mt-2">아래 버튼은 위치 권한 화면을 엽니다. 항상 허용은 그 화면에서 직접 고릅니다. Umap이 스위치를 대신 바꾸지는 않습니다.</p>
             </div>
           )}
+          {note && <p className="mt-3 text-center text-sm leading-6 text-slate-600">{note}</p>}
           <div className="mt-auto space-y-2 pt-4 text-center">
             <TextButton
               disabled={busy}
               label="앱 사용 중에만 허용"
               onClick={async () => {
                 setBusy(true);
-                const result = await requestLocation(draft.accuracy === 'precise');
+                const result = await askWhileUsing(draft.accuracy === 'precise');
                 setBusy(false);
-                const next = { ...draft, locationMode: result === 'denied' ? 'denied' as const : 'while-using' as const };
+                setNote(result.note);
+                const next = { ...draft, locationMode: result.location === 'while-using' ? 'while-using' as const : 'denied' as const };
                 setDraft(next);
                 setStep('motion');
               }}
             />
             <TextButton
               disabled={busy}
-              label={confirmAlways ? '항상 허용으로 저장' : '항상 허용'}
+              label={confirmAlways ? '항상 허용 설정 열기' : '항상 허용'}
               onClick={async () => {
                 if (!confirmAlways) {
                   setConfirmAlways(true);
+                  setNote(null);
                   return;
                 }
+                setAskedAlways(true);
                 setBusy(true);
-                const result = await requestLocation(draft.accuracy === 'precise');
+                const result = await askAlwaysLocation(draft.accuracy === 'precise');
                 setBusy(false);
-                const next = { ...draft, locationMode: result === 'denied' ? 'denied' as const : 'always' as const };
+                setNote(result.note);
+                const locationMode = result.location === 'always' ? 'always' as const : result.location === 'while-using' ? 'while-using' as const : 'denied' as const;
+                const next = { ...draft, locationMode };
                 setDraft(next);
                 setStep('motion');
               }}
@@ -606,16 +583,18 @@ function Permissions({
         <Dialog
           icon={<Footprints className="h-7 w-7 text-[#0084FF]" />}
           title="움직임 정보로 위치 정확도를 높일까요?"
-          body="이동 중인지 머무르는지 구분합니다. 건강 기록이나 마이크는 보지 않습니다. 거절해도 지도는 사용할 수 있습니다."
+          body="이동 중인지 머무르는지 구분합니다. 허용을 누르면 안드로이드 신체 활동 권한 창이 열리고, 이미 거절했다면 설정으로 이동합니다. 건강 기록이나 마이크는 보지 않습니다."
+          note={note}
           busy={busy}
           primary="허용"
           onPrimary={async () => {
             setBusy(true);
-            const motion = await requestMotion();
+            const result = await askMotion();
             setBusy(false);
-            const next = { ...draft, motion };
+            setNote(result.note);
+            const next = { ...draft, motion: result.state };
             setDraft(next);
-            finish(next);
+            finish(next, askedAlways || next.locationMode === 'always');
           }}
           onSecondary={() => {
             const next = { ...draft, motion: 'denied' as const };
@@ -630,16 +609,28 @@ function Permissions({
           <BatteryCharging className="mt-6 h-8 w-8 text-[#0084FF]" />
           <h1 className="mt-4 text-2xl font-black leading-snug">배터리 최적화 안내</h1>
           <p className="mt-3 text-sm leading-6 text-slate-600">
-            항상 허용 선호를 저장했습니다. 설정 &gt; 앱 &gt; Umap &gt; 권한 &gt; 위치에서 항상 허용을, 배터리에서 제한 없음을 직접 고르면 다음 날에도 이어질 가능성이 높습니다. Umap은 그 설정을 대신 바꾸지 않고, 배터리 최적화 예외도 자동으로 요청하지 않습니다. 지도에서 위치 유지 알림을 켜면 알림이 떠 있는 동안 위치를 보냅니다.
+            백그라운드 위치는 절전으로 끊길 수 있습니다. 버튼을 누르면 이 앱의 배터리 제한 없음 창이 열립니다. 제한 없음은 그 창에서 직접 고릅니다. Umap이 설정을 대신 바꾸지는 않습니다.
           </p>
-          <button type="button" onClick={() => void openAppSettings()} className="mt-4 w-full rounded-full bg-slate-100 py-3 text-sm font-bold">
-            앱 설정 열기
-          </button>
+          {note && <p className="mt-3 text-sm leading-6 text-amber-800">{note}</p>}
           <div className="mt-auto space-y-3">
             <button
               type="button"
+              disabled={busy}
+              onClick={async () => {
+                setBusy(true);
+                const result = await askBattery();
+                setBusy(false);
+                setNote(result.note);
+                if (result.opened || result.unrestricted) onDone({ ...draft, battery: 'acknowledged' });
+              }}
+              className="w-full rounded-full bg-[#0084FF] py-3.5 font-bold text-white disabled:opacity-40"
+            >
+              {busy ? '여는 중…' : '배터리 제한 없음 열기'}
+            </button>
+            <button
+              type="button"
               onClick={() => onDone({ ...draft, battery: 'acknowledged' })}
-              className="w-full rounded-full bg-[#0084FF] py-3.5 font-bold text-white"
+              className="w-full rounded-full bg-slate-100 py-3 text-sm font-bold"
             >
               확인했습니다
             </button>
@@ -669,6 +660,7 @@ function Dialog({
   icon,
   title,
   body,
+  note,
   primary,
   busy,
   onPrimary,
@@ -677,6 +669,7 @@ function Dialog({
   icon: React.ReactNode;
   title: string;
   body: string;
+  note?: string | null;
   primary: string;
   busy: boolean;
   onPrimary: () => void;
@@ -687,6 +680,7 @@ function Dialog({
       <div className="flex h-14 w-14 items-center justify-center rounded-full bg-white shadow-sm">{icon}</div>
       <h1 className="mt-5 text-xl font-black leading-snug">{title}</h1>
       <p className="mt-3 text-sm leading-6 text-slate-600">{body}</p>
+      {note && <p className="mt-3 text-sm leading-6 text-amber-800">{note}</p>}
       <div className="mt-auto w-full">
         <button type="button" disabled={busy} onClick={onPrimary} className="w-full py-3 text-lg font-bold text-[#0084FF] disabled:opacity-40">
           {busy ? '확인 중…' : primary}

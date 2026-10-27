@@ -16,6 +16,22 @@ function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char] ?? char);
 }
 
+function batteryMarkup(member: Member, selected: boolean): string {
+  if (member.role !== 'self' || member.battery == null) return '';
+  const pct = Math.max(0, Math.min(100, Math.round(member.battery)));
+  const charging = member.charging === true;
+  const color = selected ? '#ffffff' : pct <= 20 ? '#dc2626' : '#334155';
+  const bolt = charging
+    ? `<svg width="10" height="10" viewBox="0 0 24 24" aria-hidden="true"><path fill="${selected ? '#ffffff' : '#d97706'}" d="M13 2 4 14h7l-1 8 10-14h-7l0-6z"/></svg>`
+    : '';
+  return `<span style="display:inline-flex;align-items:center;gap:2px;margin-left:4px;color:${color};font-weight:800">${batteryIcon(pct, color)}<span>${pct}%</span>${bolt}</span>`;
+}
+
+function batteryIcon(pct: number, color: string): string {
+  const fillWidth = Math.max(1, Math.round((pct / 100) * 12));
+  return `<svg width="16" height="12" viewBox="0 0 20 12" aria-hidden="true"><rect x="0.75" y="1.25" width="16.5" height="9.5" rx="2" fill="none" stroke="${color}" stroke-width="1.4"/><rect x="17.6" y="4" width="1.6" height="4" rx="0.6" fill="${color}"/><rect x="2.2" y="3" width="${fillWidth}" height="6" rx="1" fill="${color}"/></svg>`;
+}
+
 export const StreetMap = forwardRef<StreetMapHandle, {
   center: { lat: number; lng: number };
   zoom: number;
@@ -175,14 +191,16 @@ export const StreetMap = forwardRef<StreetMapHandle, {
       if (!hasLocation(member)) continue;
       const selected = member.id === selectedId;
       const color = '#0084FF';
-      const label = escapeHtml(member.name);
-      const initial = escapeHtml(member.name.slice(0, 1));
+      const self = member.role === 'self';
+      const label = escapeHtml(self ? '나' : member.name);
+      const initial = escapeHtml(self ? '나' : member.name.slice(0, 1));
+      const battery = batteryMarkup(member, selected);
       const marker = L.marker([member.lat, member.lng], {
         zIndexOffset: selected ? 800 : 400,
         icon: L.divIcon({
           className: 'umap-member-pin',
           html: `<div style="display:flex;flex-direction:column;align-items:center;transform:translate(-50%,-100%)">
-            <span style="margin-bottom:4px;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;box-shadow:0 1px 4px rgba(15,23,42,.16);background:${selected ? '#0084FF' : '#fff'};color:${selected ? '#fff' : '#0f172a'}">${label}</span>
+            <span style="display:inline-flex;align-items:center;margin-bottom:4px;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;white-space:nowrap;box-shadow:0 1px 4px rgba(15,23,42,.16);background:${selected ? '#0084FF' : '#fff'};color:${selected ? '#fff' : '#0f172a'}">${label}${battery}</span>
             <span style="width:42px;height:42px;border-radius:999px;border:4px solid #fff;background:${color};color:#fff;display:flex;align-items:center;justify-content:center;font-weight:900;box-shadow:0 6px 16px rgba(15,23,42,.2)">${initial}</span>
           </div>`,
           iconSize: [0, 0],
