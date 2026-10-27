@@ -258,7 +258,6 @@ public class LocationKeepService extends Service {
             .setVisibility(Notification.VISIBILITY_SECRET)
             .setCategory(Notification.CATEGORY_SERVICE)
             .setPriority(Notification.PRIORITY_MIN);
-        if (Build.VERSION.SDK_INT >= 26) builder.setSilent(true);
         Notification notification = builder.build();
         notification.flags |= Notification.FLAG_NO_CLEAR;
         if (Build.VERSION.SDK_INT >= 29) startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION);
