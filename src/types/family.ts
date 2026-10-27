@@ -12,6 +12,17 @@ export interface TrackPoint {
   at: number;
 }
 
+export type MoveMode = 'walk' | 'bike' | 'car' | 'plane' | 'still';
+
+export interface FamilyMessage {
+  id: string;
+  code: string;
+  from: string;
+  fromId: string;
+  body: string;
+  at: number;
+}
+
 export type AppMode = 'admin' | 'managed';
 export type ShareState = 'invited' | 'accepted' | 'allowed' | 'revoked';
 
@@ -23,6 +34,8 @@ export interface Member {
   lng: number | null;
   accuracyM: number;
   battery: number | null;
+  moveMode: MoveMode | null;
+  speedMps: number | null;
   updatedAt: number;
   moving: boolean | null;
   inviteCode?: string;
@@ -94,6 +107,13 @@ export interface Session {
   syncWriteKey: string;
   syncReadKey: string;
   pendingSyncToken: string | null;
+  segments: import('../lib/activity').TripSegment[];
+  visits: import('../lib/activity').PlaceVisit[];
+  messages: FamilyMessage[];
+  activity: import('../lib/activity').ActivitySnapshot | null;
+  deviceId: string;
+  trailDay: string;
+  chatReadAt: Record<string, number>;
 }
 
 export const DEFAULT_CENTER = { lat: 37.6366, lng: 127.0672 };

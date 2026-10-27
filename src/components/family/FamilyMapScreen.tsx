@@ -1,11 +1,19 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { Bell, Copy, Home, LocateFixed, MapPin, Minus, Plus, Route, UserPlus, X } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import QRCode from 'qrcode';
+import { Bell, Copy, Home, LocateFixed, MapPin, MessageCircle, Minus, Plus, Route, UserPlus, X } from 'lucide-react';
+import { simplifyPath } from '../../lib/activity';
 import { buildInviteLink, formatClock, hasLocation, haversineMeters, shouldAlertLeave } from '../../lib/geo';
 import { ackFamilyAlert, isFamilyAlertAcked, publishFamilyAlert, readFamilyAlert, subscribeFamilyAlerts, type FamilyAlert } from '../../services/familyAlert';
+import { chatSelfId, createFamilyMessage, deliverFamilyMessage, subscribeFamilyChat } from '../../services/familyChat';
 import { publishSharedPlace, readSharedPlaces, subscribeSharedPlaces } from '../../services/familyShare';
-import { currentSyncPhase, familySyncConfigured, splitSyncToken, startAdminRemoteSync, startSyncMonitor, subscribeSyncPhase, syncTokenFor, type SyncPhase } from '../../services/familySync';
+import { currentChatTransport, currentSyncPhase, familySyncConfigured, familySyncUrl, splitSyncToken, startAdminRemoteSync, startSyncMonitor, startWriterMessageSync, subscribeChatTransport, subscribeSyncPhase, syncTokenFor, type SyncPhase } from '../../services/familySync';
+import { startFamilyWatch } from '../../services/familyWatch';
+import { drainNativePoints, isNativeApp, openLocationSettings, readBatteryPercent, readDeviceSteps, readOsLocationAccess, requestAlwaysLocation, requestStepCounter, startNativeShare, stopNativeShare } from '../../services/presence';
 import { sounds } from '../../utils/audio';
 import { DEFAULT_CENTER, type GuardianLink, type HomeZone, type Member } from '../../types/family';
+import { FamilyChat } from './FamilyChat';
+import { LocationHelp } from './LocationHelp';
+import { MemberDetail } from './MemberDetail';
 import { StreetMap, type StreetMapHandle } from './StreetMap';
 import { useFamily } from './session';
 
@@ -25,8 +33,14 @@ export function FamilyMapScreen() {
   const [sirenOn, setSirenOn] = useState(false);
   const [selectedId, setSelectedId] = useState('self');
   const insideRef = useRef<Record<string, boolean>>({});
-  const lastFix = useRef<{ lat: number; lng: number; at: number } | null>(null);
   const centeredFix = useRef(false);
+  const [detailId, setDetailId] = useState<string | null>(null);
+  const [chatCode, setChatCode] = useState<string | null>(null);
+  const [showAccess, setShowAccess] = useState(false);
+  const [showVisits, setShowVisits] = useState(false);
+  const [osAccess, setOsAccess] = useState<'always' | 'while-in-use' | 'denied' | 'unsupported'>('unsupported');
+  const [chatLegacy, setChatLegacy] = useState(() => currentChatTransport() === 'legacy');
+  const [now, setNow] = useState(() => Date.now());
   const familyRef = useRef(family);
   useEffect(() => {
     familyRef.current = family;
@@ -51,6 +65,28 @@ export function FamilyMapScreen() {
     }
     sharedTokens.current = nextTokens;
     const located = self && hasLocation(self) ? self : null;
+    const latest = [...state.segments].reverse().find((segment) => segment.memberId === 'self' && !segment.provisional) ?? null;
+    const sharedSegment = latest
+      ? {
+          id: latest.id,
+          mode: latest.mode,
+          startAt: latest.startAt,
+          endAt: latest.endAt,
+          startLat: latest.startLat,
+          startLng: latest.startLng,
+          endLat: latest.endLat,
+          endLng: latest.endLng,
+          distanceM: latest.distanceM,
+          topSpeedMps: latest.topSpeedMps,
+          steps: latest.steps,
+          stepsSource: latest.stepsSource,
+          path: simplifyPath(latest.path, 8).map(({ lat, lng }) => ({ lat, lng })),
+        }
+      : null;
+    const sharedVisits = state.visits
+      .filter((visit) => visit.memberId === 'self')
+      .slice(-8)
+      .map(({ id, lat, lng, startedAt, endedAt, label }) => ({ id, lat, lng, startedAt, endedAt, label }));
     for (const link of state.guardians) {
       const sharing = link.share === 'allowed';
       const remote = link.syncToken && (sharing || link.share === 'revoked') ? link.syncToken : null;
@@ -62,9 +98,14 @@ export function FamilyMapScreen() {
         accuracyM: located?.accuracyM ?? 0,
         at: sharing ? (located?.updatedAt || Date.now()) : Date.now(),
         sharing,
+        battery: sharing && located ? located.battery : null,
+        mode: sharing && located ? located.moveMode : null,
+        speedMps: sharing && located ? located.speedMps : null,
+        segment: sharing ? sharedSegment : null,
+        visits: sharing ? sharedVisits : [],
       }, remote);
     }
-  }, [self, state.guardians, state.mode, state.profile?.name]);
+  }, [self, state.guardians, state.mode, state.profile?.name, state.segments, state.visits]);
 
   useEffect(() => {
     if (state.mode !== 'admin') return;
@@ -77,26 +118,100 @@ export function FamilyMapScreen() {
 
   useEffect(() => {
     if (state.permissions.locationMode === 'denied' || state.permissions.locationMode === 'unknown') return;
-    if (!navigator.geolocation) return;
-    const watch = navigator.geolocation.watchPosition(
-      (position) => {
-        const next = { lat: position.coords.latitude, lng: position.coords.longitude, at: Date.now() };
-        if (lastFix.current) {
-          const moved = haversineMeters(lastFix.current, next);
-          if (moved < 8 && next.at - lastFix.current.at < 8000) return;
-        }
-        lastFix.current = next;
-        familyRef.current.updateSelf(next.lat, next.lng, position.coords.accuracy);
+    let battery: number | null = null;
+    let steps: number | null = null;
+    let lastFix: { lat: number; lng: number; accuracyM: number; at: number; speedMps: number | null; heartbeat: boolean } | null = null;
+    const pushSensors = () => {
+      if (!lastFix) return;
+      familyRef.current.updateSelf({ ...lastFix, at: Date.now(), battery, deviceSteps: steps, heartbeat: true });
+    };
+    const refresh = () => {
+      void readBatteryPercent().then((value) => {
+        if (value == null || value === battery) return;
+        battery = value;
+        pushSensors();
+      });
+      void readDeviceSteps().then((value) => {
+        if (value == null || value === steps) return;
+        steps = value;
+        pushSensors();
+      });
+    };
+    refresh();
+    const timer = window.setInterval(refresh, 60_000);
+    const stop = startFamilyWatch({
+      precise: state.permissions.accuracy !== 'approximate',
+      pullHistory: () => drainNativePoints(0),
+      onFix: (fix) => {
+        lastFix = fix;
+        familyRef.current.updateSelf({ ...fix, battery, deviceSteps: steps });
         if (!centeredFix.current) {
           centeredFix.current = true;
-          mapRef.current?.panTo(next.lat, next.lng);
+          mapRef.current?.panTo(fix.lat, fix.lng);
         }
       },
-      () => undefined,
-      { enableHighAccuracy: state.permissions.accuracy === 'precise', maximumAge: 4000, timeout: 12000 },
-    );
-    return () => navigator.geolocation.clearWatch(watch);
+    });
+    return () => {
+      window.clearInterval(timer);
+      stop();
+    };
   }, [state.permissions.accuracy, state.permissions.locationMode]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      const at = Date.now();
+      setNow(at);
+      familyRef.current.rollDay(at);
+    }, 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => subscribeChatTransport((mode) => setChatLegacy(mode === 'legacy')), []);
+  useEffect(() => subscribeFamilyChat((message) => familyRef.current.ingestMessage(message)), []);
+  useEffect(() => {
+    if (state.permissions.motion === 'granted') void requestStepCounter();
+  }, [state.permissions.motion]);
+  useEffect(() => {
+    let cancel = false;
+    void readOsLocationAccess().then((access) => {
+      if (!cancel) setOsAccess(access);
+    });
+    return () => {
+      cancel = true;
+    };
+  }, [state.permissions.locationMode, showAccess]);
+
+  useEffect(() => {
+    if (state.mode !== 'managed' || state.permissions.locationMode !== 'always') {
+      void stopNativeShare();
+      return;
+    }
+    const origin = familySyncUrl();
+    if (!origin) return;
+    const name = (state.profile?.name || self?.name || '가족').trim().slice(0, 80) || '가족';
+    const targets = state.guardians
+      .filter((link) => link.share === 'allowed' && link.syncToken)
+      .map((link) => ({
+        endpoint: `${origin}/v1/rooms/${link.code}/place`,
+        token: link.syncToken as string,
+        code: link.code,
+        name,
+      }));
+    if (targets.length === 0) {
+      void stopNativeShare();
+      return;
+    }
+    let cancel = false;
+    void (async () => {
+      const access = await readOsLocationAccess();
+      if (cancel) return;
+      if (access === 'always') await startNativeShare(targets);
+      else await stopNativeShare();
+    })();
+    return () => {
+      cancel = true;
+    };
+  }, [self?.name, state.guardians, state.mode, state.permissions.locationMode, state.profile?.name]);
 
   useEffect(() => {
     if (state.permissions.motion !== 'granted') return;
@@ -191,6 +306,7 @@ export function FamilyMapScreen() {
       {
         onPlace: (place) => familyRef.current.applySharedPlace(place),
         onAlert: handle,
+        onMessage: (message) => familyRef.current.ingestMessage(message),
       },
     );
     return () => {
@@ -198,6 +314,16 @@ export function FamilyMapScreen() {
       stopRemote();
     };
   }, [notifyOk, state.inviteCode, state.mode, state.syncReadKey, state.syncWriteKey]);
+
+  useEffect(() => {
+    if (state.mode !== 'managed') return;
+    const stops = state.guardians
+      .filter((link) => link.syncToken)
+      .map((link) => startWriterMessageSync({ code: link.code, token: link.syncToken as string }, (message) => familyRef.current.ingestMessage(message)));
+    return () => {
+      for (const stop of stops) stop();
+    };
+  }, [state.guardians, state.mode]);
 
   const stopIncoming = () => {
     if (incoming) ackFamilyAlert(incoming.id);
@@ -243,6 +369,16 @@ export function FamilyMapScreen() {
     return () => window.clearInterval(timer);
   }, [shareKey, state.members, state.mode]);
   const trail = selected && showTrail && (selected.id === 'self' || selected.share === 'allowed') ? state.tracks[selected.id] ?? [] : [];
+  const visitMarks = useMemo(() => {
+    if (!showVisits || !selected) return [];
+    return state.visits
+      .filter((visit) => visit.memberId === selected.id)
+      .map((visit) => ({
+        lat: visit.lat,
+        lng: visit.lng,
+        minutes: Math.max(1, Math.round(((visit.endedAt ?? now) - visit.startedAt) / 60_000)),
+      }));
+  }, [now, selected, showVisits, state.visits]);
   const missingSyncKey = state.mode === 'managed' && state.guardians.some((link) => (link.share === 'allowed' || link.share === 'revoked') && !link.syncToken);
   const syncBanner = syncBannerText(syncPhase, missingSyncKey);
   const remoteLive = syncPhase === 'live';
@@ -267,6 +403,8 @@ export function FamilyMapScreen() {
             trail={trail}
             trailColor="#0084FF"
             selectedId={selected?.id}
+            selfPicture={state.profile?.picture}
+            visits={visitMarks}
             onSelect={(id) => {
               const member = state.members.find((item) => item.id === id);
               if (member) focusMember(member, true);
@@ -372,6 +510,25 @@ export function FamilyMapScreen() {
           <section className="rounded-t-3xl bg-white px-4 pb-2 pt-3 shadow-[0_-8px_30px_rgba(15,23,42,0.08)]">
             <div className="mb-2 flex items-center justify-between">
               <h2 className="text-lg font-black">우리 가족</h2>
+              <button
+                type="button"
+                onClick={() => {
+                  const code = state.mode === 'admin' ? state.inviteCode : state.guardians[0]?.code;
+                  if (!code) {
+                    family.pushNotice('대화', '초대를 수락한 뒤에 가족 대화를 쓸 수 있습니다.');
+                    return;
+                  }
+                  setChatCode(code);
+                  family.markChatRead(code, Date.now());
+                }}
+                className="relative rounded-full bg-slate-100 px-3 py-1.5 text-xs font-bold text-slate-700"
+              >
+                <MessageCircle className="mr-1 inline h-3.5 w-3.5" />
+                대화
+                {state.messages.some((message) => message.at > (state.chatReadAt[message.code] ?? 0) && message.fromId !== chatSelfId(state.profile, state.deviceId)) && (
+                  <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-[#ff8a34]" />
+                )}
+              </button>
               {state.mode === 'admin' && (
                 <button
                   type="button"
@@ -386,6 +543,29 @@ export function FamilyMapScreen() {
               )}
             </div>
             {state.profile?.preview && <p className="mb-2 text-xs font-semibold text-amber-600">미리보기 세션 · Google 계정으로 연결되지 않았습니다.</p>}
+            {(state.permissions.locationMode !== 'always' || osAccess === 'while-in-use') && (
+              <button type="button" onClick={() => setShowAccess(true)} className="mb-2 w-full rounded-2xl bg-amber-50 px-3 py-2 text-left text-[11px] font-semibold leading-5 text-amber-950">
+                위치가 앱 사용 중에만 허용되어 있으면 다음 날 가족 지도가 멈추기 쉽습니다. 설정에서 항상 허용으로 바꾸는 방법
+              </button>
+            )}
+            {detailId && state.members.some((member) => member.id === detailId) ? (
+              <MemberDetail
+                member={state.members.find((member) => member.id === detailId) as Member}
+                picture={detailId === 'self' ? state.profile?.picture ?? null : null}
+                home={state.mode === 'admin' ? state.home : null}
+                trail={state.tracks[detailId] ?? []}
+                segments={state.segments}
+                visits={state.visits}
+                activity={detailId === 'self' ? state.activity : null}
+                now={now}
+                onBack={() => setDetailId(null)}
+                onFocusPath={(points) => {
+                  if (points.length >= 2) mapRef.current?.fit(points);
+                  else if (points[0]) mapRef.current?.panTo(points[0].lat, points[0].lng);
+                }}
+                onShowVisits={() => setShowVisits(true)}
+              />
+            ) : (
             <div className="max-h-48 space-y-2 overflow-y-auto pb-2">
               {(state.mode === 'managed' ? state.members.filter((member) => member.id === 'self') : state.members.filter((member) => member.role !== 'guardian')).map((member) => (
                 <MemberCard
@@ -394,6 +574,10 @@ export function FamilyMapScreen() {
                   home={state.mode === 'admin' ? state.home : null}
                   selected={member.id === selected?.id}
                   onSelect={() => focusMember(member, true)}
+                  onDetail={() => {
+                    setDetailId(member.id);
+                    focusMember(member, true);
+                  }}
                   onRemove={state.mode === 'admin' && member.id !== 'self' ? () => setConfirm({ kind: 'remove', id: member.id, name: member.name }) : undefined}
                 />
               ))}
@@ -414,6 +598,7 @@ export function FamilyMapScreen() {
                 <p className="rounded-2xl bg-slate-50 px-3 py-3 text-xs leading-5 text-slate-500">아직 수락한 초대가 없습니다. 관리자에게 받은 코드로 참여한 뒤, 위치를 따로 허용하세요.</p>
               )}
             </div>
+            )}
           </section>
         )}
 
@@ -456,9 +641,12 @@ export function FamilyMapScreen() {
               <Line k="배터리 안내" v={state.permissions.battery === 'acknowledged' ? '확인함' : state.permissions.battery === 'skipped' ? '나중에' : '해당 없음'} />
             </dl>
             <p className="mt-3 text-xs leading-5 text-slate-400">
-              항상 허용은 선호로 저장됩니다. 이 버전은 앱이 열려 있는 동안 위치를 갱신하고, 권한을 몰래 올리지 않습니다.
+              항상 허용을 고르고 휴대폰 설정에서도 항상 허용이면, 앱을 내려 둔 동안 알림을 띄우고 위치를 보냅니다. 앱 사용 중에만 허용이면 화면이 꺼진 뒤와 다음 날에는 갱신이 멈출 수 있습니다. 확인 없이 권한을 올리지 않습니다.
             </p>
             <div className="mt-4 space-y-2">
+              <button type="button" onClick={() => setShowAccess(true)} className="w-full rounded-full bg-[#0084FF] py-3 font-bold text-white">
+                위치를 항상 허용으로 바꾸기
+              </button>
               <button type="button" onClick={family.reopenMode} className="w-full rounded-full bg-slate-100 py-3 font-bold">
                 모드 다시 고르기
               </button>
@@ -523,6 +711,42 @@ export function FamilyMapScreen() {
             onShare={(code, share) => family.setGuardianShare(code, share)}
           />
         )}
+        {chatCode && (
+          <FamilyChat
+            title="가족 대화"
+            messages={state.messages.filter((message) => message.code === chatCode)}
+            selfId={chatSelfId(state.profile, state.deviceId)}
+            legacy={chatLegacy}
+            onClose={() => setChatCode(null)}
+            onSend={(body) => {
+              if (!state.profile) return;
+              const message = createFamilyMessage({ code: chatCode, from: state.profile.name, fromId: chatSelfId(state.profile, state.deviceId), body });
+              if (!message) return;
+              family.ingestMessage(message);
+              family.markChatRead(chatCode, Date.now());
+              const tokenTask = state.mode === 'admin'
+                ? syncTokenFor(state.syncWriteKey, state.syncReadKey)
+                : Promise.resolve(state.guardians.find((link) => link.code === chatCode)?.syncToken ?? null);
+              void tokenTask.then((token) => deliverFamilyMessage(message, token));
+            }}
+          />
+        )}
+        {showAccess && (
+          <LocationHelp
+            native={isNativeApp()}
+            onClose={() => setShowAccess(false)}
+            onOpenSettings={() => {
+              void openLocationSettings();
+            }}
+            onSaveAlways={() => {
+              family.setLocationMode('always');
+              void requestAlwaysLocation().then((access) => {
+                if (access !== 'unsupported') setOsAccess(access);
+              });
+              setShowAccess(false);
+            }}
+          />
+        )}
         {confirm && (
           <ConfirmSheet
             title={confirm.kind === 'remove' ? '가족에서 지울까요?' : '연결을 끊을까요?'}
@@ -539,6 +763,30 @@ export function FamilyMapScreen() {
           />
         )}
       </div>
+    </div>
+  );
+}
+
+function InviteQr({ value }: { value: string }) {
+  const [src, setSrc] = useState('');
+  useEffect(() => {
+    let cancel = false;
+    QRCode.toDataURL(value, { width: 280, margin: 1, color: { dark: '#0f172a', light: '#ffffff' } })
+      .then((url) => {
+        if (!cancel) setSrc(url);
+      })
+      .catch(() => {
+        if (!cancel) setSrc('');
+      });
+    return () => {
+      cancel = true;
+    };
+  }, [value]);
+  if (!src) return <p className="mt-4 text-center text-xs text-slate-400">초대 QR을 만드는 중</p>;
+  return (
+    <div className="mt-4 text-center">
+      <img src={src} alt="가족 초대 QR" className="mx-auto h-44 w-44 rounded-2xl border border-slate-100" />
+      <p className="mt-2 text-xs leading-5 text-slate-400">피관리자 폰 카메라로 열면 초대 링크가 열립니다. 코드와 링크도 그대로 쓸 수 있습니다.</p>
     </div>
   );
 }
@@ -564,12 +812,14 @@ function MemberCard({
   home,
   selected,
   onSelect,
+  onDetail,
   onRemove,
 }: {
   member: Member;
   home: HomeZone | null;
   selected: boolean;
   onSelect: () => void;
+  onDetail?: () => void;
   onRemove?: () => void;
 }) {
   return (
@@ -583,10 +833,15 @@ function MemberCard({
           <span className="block text-xs text-slate-500">
             {memberStatus(member, home)}
             {member.battery != null ? ` · 배터리 ${member.battery}%` : ''}
-            {member.moving === true ? ' · 이동 중' : member.moving === false ? ' · 머무름' : ''}
+            {member.moveMode ? ` · ${member.moveMode === 'walk' ? '도보' : member.moveMode === 'bike' ? '자전거' : member.moveMode === 'car' ? '차량' : member.moveMode === 'plane' ? '비행기' : '머무름'}` : ''}
           </span>
         </span>
       </button>
+      {onDetail && (
+        <button type="button" onClick={onDetail} className="shrink-0 rounded-full bg-white px-2.5 py-1 text-[11px] font-bold text-[#0084FF]">
+          자세히
+        </button>
+      )}
       {onRemove && (
         <button type="button" onClick={onRemove} className="shrink-0 rounded-full bg-white px-2.5 py-1 text-[11px] font-bold text-slate-500">
           지우기
@@ -791,6 +1046,7 @@ function AdminInviteSheet({
     <Sheet title="2. 코드를 보내세요" onClose={onClose}>
       <p className="text-sm leading-6 text-slate-500">{sentName} 님 폰에서 피관리자 모드로 링크를 엽니다. 수락 다음에 위치 공유를 따로 묻습니다. 전화번호로는 위치를 찾지 않습니다.</p>
       <p className="mt-4 text-center text-4xl font-black tracking-[0.25em] text-[#0084FF]">{code}</p>
+      {token && <InviteQr value={buildInviteLink(code, home, token)} />}
       <label className="mt-4 block text-xs font-bold text-slate-400" htmlFor="sync-token">
         동기화 키
       </label>

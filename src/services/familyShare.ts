@@ -1,4 +1,30 @@
+import type { MoveMode, PlaceVisit, TripSegment } from '../lib/activity';
 import { publishPlaceRemote } from './familySync';
+
+export interface SharedSegment {
+  id: string;
+  mode: Exclude<MoveMode, 'still'>;
+  startAt: number;
+  endAt: number;
+  startLat: number;
+  startLng: number;
+  endLat: number;
+  endLng: number;
+  distanceM: number;
+  topSpeedMps: number;
+  steps: number | null;
+  stepsSource: 'device' | 'estimate' | null;
+  path: { lat: number; lng: number }[];
+}
+
+export interface SharedVisit {
+  id: string;
+  lat: number;
+  lng: number;
+  startedAt: number;
+  endedAt: number | null;
+  label: string;
+}
 
 export interface SharedPlace {
   code: string;
@@ -8,7 +34,14 @@ export interface SharedPlace {
   accuracyM: number;
   at: number;
   sharing: boolean;
+  battery?: number | null;
+  mode?: MoveMode | null;
+  speedMps?: number | null;
+  segment?: SharedSegment | null;
+  visits?: SharedVisit[];
 }
+
+export type { PlaceVisit, TripSegment };
 
 const STORAGE_KEY = 'umap_family_places_v1';
 const CHANNEL = 'umap-family-places';
@@ -37,6 +70,10 @@ export function readSharedPlaces(): SharedPlace[] {
   return Object.values(readMap());
 }
 
+function visitKey(visits: SharedVisit[] | undefined): string {
+  return (visits ?? []).map((visit) => `${visit.id}:${visit.endedAt ?? 0}`).join('|');
+}
+
 export function publishSharedPlace(place: SharedPlace, syncToken?: string | null) {
   const places = readMap();
   const current = places[place.code];
@@ -47,6 +84,10 @@ export function publishSharedPlace(place: SharedPlace, syncToken?: string | null
     current.lng === place.lng &&
     current.name === place.name &&
     current.accuracyM === place.accuracyM &&
+    current.battery === place.battery &&
+    current.mode === place.mode &&
+    current.segment?.id === place.segment?.id &&
+    visitKey(current.visits) === visitKey(place.visits) &&
     place.at - current.at < 7000;
   if (!same) {
     places[place.code] = place;

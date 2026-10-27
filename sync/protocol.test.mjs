@@ -215,6 +215,90 @@ test('health and dev server move a place between two clients', async () => {
   }
 });
 
+test('battery, trip, and chat sync without exposing places to a write key', async () => {
+  const store = createMemoryStore();
+  const code = '24680';
+  const writeKey = randomKey();
+  const readKey = randomKey();
+  const token = await syncTokenFor(writeKey, readKey);
+  const now = Date.now();
+  const place = {
+    code,
+    name: '하나',
+    lat: 37.551,
+    lng: 127.042,
+    accuracyM: 11,
+    at: now,
+    sharing: true,
+    battery: 23,
+    mode: 'walk',
+    speedMps: 1.2,
+    phone: '01012345678',
+    segment: {
+      id: 's-walk-1001',
+      mode: 'walk',
+      startAt: now - 60_000,
+      endAt: now - 1000,
+      startLat: 37.55,
+      startLng: 127.04,
+      endLat: 37.551,
+      endLng: 127.042,
+      distanceM: 240,
+      topSpeedMps: 1.6,
+      steps: 320,
+      stepsSource: 'estimate',
+      path: [
+        { lat: 37.55, lng: 127.04 },
+        { lat: 37.551, lng: 127.042 },
+      ],
+    },
+    visits: [{ id: 'v-home-1001', lat: 37.55, lng: 127.04, startedAt: now - 600_000, endedAt: now - 60_000, label: '우리 집' }],
+  };
+  const published = await call(store, 'PUT', `/v1/rooms/${code}/place`, { token, body: place });
+  assert.equal(published.status, 200);
+  assert.ok(JSON.stringify(place).length < 3500);
+
+  const message = await call(store, 'POST', `/v1/rooms/${code}/message`, {
+    token,
+    body: {
+      id: 'm-chat-10001',
+      code,
+      from: '하나',
+      fromId: 'user-1',
+      body: '집 앞에 도착했어',
+      at: now + 5,
+      phone: '01055556666',
+    },
+  });
+  assert.equal(message.status, 200);
+
+  const writerMessages = await call(store, 'GET', `/v1/rooms/${code}/messages`, { token });
+  assert.equal(writerMessages.status, 200);
+  assert.equal(writerMessages.body.messages.length, 1);
+  assert.equal(writerMessages.body.messages[0].body, '집 앞에 도착했어');
+  assert.equal(writerMessages.body.messages[0].phone, undefined);
+  assert.equal(writerMessages.body.places, undefined);
+  assert.equal(JSON.stringify(writerMessages.body).includes('37.551'), false);
+
+  const writerRoom = await call(store, 'GET', `/v1/rooms/${code}`, { token });
+  assert.equal(writerRoom.status, 403);
+
+  const reader = await call(store, 'GET', `/v1/rooms/${code}`, { token, readKey });
+  assert.equal(reader.body.places[0].battery, 23);
+  assert.equal(reader.body.places[0].mode, 'walk');
+  assert.equal(reader.body.places[0].segment.steps, 320);
+  assert.equal(reader.body.places[0].visits[0].label, '우리 집');
+  assert.equal(reader.body.places[0].phone, undefined);
+  assert.equal(reader.body.messages[0].fromId, 'user-1');
+  assert.equal(JSON.stringify(reader.body).includes('010'), false);
+
+  const empty = await call(store, 'POST', `/v1/rooms/${code}/message`, {
+    token,
+    body: { id: 'm-chat-10002', code, from: '하나', fromId: 'user-1', body: '   ', at: now + 6 },
+  });
+  assert.equal(empty.status, 400);
+});
+
 test('older sharing change at the same timestamp is kept when the flag flips', () => {
   const room = emptyRoom();
   const first = applyPlace(room, {

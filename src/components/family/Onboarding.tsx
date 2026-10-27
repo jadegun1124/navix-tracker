@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Bell, BatteryCharging, ChevronLeft, Footprints, MapPin, Shield, UserRound, Users } from 'lucide-react';
+import { GOOGLE_SIGN_IN_SCOPES } from '../../lib/googleScopes';
 import { decodeGoogleCredential, googleClientId, loadGoogleIdentity, previewProfile } from '../../services/googleAuth';
+import { openLocationSettings, requestAlwaysLocation, requestStepCounter } from '../../services/presence';
 import { REQUIRED_TERMS, type AppMode, type PermissionState, type Profile } from '../../types/family';
 import { useFamily } from './session';
 
@@ -183,6 +185,7 @@ function Login({ onGoogle }: { onGoogle: (profile: Profile) => void }) {
       <h1 className="mt-6 text-[28px] font-black leading-tight">Google로 Umap에 들어오기</h1>
       <p className="mt-3 text-sm leading-6 text-slate-600">
         가족 위치는 초대한 사람과 초대를 받은 사람만 나눕니다. 다른 사람의 번호만으로 위치를 찾지 않습니다.
+        Google에는 {GOOGLE_SIGN_IN_SCOPES.join(', ')} 만 요청합니다. 이름, 이메일, 프로필 사진만 받고 유료 Google API는 로그인에 쓰지 않습니다.
       </p>
       <div className="mt-10">
         {clientId && !gisError ? (
@@ -547,7 +550,7 @@ function Permissions({
           </div>
           {confirmAlways && (
             <div className="mt-4 rounded-2xl bg-white p-4 text-sm leading-6 text-slate-600 shadow-sm">
-              앱을 닫아 둔 동안에도 가족에게 위치를 보여 주겠다는 선택입니다. Umap은 이 화면에서 고르기 전에 백그라운드 권한으로 바꾸지 않습니다. 이 버전은 앱이 열려 있는 동안 위치를 갱신하고, 항상 허용은 그 선호로 저장합니다.
+              앱을 내려 둔 동안에도 가족에게 위치를 보내겠다는 선택입니다. 이 버튼을 누르기 전에는 백그라운드 권한으로 바꾸지 않습니다. 안드로이드에서는 설정에서 위치를 항상 허용으로 바꾼 뒤에만, 공유 중 알림을 켜고 화면이 꺼져도 보냅니다.
             </div>
           )}
           <div className="mt-auto space-y-2 pt-4 text-center">
@@ -573,6 +576,7 @@ function Permissions({
                 }
                 setBusy(true);
                 const result = await requestLocation(draft.accuracy === 'precise');
+                if (result !== 'denied') await requestAlwaysLocation();
                 setBusy(false);
                 const next = { ...draft, locationMode: result === 'denied' ? 'denied' as const : 'always' as const };
                 setDraft(next);
@@ -596,12 +600,13 @@ function Permissions({
         <Dialog
           icon={<Footprints className="h-7 w-7 text-[#0084FF]" />}
           title="움직임 정보로 위치 정확도를 높일까요?"
-          body="이동 중인지 머무르는지 구분합니다. 건강 기록이나 마이크는 보지 않습니다. 거절해도 지도는 사용할 수 있습니다."
+          body="이동 중인지 머무르는지 구분합니다. 걸음 수는 기기 만보계가 있으면 쓰고, 없으면 걸은 거리로 추정해 추정이라고 적습니다. 건강 기록이나 마이크는 보지 않습니다."
           busy={busy}
           primary="허용"
           onPrimary={async () => {
             setBusy(true);
             const motion = await requestMotion();
+            if (motion === 'granted') await requestStepCounter();
             setBusy(false);
             const next = { ...draft, motion };
             setDraft(next);
@@ -620,9 +625,12 @@ function Permissions({
           <BatteryCharging className="mt-6 h-8 w-8 text-[#0084FF]" />
           <h1 className="mt-4 text-2xl font-black leading-snug">배터리 최적화 안내</h1>
           <p className="mt-3 text-sm leading-6 text-slate-600">
-            항상 허용을 저장했습니다. 안드로이드에서 앱을 닫아도 위치를 나누려면 설정 &gt; 앱 &gt; Umap &gt; 배터리에서 제한 없음을 고를 수 있습니다. Umap은 그 설정으로 다른 앱을 보지 않으며, 이 화면에서 최적화 예외를 자동으로 요청하지 않습니다.
+            항상 허용을 저장했습니다. 휴대폰에서 설정, 앱, Umap, 권한, 위치로 들어가 항상 허용을 고르세요. 배터리에서 제한 없음을 고르면 다음 날 아침에도 공유가 이어지기 쉽습니다. Umap은 이 안내 없이 최적화 예외를 자동으로 요청하지 않습니다.
           </p>
           <div className="mt-auto space-y-3">
+            <button type="button" onClick={() => { void openLocationSettings(); }} className="w-full rounded-full bg-slate-100 py-3 font-bold">
+              설정에서 항상 허용 열기
+            </button>
             <button
               type="button"
               onClick={() => onDone({ ...draft, battery: 'acknowledged' })}
