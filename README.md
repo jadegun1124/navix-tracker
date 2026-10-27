@@ -10,12 +10,12 @@
 | :--- | :--- | :--- |
 | 회사 홈 | GitHub Pages | https://jadegun1124.github.io/umap/ |
 | 앱 화면 미리보기 | 같은 Pages의 `?app=1` | https://jadegun1124.github.io/umap/?app=1 |
-| 안드로이드 앱 | GitHub Releases APK v1.7.0 | https://github.com/jadegun1124/umap/releases/download/v1.7.0/umap-v1.7.0-tracker.apk |
-| 릴리스 페이지 | GitHub Releases | https://github.com/jadegun1124/umap/releases/tag/v1.7.0 |
+| 안드로이드 앱 | GitHub Releases APK v1.8.0 | https://github.com/jadegun1124/umap/releases/download/v1.8.0/umap-v1.8.0-tracker.apk |
+| 릴리스 페이지 | GitHub Releases | https://github.com/jadegun1124/umap/releases/tag/v1.8.0 |
 
 Google Play, App Store, TestFlight에는 올리지 않았습니다. iOS는 아이콘 에셋만 있고 설치 파일은 없습니다.
 
-`main`에 푸시하면 GitHub Actions가 회사 홈을 Pages에 배포하고, 같은 커밋으로 디버그 APK를 만들어 GitHub Release `v1.7.0`의 `umap-v1.7.0-tracker.apk`를 갱신합니다. 이전 빌드는 `v1.6.0`, `v1.5.0`, `v1.4.0`, `v1.3.0`, `v1.2.0`, `v1.1.0`, `v1.0.0`에 남아 있습니다.
+`main`에 푸시하면 GitHub Actions가 회사 홈을 Pages에 배포하고, 같은 커밋으로 디버그 APK를 만들어 GitHub Release `v1.8.0`의 `umap-v1.8.0-tracker.apk`를 갱신합니다. 이전 빌드는 `v1.7.0`, `v1.6.0`, `v1.5.0`, `v1.4.0`, `v1.3.0`, `v1.2.0`, `v1.1.0`, `v1.0.0`에 남아 있습니다.
 
 ## 화면
 
@@ -63,7 +63,7 @@ VITE_FAMILY_SYNC_URL=
   - 키는 `import.meta.env.VITE_VWORLD_API_KEY`만 읽습니다. 빌드 시점에 JS 안에 들어갑니다.
   - 키가 없으면 "키가 이 빌드에 없습니다"만 보여 주고 타일을 요청하지 않습니다. 키가 있는데 타일이 실패하면, 그 페이지의 주소(origin)를 인증키 도메인에 넣으라는 안내가 나옵니다. 타일이 한 장이라도 오면 안내는 사라집니다.
   - 인증키 서비스 URL: `https://jadegun1124.github.io`, 앱 `https://localhost`, 로컬 개발 `http://localhost:5173`.
-- 이동 경로: 서울 날짜로 오늘부터 30일 전까지 이 기기에 남기고, 그보다 오래된 점은 지웁니다. 정지는 반경 50m·3분, 구간은 정지와 정지 사이의 이동 시간입니다. 머무름이거나 이동이 정확도 반경 안이면 그 점은 선으로 잇지 않습니다. 정확한 위치와 고도는 건물 사이 다중경로로 점이 튀는 것까지 없애지 못합니다. 샘플 사람이나 예시 좌표는 없습니다.
+- 이동 경로: 서울 날짜로 오늘부터 30일 전까지 이 기기에 남기고, 그보다 오래된 점은 지웁니다. 정지는 반경 50m·3분, 구간은 정지와 정지 사이의 이동 시간입니다. 머무름이거나 이동이 정확도 반경 안이면 그 점은 선으로 잇지 않습니다. 아파트 사이에서 꺾였다 바로 돌아오는 삼각형은 그리기 전에 빼서, 관리자와 피관리자 자신의 선과 다른 폰에서 받은 선이 같은 기준으로 매끈해집니다. 골목 모서리처럼 이어서 걷는 꺾임은 남깁니다. 유료 도로 스냅은 쓰지 않습니다. 샘플 사람이나 예시 좌표는 없습니다.
 
 `VITE_GOOGLE_MAPS_API_KEY`는 가족 지도에서 쓰지 않습니다.
 
@@ -91,9 +91,9 @@ npm run dev
 
 ## 안드로이드 APK
 
-받는 곳: https://github.com/jadegun1124/umap/releases/download/v1.7.0/umap-v1.7.0-tracker.apk
+받는 곳: https://github.com/jadegun1124/umap/releases/download/v1.8.0/umap-v1.8.0-tracker.apk
 
-`main` 푸시마다 `Build Android APK (Umap)` 워크플로가 웹을 빌드하고 `dist` 를 안드로이드 에셋으로 복사한 뒤 `assembleDebug` 로 APK를 만듭니다. 결과 파일은 GitHub Release `v1.7.0`에 올립니다. 앱 `versionName`은 `1.7.0`, `versionCode`는 8입니다. Play 스토어 트랙은 없습니다.
+`main` 푸시마다 `Build Android APK (Umap)` 워크플로가 웹을 빌드하고 `dist` 를 안드로이드 에셋으로 복사한 뒤 `assembleDebug` 로 APK를 만듭니다. 결과 파일은 GitHub Release `v1.8.0`에 올립니다. 앱 `versionName`은 `1.8.0`, `versionCode`는 9입니다. Play 스토어 트랙은 없습니다.
 
 ## 데이터
 

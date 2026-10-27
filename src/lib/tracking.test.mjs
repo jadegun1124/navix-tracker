@@ -88,6 +88,74 @@ test('a still fix with ±12m accuracy does not draw a multipath triangle', () =>
   assert.equal(visibleTrail(settled.points).length, 1);
 });
 
+test('a still phone ignores one fast leap and keeps a sustained walk', () => {
+  const t = 1_700_000_000_000;
+  const origin = { lat: 37.5, lng: 127, at: t, accuracyM: 15, speedMps: 0, staying: true };
+  assert.equal(trailDecision(origin, { ...offset(origin, 110, 0, t + 20_000), speedMps: 0, staying: true, accuracyM: 15 }), 'snap');
+  assert.equal(trailDecision(origin, { ...offset(origin, 110, 0, t + 80_000), speedMps: 1.2, staying: true, accuracyM: 15 }), 'keep');
+});
+
+test('admin, managed, and remote trails drop courtyard spikes and keep a block corner', () => {
+  const t = 1_700_000_000_000;
+  const origin = { lat: 37.6362, lng: 127.0675, at: t, accuracyM: 15 };
+  const sawtooth = (withMotion) => {
+    const points = [];
+    for (let index = 0; index <= 8; index += 1) {
+      const point = offset(origin, index % 2 === 0 ? 0 : 72, index * 55, t + index * 12_000);
+      point.accuracyM = 15;
+      if (withMotion) {
+        point.speedMps = 1.3;
+        point.staying = false;
+      }
+      points.push(point);
+    }
+    return points;
+  };
+  const eastOf = (point) => (point.lng - origin.lng) * (111_320 * Math.cos((origin.lat * Math.PI) / 180));
+  const northOf = (point) => (point.lat - origin.lat) * 111_320;
+  for (const points of [sawtooth(true), sawtooth(false)]) {
+    const drawn = visibleTrail(points);
+    assert.ok(drawn.length >= 2);
+    assert.ok(drawn.length < points.length);
+    assert.ok(eastOf(drawn[drawn.length - 1]) > 350);
+    for (const point of drawn) assert.ok(Math.abs(northOf(point)) < 28);
+    let recorded = [points[0]];
+    for (const point of points.slice(1)) recorded = settleTrailPoint(recorded, point, point.at).points;
+    for (const point of visibleTrail(recorded)) assert.ok(Math.abs(northOf(point)) < 28);
+  }
+
+  const shaped = visibleTrail([
+    { ...origin, accuracyM: 12, speedMps: 1.3, staying: false },
+    { ...offset(origin, 180, 0, t + 160_000), accuracyM: 12, speedMps: 1.3, staying: false },
+    { ...offset(origin, 180, 180, t + 300_000), accuracyM: 12, speedMps: 1.3, staying: false },
+    { ...offset(origin, 180, 260, t + 360_000), accuracyM: 12, speedMps: 1.3, staying: false },
+  ]);
+  assert.ok(shaped.some((point) => northOf(point) > 140 && eastOf(point) < 40));
+
+  const opposite = [
+    [0, 0], [70, 40], [2, 90], [-68, 130], [0, 190], [75, 230], [0, 280],
+  ].map(([north, east], index) => ({
+    ...offset(origin, north, east, t + index * 20_000),
+    accuracyM: 15,
+    speedMps: 1.3,
+    staying: false,
+  }));
+  const flattened = visibleTrail(opposite);
+  assert.ok(eastOf(flattened[flattened.length - 1]) > 240);
+  for (const point of flattened) assert.ok(Math.abs(northOf(point)) < 20);
+
+  const drive = [0, 1, 2, 3, 4, 5].map((index) => ({
+    ...offset(origin, 0, index * 120, t + index * 8_000),
+    accuracyM: 8,
+    speedMps: 12,
+    staying: false,
+  }));
+  const driven = visibleTrail(drive);
+  assert.equal(driven[0].lat, drive[0].lat);
+  assert.ok(eastOf(driven[driven.length - 1]) > 500);
+  for (const point of driven) assert.ok(Math.abs(northOf(point)) < 12);
+});
+
 test('a move inside the accuracy radius is not a new vertex, and a poor fix is dropped', () => {
   const t = 1_700_000_000_000;
   const origin = { lat: 37.5, lng: 127, at: t, accuracyM: 12, speedMps: 1.2, staying: false };
