@@ -10,6 +10,17 @@ export interface TrackPoint {
   lat: number;
   lng: number;
   at: number;
+  speedMps?: number | null;
+}
+
+export interface Visit {
+  id: string;
+  lat: number;
+  lng: number;
+  label: string | null;
+  arrivedAt: number;
+  leftAt: number | null;
+  source: 'geocode' | 'coords';
 }
 
 export type AppMode = 'admin' | 'managed';
@@ -18,11 +29,12 @@ export type ShareState = 'invited' | 'accepted' | 'allowed' | 'revoked';
 export interface Member {
   id: string;
   name: string;
-  role: 'self' | 'child' | 'guardian';
+  role: 'self' | 'child' | 'guardian' | 'admin-share';
   lat: number | null;
   lng: number | null;
   accuracyM: number;
   battery: number | null;
+  charging: boolean | null;
   updatedAt: number;
   moving: boolean | null;
   inviteCode?: string;
@@ -83,6 +95,10 @@ export interface Session {
   permissions: PermissionState;
   members: Member[];
   tracks: Record<string, TrackPoint[]>;
+  trailDay: string;
+  visits: Record<string, Visit[]>;
+  shareSelfWithFamily: boolean;
+  backgroundKeepAlive: boolean;
   home: HomeZone | null;
   inviteCode: string;
   notices: FamilyNotice[];

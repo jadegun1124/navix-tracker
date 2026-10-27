@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Bell, BatteryCharging, ChevronLeft, Footprints, MapPin, Shield, UserRound, Users } from 'lucide-react';
+import { GOOGLE_SIGN_IN_SCOPES } from '../../lib/authScopes.mjs';
 import { decodeGoogleCredential, googleClientId, loadGoogleIdentity, previewProfile } from '../../services/googleAuth';
+import { openAppSettings } from '../../services/umapLocation';
 import { REQUIRED_TERMS, type AppMode, type PermissionState, type Profile } from '../../types/family';
 import { useFamily } from './session';
 
@@ -155,6 +157,7 @@ function Login({ onGoogle }: { onGoogle: (profile: Profile) => void }) {
             const profile = decodeGoogleCredential(response.credential);
             if (profile) onGoogleRef.current(profile);
           },
+          // GIS ID token only. Scopes stay openid, email, profile. No oauth2 token client.
           ux_mode: 'popup',
           auto_select: false,
           cancel_on_tap_outside: true,
@@ -183,6 +186,9 @@ function Login({ onGoogle }: { onGoogle: (profile: Profile) => void }) {
       <h1 className="mt-6 text-[28px] font-black leading-tight">Google로 Umap에 들어오기</h1>
       <p className="mt-3 text-sm leading-6 text-slate-600">
         가족 위치는 초대한 사람과 초대를 받은 사람만 나눕니다. 다른 사람의 번호만으로 위치를 찾지 않습니다.
+      </p>
+      <p className="mt-2 text-xs leading-5 text-slate-500">
+        Google 로그인은 {GOOGLE_SIGN_IN_SCOPES.join(', ')} 만 사용합니다. 이름, 이메일, 프로필 사진 외의 권한은 요청하지 않습니다.
       </p>
       <div className="mt-10">
         {clientId && !gisError ? (
@@ -547,7 +553,11 @@ function Permissions({
           </div>
           {confirmAlways && (
             <div className="mt-4 rounded-2xl bg-white p-4 text-sm leading-6 text-slate-600 shadow-sm">
-              앱을 닫아 둔 동안에도 가족에게 위치를 보여 주겠다는 선택입니다. Umap은 이 화면에서 고르기 전에 백그라운드 권한으로 바꾸지 않습니다. 이 버전은 앱이 열려 있는 동안 위치를 갱신하고, 항상 허용은 그 선호로 저장합니다.
+              <p>다음날에도 위치를 보내려면 휴대폰 위치 접근을 항상 허용으로 바꿔야 합니다. 앱을 쓰는 동안에만 허용하면 화면이 꺼진 뒤나 다음 날에 갱신이 멈출 수 있습니다.</p>
+              <p className="mt-2">Umap은 이 권한을 대신 바꾸지 않습니다. 아래 버튼은 앱 설정만 엽니다. 설정 &gt; 권한 &gt; 위치 &gt; 항상 허용을 직접 고르세요.</p>
+              <button type="button" onClick={() => void openAppSettings()} className="mt-3 w-full rounded-full bg-slate-100 py-2 text-sm font-bold text-slate-700">
+                앱 설정 열기
+              </button>
             </div>
           )}
           <div className="mt-auto space-y-2 pt-4 text-center">
@@ -620,8 +630,11 @@ function Permissions({
           <BatteryCharging className="mt-6 h-8 w-8 text-[#0084FF]" />
           <h1 className="mt-4 text-2xl font-black leading-snug">배터리 최적화 안내</h1>
           <p className="mt-3 text-sm leading-6 text-slate-600">
-            항상 허용을 저장했습니다. 안드로이드에서 앱을 닫아도 위치를 나누려면 설정 &gt; 앱 &gt; Umap &gt; 배터리에서 제한 없음을 고를 수 있습니다. Umap은 그 설정으로 다른 앱을 보지 않으며, 이 화면에서 최적화 예외를 자동으로 요청하지 않습니다.
+            항상 허용 선호를 저장했습니다. 설정 &gt; 앱 &gt; Umap &gt; 권한 &gt; 위치에서 항상 허용을, 배터리에서 제한 없음을 직접 고르면 다음 날에도 이어질 가능성이 높습니다. Umap은 그 설정을 대신 바꾸지 않고, 배터리 최적화 예외도 자동으로 요청하지 않습니다. 지도에서 위치 유지 알림을 켜면 알림이 떠 있는 동안 위치를 보냅니다.
           </p>
+          <button type="button" onClick={() => void openAppSettings()} className="mt-4 w-full rounded-full bg-slate-100 py-3 text-sm font-bold">
+            앱 설정 열기
+          </button>
           <div className="mt-auto space-y-3">
             <button
               type="button"

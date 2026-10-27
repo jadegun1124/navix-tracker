@@ -1,6 +1,9 @@
 import React, { createContext, useContext, useEffect, useReducer } from 'react';
 import { appendTrail, hasLocation } from '../../lib/geo';
+import { needsDailyWipe, seoulDayKey, tracksForSeoulDay, TRAIL_POINT_CAP, visitsForSeoulDay } from '../../lib/tracking.mjs';
+import type { DayStop } from '../../lib/tracking.mjs';
 import type { SharedPlace } from '../../services/familyShare';
+import { umapLocation } from '../../services/umapLocation';
 import { createKeyPart, isKeyPart, splitSyncToken } from '../../services/familySync';
 import {
   DEFAULT_CENTER,
@@ -18,6 +21,7 @@ import {
   type ShareState,
   type Stage,
   type TrackPoint,
+  type Visit,
 } from '../../types/family';
 
 const STORAGE_KEY = 'umap_family_v1';
@@ -105,6 +109,10 @@ function fresh(stage: Stage = 'splash'): Session {
     permissions: { ...EMPTY_PERMISSIONS },
     members: [],
     tracks: {},
+    trailDay: seoulDayKey(Date.now()),
+    visits: {},
+    shareSelfWithFamily: false,
+    backgroundKeepAlive: false,
     home: null,
     inviteCode: String(10000 + Math.floor(Math.random() * 90000)),
     notices: [],
@@ -171,6 +179,7 @@ function membersFor(profile: Profile): Member[] {
       lng: null,
       accuracyM: 0,
       battery: null,
+      charging: null,
       updatedAt: Date.now(),
       moving: null,
       share: 'allowed',
@@ -193,10 +202,43 @@ function cleanTracks(value: unknown): Record<string, TrackPoint[]> {
   const tracks: Record<string, TrackPoint[]> = {};
   for (const [id, points] of Object.entries(value as Record<string, unknown>)) {
     if (!Array.isArray(points)) continue;
-    const clean = points.filter(isPoint).slice(-300);
+    const clean = points.filter(isPoint).slice(-TRAIL_POINT_CAP);
     if (clean.length > 0) tracks[id] = clean;
   }
   return tracks;
+}
+
+function cleanVisits(value: unknown): Record<string, Visit[]> {
+  if (!value || typeof value !== 'object') return {};
+  const visits: Record<string, Visit[]> = {};
+  for (const [id, list] of Object.entries(value as Record<string, unknown>)) {
+    if (!Array.isArray(list)) continue;
+    const clean: Visit[] = [];
+    for (const item of list) {
+      if (!item || typeof item !== 'object') continue;
+      const visit = item as Visit;
+      if (typeof visit.id !== 'string' || !Number.isFinite(visit.lat) || !Number.isFinite(visit.lng) || !Number.isFinite(visit.arrivedAt)) continue;
+      clean.push({
+        id: visit.id.slice(0, 120),
+        lat: visit.lat,
+        lng: visit.lng,
+        arrivedAt: visit.arrivedAt,
+        leftAt: typeof visit.leftAt === 'number' && Number.isFinite(visit.leftAt) ? visit.leftAt : null,
+        label: typeof visit.label === 'string' && visit.label.trim() ? visit.label.trim().slice(0, 120) : null,
+        source: visit.source === 'geocode' ? 'geocode' : 'coords',
+      });
+    }
+    if (clean.length > 0) visits[id] = clean.slice(-40);
+  }
+  return visits;
+}
+
+function visitsSame(current: Visit[], next: Visit[]): boolean {
+  if (current.length !== next.length) return false;
+  return current.every((visit, index) => {
+    const other = next[index];
+    return other && visit.id === other.id && visit.leftAt === other.leftAt && visit.lat === other.lat && visit.lng === other.lng && visit.label === other.label;
+  });
 }
 
 function asShare(value: unknown, self: boolean): ShareState {
@@ -241,9 +283,13 @@ function withoutDemo(session: Session): Session {
     .filter((member) => member.id !== 'sample' && member.name !== '샘플' && member.role !== 'guardian' && !('isSample' in member && (member as { isSample?: boolean }).isSample))
     .map((member) => {
       const renamed = member.id === 'self' && previewAlias ? { ...member, name: '나' } : member;
-      const share = asShare(renamed.share, renamed.id === 'self');
-      if (renamed.id !== 'self' && share !== 'allowed') return { ...renamed, share, lat: null, lng: null };
-      return scrubSeed(renamed, share);
+      const share = renamed.role === 'admin-share' ? 'allowed' : asShare(renamed.share, renamed.id === 'self');
+      const charging = renamed.charging === true ? true : renamed.charging === false ? false : null;
+      const battery = typeof renamed.battery === 'number' && renamed.battery >= 0 && renamed.battery <= 100 ? Math.round(renamed.battery) : null;
+      const next = { ...renamed, share, charging, battery };
+      if (renamed.role === 'admin-share') return next;
+      if (renamed.id !== 'self' && share !== 'allowed') return { ...next, lat: null, lng: null };
+      return scrubSeed(next, share);
     });
   const kept = new Set(members.filter((member) => member.id === 'self' || hasLocation(member)).map((member) => member.id));
   const tracks: Record<string, TrackPoint[]> = {};
@@ -292,9 +338,20 @@ function load(): Session {
       syncWriteKey: isKeyPart(parsed.syncWriteKey) ? parsed.syncWriteKey : base.syncWriteKey,
       syncReadKey: isKeyPart(parsed.syncReadKey) ? parsed.syncReadKey : base.syncReadKey,
       pendingSyncToken: pendingSyncToken || cleanSyncToken(parsed.pendingSyncToken),
+      trailDay: typeof parsed.trailDay === 'string' ? parsed.trailDay : '',
+      visits: cleanVisits(parsed.visits),
+      shareSelfWithFamily: parsed.shareSelfWithFamily === true,
+      backgroundKeepAlive: parsed.backgroundKeepAlive === true,
     };
     if (session.profile && session.permissions.completed) session.stage = session.mode ? 'map' : 'mode';
-    return withoutDemo(session);
+    const loaded = withoutDemo(session);
+    const now = Date.now();
+    return {
+      ...loaded,
+      trailDay: seoulDayKey(now),
+      tracks: tracksForSeoulDay(loaded.tracks, now),
+      visits: visitsForSeoulDay(loaded.visits, now),
+    };
   } catch {
     return { ...fresh(), pendingSyncToken };
   }
@@ -325,8 +382,15 @@ type Action =
   | { type: 'leave-guardian'; id: string }
   | { type: 'dismiss-invite' }
   | { type: 'mark-alerts-read' }
-  | { type: 'update-self'; lat: number; lng: number; accuracyM: number }
+  | { type: 'update-self'; lat: number; lng: number; accuracyM: number; speedMps: number | null }
+  | { type: 'set-battery'; battery: number | null; charging: boolean | null }
+  | { type: 'roll-day'; now: number }
+  | { type: 'set-share-self'; share: boolean }
+  | { type: 'set-keep-alive'; on: boolean }
   | { type: 'apply-shared-place'; place: SharedPlace }
+  | { type: 'set-room-family-places'; code: string; places: SharedPlace[] }
+  | { type: 'merge-visits'; memberId: string; stops: DayStop[] }
+  | { type: 'set-visit-label'; memberId: string; id: string; label: string }
   | { type: 'set-motion'; moving: boolean }
   | { type: 'notice'; notice: FamilyNotice }
   | { type: 'logout' }
@@ -410,6 +474,7 @@ function reducer(state: Session, action: Action): Session {
         lng: null,
         accuracyM: 0,
         battery: null,
+        charging: null,
         updatedAt: Date.now(),
         moving: null,
         inviteCode: action.code,
@@ -486,23 +551,57 @@ function reducer(state: Session, action: Action): Session {
       return { ...state, notices: state.notices.map((item) => ({ ...item, read: true })) };
     case 'update-self': {
       const at = Date.now();
+      const wiped = needsDailyWipe(state.trailDay, at);
+      const tracks = wiped ? {} : state.tracks;
+      const visits = wiped ? {} : state.visits;
+      const speed = typeof action.speedMps === 'number' && Number.isFinite(action.speedMps) ? action.speedMps : null;
       return {
         ...state,
+        trailDay: seoulDayKey(at),
+        visits,
         members: state.members.map((member) =>
           member.id === 'self'
             ? { ...member, lat: action.lat, lng: action.lng, accuracyM: Math.max(1, Math.round(action.accuracyM)), updatedAt: at }
             : member,
         ),
         tracks: {
-          ...state.tracks,
-          self: appendTrail(state.tracks.self, { lat: action.lat, lng: action.lng, at }),
+          ...tracks,
+          self: appendTrail(tracks.self, { lat: action.lat, lng: action.lng, at, speedMps: speed }),
         },
       };
     }
+    case 'set-battery': {
+      const self = state.members.find((member) => member.id === 'self');
+      if (!self || (self.battery === action.battery && self.charging === action.charging)) return state;
+      return {
+        ...state,
+        members: state.members.map((member) => (member.id === 'self' ? { ...member, battery: action.battery, charging: action.charging } : member)),
+      };
+    }
+    case 'roll-day': {
+      if (!needsDailyWipe(state.trailDay, action.now)) return state;
+      return {
+        ...state,
+        trailDay: seoulDayKey(action.now),
+        tracks: tracksForSeoulDay(state.tracks, action.now),
+        visits: visitsForSeoulDay(state.visits, action.now),
+      };
+    }
+    case 'set-share-self':
+      if (state.mode !== 'admin' || state.shareSelfWithFamily === action.share) return state;
+      return {
+        ...state,
+        shareSelfWithFamily: action.share,
+        notices: [notice(action.share ? '내 위치를 가족에게 공유합니다' : '내 위치 공유를 껐습니다', action.share ? '피관리자 지도에 내 핀이 나타납니다. 언제든 끌 수 있습니다.' : '피관리자 지도에서 내 핀이 곧 사라집니다.'), ...state.notices],
+      };
+    case 'set-keep-alive':
+      if (state.backgroundKeepAlive === action.on) return state;
+      return { ...state, backgroundKeepAlive: action.on };
     case 'apply-shared-place': {
       if (state.mode !== 'admin') return state;
       const place = action.place;
-      const children = state.members.filter((member) => member.id !== 'self' && member.role !== 'guardian' && member.inviteCode === place.code);
+      if (place.audience === 'family') return state;
+      const children = state.members.filter((member) => member.id !== 'self' && member.role !== 'guardian' && member.role !== 'admin-share' && member.inviteCode === place.code);
       const member = children.find((item) => item.name === place.name) ?? (children.length === 1 ? children[0] : undefined);
       if (!member) return state;
       if (!place.sharing) {
@@ -523,10 +622,18 @@ function reducer(state: Session, action: Action): Session {
         };
       }
       if (isSeedLocation(place.lat, place.lng) && place.accuracyM === 18) return state;
-      if (member.share === 'allowed' && member.lat === place.lat && member.lng === place.lng) return state;
       if (member.updatedAt > place.at && hasLocation(member)) return state;
+      const battery = typeof place.batteryPct === 'number' ? Math.round(place.batteryPct) : member.battery;
+      const charging = place.charging === true ? true : place.charging === false ? false : member.charging;
+      const sameSpot = hasLocation(member) && member.lat === place.lat && member.lng === place.lng;
+      if (sameSpot && member.updatedAt === place.at && member.battery === battery && member.charging === charging && member.share === 'allowed') return state;
+      const today = seoulDayKey(Date.now());
+      const tracks = needsDailyWipe(state.trailDay, Date.now()) ? {} : { ...state.tracks };
+      if (seoulDayKey(place.at) === today) tracks[member.id] = appendTrail(tracks[member.id], { lat: place.lat, lng: place.lng, at: place.at });
       return {
         ...state,
+        trailDay: today,
+        visits: needsDailyWipe(state.trailDay, Date.now()) ? {} : state.visits,
         members: state.members.map((item) =>
           item.id === member.id
             ? {
@@ -535,13 +642,100 @@ function reducer(state: Session, action: Action): Session {
                 lat: place.lat,
                 lng: place.lng,
                 accuracyM: Math.max(1, Math.round(place.accuracyM || item.accuracyM || 1)),
+                battery,
+                charging,
                 updatedAt: place.at,
               }
             : item,
         ),
-        tracks: {
-          ...state.tracks,
-          [member.id]: appendTrail(state.tracks[member.id], { lat: place.lat, lng: place.lng, at: place.at }),
+        tracks,
+      };
+    }
+    case 'set-room-family-places': {
+      if (state.mode !== 'managed') return state;
+      const prefix = `family:${action.code}:`;
+      const now = Date.now();
+      const today = seoulDayKey(now);
+      const wiped = needsDailyWipe(state.trailDay, now);
+      const incoming = action.places.filter((place) => place.audience === 'family' && place.sharing && place.lat != null && place.lng != null && Number.isFinite(place.lat) && Number.isFinite(place.lng));
+      const current = state.members.filter((member) => member.id.startsWith(prefix));
+      const unchanged = !wiped && current.length === incoming.length && incoming.every((place) => {
+        const member = current.find((item) => item.id === `family:${action.code}:${place.name}`);
+        const battery = typeof place.batteryPct === 'number' ? Math.round(place.batteryPct) : null;
+        const charging = place.charging === true ? true : place.charging === false ? false : null;
+        return !!member && member.updatedAt === place.at && member.lat === place.lat && member.lng === place.lng && member.battery === battery && member.charging === charging;
+      });
+      if (unchanged) return state;
+      let tracks = wiped ? {} : { ...state.tracks };
+      const visits = wiped ? {} : state.visits;
+      let members = state.members.filter((member) => !member.id.startsWith(prefix));
+      for (const place of incoming) {
+        if (place.lat == null || place.lng == null) continue;
+        const id = `family:${action.code}:${place.name}`;
+        const battery = typeof place.batteryPct === 'number' ? Math.round(place.batteryPct) : null;
+        const charging = place.charging === true ? true : place.charging === false ? false : null;
+        members = [...members, {
+          id,
+          name: place.name,
+          role: 'admin-share',
+          lat: place.lat,
+          lng: place.lng,
+          accuracyM: Math.max(1, Math.round(place.accuracyM || 1)),
+          battery,
+          charging,
+          updatedAt: place.at,
+          moving: null,
+          share: 'allowed',
+        }];
+        if (seoulDayKey(place.at) === today) tracks = { ...tracks, [id]: appendTrail(tracks[id], { lat: place.lat, lng: place.lng, at: place.at }) };
+        else delete tracks[id];
+      }
+      for (const member of current) {
+        if (!members.some((item) => item.id === member.id)) delete tracks[member.id];
+      }
+      return { ...state, members, tracks, visits, trailDay: today };
+    }
+    case 'merge-visits': {
+      const now = Date.now();
+      const today = seoulDayKey(now);
+      const wiped = needsDailyWipe(state.trailDay, now);
+      const base = wiped ? {} : state.visits;
+      const current = base[action.memberId] ?? [];
+      const next = action.stops
+        .filter((stop) => seoulDayKey(stop.arrivedAt) === today)
+        .map((stop) => {
+          const id = `${action.memberId}:${stop.arrivedAt}:${stop.lat.toFixed(4)}:${stop.lng.toFixed(4)}`;
+          const prev = current.find((visit) => visit.id === id);
+          return {
+            id,
+            lat: stop.lat,
+            lng: stop.lng,
+            arrivedAt: stop.arrivedAt,
+            leftAt: stop.leftAt,
+            label: prev?.label ?? null,
+            source: prev?.label ? 'geocode' as const : 'coords' as const,
+          };
+        })
+        .slice(-40);
+      if (!wiped && visitsSame(current, next)) return state;
+      const visits = { ...base };
+      if (next.length > 0) visits[action.memberId] = next;
+      else delete visits[action.memberId];
+      return {
+        ...state,
+        trailDay: today,
+        tracks: wiped ? tracksForSeoulDay(state.tracks, now) : state.tracks,
+        visits,
+      };
+    }
+    case 'set-visit-label': {
+      const list = state.visits[action.memberId];
+      if (!list || list.some((visit) => visit.id === action.id && visit.label === action.label)) return state;
+      return {
+        ...state,
+        visits: {
+          ...state.visits,
+          [action.memberId]: list.map((visit) => (visit.id === action.id ? { ...visit, label: action.label, source: 'geocode' } : visit)),
         },
       };
     }
@@ -587,8 +781,15 @@ interface FamilyApi {
   leaveGuardian: (id: string) => void;
   dismissInvite: () => void;
   markAlertsRead: () => void;
-  updateSelf: (lat: number, lng: number, accuracyM: number) => void;
+  updateSelf: (lat: number, lng: number, accuracyM: number, speedMps?: number | null) => void;
+  setBattery: (battery: number | null, charging: boolean | null) => void;
+  rollDay: (now: number) => void;
+  setShareSelf: (share: boolean) => void;
+  setKeepAlive: (on: boolean) => void;
   applySharedPlace: (place: SharedPlace) => void;
+  setRoomFamilyPlaces: (code: string, places: SharedPlace[]) => void;
+  mergeVisits: (memberId: string, stops: DayStop[]) => void;
+  setVisitLabel: (memberId: string, id: string, label: string) => void;
   setMotion: (moving: boolean) => void;
   pushNotice: (title: string, body: string) => void;
   logout: () => void;
@@ -599,6 +800,11 @@ const FamilyContext = createContext<FamilyApi | null>(null);
 
 export function FamilyProvider({ children }: { children: React.ReactNode }) {
   const [state, dispatch] = useReducer(reducer, undefined, load);
+
+  useEffect(() => {
+    if (state.profile) return;
+    void umapLocation.stop();
+  }, [state.profile]);
 
   useEffect(() => {
     const raw = JSON.stringify(state);
@@ -640,8 +846,15 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
     leaveGuardian: (id) => dispatch({ type: 'leave-guardian', id }),
     dismissInvite: () => dispatch({ type: 'dismiss-invite' }),
     markAlertsRead: () => dispatch({ type: 'mark-alerts-read' }),
-    updateSelf: (lat, lng, accuracyM) => dispatch({ type: 'update-self', lat, lng, accuracyM }),
+    updateSelf: (lat, lng, accuracyM, speedMps) => dispatch({ type: 'update-self', lat, lng, accuracyM, speedMps: speedMps ?? null }),
+    setBattery: (battery, charging) => dispatch({ type: 'set-battery', battery, charging }),
+    rollDay: (now) => dispatch({ type: 'roll-day', now }),
+    setShareSelf: (share) => dispatch({ type: 'set-share-self', share }),
+    setKeepAlive: (on) => dispatch({ type: 'set-keep-alive', on }),
     applySharedPlace: (place) => dispatch({ type: 'apply-shared-place', place }),
+    setRoomFamilyPlaces: (code, places) => dispatch({ type: 'set-room-family-places', code, places }),
+    mergeVisits: (memberId, stops) => dispatch({ type: 'merge-visits', memberId, stops }),
+    setVisitLabel: (memberId, id, label) => dispatch({ type: 'set-visit-label', memberId, id, label }),
     setMotion: (moving) => dispatch({ type: 'set-motion', moving }),
     pushNotice: (title, body) => dispatch({ type: 'notice', notice: notice(title, body) }),
     logout: () => dispatch({ type: 'logout' }),

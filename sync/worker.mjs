@@ -1,4 +1,4 @@
-import { applyAlert, applyPlace, emptyRoom, parseOperation, viewRoom, withCors } from './protocol.mjs';
+import { applyAlert, applyPlace, emptyRoom, parseOperation, viewFamilyPlaces, viewRoom, withCors } from './protocol.mjs';
 
 // One Durable Object per family room. The id is a hash of the invite code,
 // the write key, and the read-key hash. The read key itself is not stored.
@@ -11,6 +11,7 @@ export class FamilyRoom {
     const op = await request.json();
     let room = (await this.ctx.storage.get('room')) || emptyRoom();
     if (op.kind === 'get') return Response.json(viewRoom(room, op.since));
+    if (op.kind === 'family') return Response.json(viewFamilyPlaces(room));
     if (op.kind === 'place') {
       const next = applyPlace(room, op.place);
       if (!next.ignored) {

@@ -1,3 +1,5 @@
+import { shouldKeepTrailPoint, TRAIL_POINT_CAP } from './tracking.mjs';
+
 export function haversineMeters(
   a: { lat: number; lng: number },
   b: { lat: number; lng: number },
@@ -28,6 +30,7 @@ export interface TrailPoint {
   lat: number;
   lng: number;
   at: number;
+  speedMps?: number | null;
 }
 
 export function hasLocation<T extends { lat: number | null; lng: number | null }>(
@@ -37,11 +40,21 @@ export function hasLocation<T extends { lat: number | null; lng: number | null }
 }
 
 export function appendTrail(points: TrailPoint[] | undefined, point: TrailPoint): TrailPoint[] {
-  const list = points ? points.slice(-299) : [];
+  const list = points ? points.slice(-(TRAIL_POINT_CAP - 1)) : [];
   const last = list[list.length - 1];
-  if (last && haversineMeters(last, point) < 12) return points ? points.slice(-300) : [];
+  if (last && !shouldKeepTrailPoint(last, point)) return points ?? [];
   list.push(point);
-  return list.slice(-300);
+  return list.slice(-TRAIL_POINT_CAP);
+}
+
+export function formatAgo(at: number, now = Date.now()): string {
+  const delta = Math.max(0, now - at);
+  if (delta < 45_000) return '방금';
+  const minutes = Math.round(delta / 60_000);
+  if (minutes < 60) return `${minutes}분 전`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}시간 전`;
+  return `${Math.floor(hours / 24)}일 전`;
 }
 
 export function buildInviteLink(

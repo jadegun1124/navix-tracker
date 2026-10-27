@@ -8,6 +8,9 @@ export interface SharedPlace {
   accuracyM: number;
   at: number;
   sharing: boolean;
+  batteryPct?: number | null;
+  charging?: boolean | null;
+  audience?: 'admin' | 'family';
 }
 
 const STORAGE_KEY = 'umap_family_places_v1';
@@ -16,7 +19,17 @@ const CHANNEL = 'umap-family-places';
 function isPlace(value: unknown): value is SharedPlace {
   if (!value || typeof value !== 'object') return false;
   const place = value as SharedPlace;
+  if (place.audience != null && place.audience !== 'admin' && place.audience !== 'family') return false;
   return typeof place.code === 'string' && place.code.length >= 4 && typeof place.at === 'number' && typeof place.sharing === 'boolean';
+}
+
+function storageKey(place: SharedPlace): string {
+  const audience = place.audience === 'family' ? 'family' : 'admin';
+  return `${place.code}:${audience}:${place.name}`;
+}
+
+function batteryOf(place: SharedPlace): number | null {
+  return typeof place.batteryPct === 'number' && place.batteryPct >= 0 && place.batteryPct <= 100 ? Math.round(place.batteryPct) : null;
 }
 
 function readMap(): Record<string, SharedPlace> {
@@ -39,7 +52,14 @@ export function readSharedPlaces(): SharedPlace[] {
 
 export function publishSharedPlace(place: SharedPlace, syncToken?: string | null) {
   const places = readMap();
-  const current = places[place.code];
+  const key = storageKey(place);
+  const legacy = places[place.code];
+  if (legacy && legacy.name === place.name && (legacy.audience === 'family' ? 'family' : 'admin') === (place.audience === 'family' ? 'family' : 'admin')) {
+    delete places[place.code];
+  }
+  const current = places[key];
+  const battery = batteryOf(place);
+  const charging = place.charging === true ? true : place.charging === false ? false : null;
   const same =
     current &&
     current.sharing === place.sharing &&
@@ -47,9 +67,12 @@ export function publishSharedPlace(place: SharedPlace, syncToken?: string | null
     current.lng === place.lng &&
     current.name === place.name &&
     current.accuracyM === place.accuracyM &&
+    batteryOf(current) === battery &&
+    (current.charging === true ? true : current.charging === false ? false : null) === charging &&
+    (current.audience === 'family' ? 'family' : 'admin') === (place.audience === 'family' ? 'family' : 'admin') &&
     place.at - current.at < 7000;
   if (!same) {
-    places[place.code] = place;
+    places[key] = { ...place, batteryPct: battery, charging };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(places));
     try {
       const channel = new BroadcastChannel(CHANNEL);

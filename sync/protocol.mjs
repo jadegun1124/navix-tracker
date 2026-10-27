@@ -97,6 +97,28 @@ function cleanStamp(at, now) {
   return typeof at === 'number' && Number.isFinite(at) && at >= EARLIEST_AT && at <= now + FUTURE_SKEW_MS;
 }
 
+function cleanAudience(input) {
+  if (input.audience == null) return 'admin';
+  if (input.audience === 'admin' || input.audience === 'family') return input.audience;
+  return null;
+}
+
+function cleanBattery(input, sharing) {
+  if (!sharing) return { batteryPct: null, charging: null };
+  let batteryPct = null;
+  if (input.batteryPct != null) {
+    const value = Number(input.batteryPct);
+    if (!Number.isFinite(value) || value < 0 || value > 100) return null;
+    batteryPct = Math.round(value);
+  }
+  let charging = null;
+  if (input.charging != null) {
+    if (typeof input.charging !== 'boolean') return null;
+    charging = input.charging;
+  }
+  return { batteryPct, charging };
+}
+
 function cleanPlace(input, code, now) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return { error: json({ error: 'place' }, 400) };
   if (input.code !== code || !CODE_PART.test(code)) return { error: json({ error: 'code' }, 400) };
@@ -105,6 +127,10 @@ function cleanPlace(input, code, now) {
   if (!name) return { error: json({ error: 'name' }, 400) };
   if (typeof input.sharing !== 'boolean') return { error: json({ error: 'sharing' }, 400) };
   if (!cleanStamp(input.at, now)) return { error: json({ error: 'at' }, 400) };
+  const audience = cleanAudience(input);
+  if (!audience) return { error: json({ error: 'audience' }, 400) };
+  const battery = cleanBattery(input, input.sharing);
+  if (!battery) return { error: json({ error: 'battery' }, 400) };
 
   let lat = input.lat;
   let lng = input.lng;
@@ -138,6 +164,9 @@ function cleanPlace(input, code, now) {
       accuracyM,
       at: input.at,
       sharing: input.sharing,
+      audience,
+      batteryPct: battery.batteryPct,
+      charging: battery.charging,
     },
   };
 }
@@ -155,11 +184,26 @@ function cleanAlert(input, code, now) {
   return { alert: { id: input.id, kind: input.kind, code, from, body, at: input.at } };
 }
 
+function placeStorageKey(place) {
+  return place.audience === 'family' ? `family\u0000${place.name}` : place.name;
+}
+
+function samePlaceSnapshot(current, place) {
+  return current.sharing === place.sharing
+    && current.lat === place.lat
+    && current.lng === place.lng
+    && current.accuracyM === place.accuracyM
+    && (current.batteryPct ?? null) === (place.batteryPct ?? null)
+    && (current.charging ?? null) === (place.charging ?? null)
+    && (current.audience === 'family' ? 'family' : 'admin') === (place.audience === 'family' ? 'family' : 'admin');
+}
+
 export function applyPlace(room, place) {
-  const current = room.places[place.name];
+  const key = placeStorageKey(place);
+  const current = room.places[key];
   if (current && place.at < current.at) return { room, ignored: true };
-  if (current && place.at === current.at && place.sharing === current.sharing) return { room, ignored: true };
-  const places = { ...room.places, [place.name]: place };
+  if (current && place.at === current.at && samePlaceSnapshot(current, place)) return { room, ignored: true };
+  const places = { ...room.places, [key]: place };
   const names = Object.keys(places);
   if (names.length > MAX_PLACES) {
     names.sort((left, right) => places[left].at - places[right].at);
@@ -185,19 +229,29 @@ export function viewRoom(room, since) {
   };
 }
 
+export function viewFamilyPlaces(room) {
+  return {
+    places: Object.values(room.places).filter((place) => place.audience === 'family' && place.sharing && place.lat != null && place.lng != null),
+  };
+}
+
 export async function parseOperation(request) {
   const url = new URL(request.url);
   if (request.method === 'GET' && (url.pathname === '/health' || url.pathname === '/health/')) {
     return { kind: 'health' };
   }
 
-  const match = url.pathname.match(/^\/v1\/rooms\/(\d{4,6})(\/place|\/alert)?\/?$/);
+  const match = url.pathname.match(/^\/v1\/rooms\/(\d{4,6})(\/place|\/alert|\/family)?\/?$/);
   if (!match) return json({ error: 'not-found' }, 404);
   const code = match[1];
   const action = match[2] || '';
   const token = splitSyncToken(request.headers.get('x-umap-sync-key') || '');
   if (!token) return json({ error: 'sync-key' }, 401);
   const id = await roomToken(code, token.writeKey, token.readKeyHash);
+
+  if (request.method === 'GET' && action === '/family') {
+    return { kind: 'family', token: id };
+  }
 
   if (request.method === 'GET' && action === '') {
     const readKey = request.headers.get('x-umap-read-key') || '';
@@ -235,6 +289,7 @@ export async function handleSyncRequest(store, request) {
 
   const room = (await store.read(op.token)) || emptyRoom();
   if (op.kind === 'get') return json(viewRoom(room, op.since));
+  if (op.kind === 'family') return json(viewFamilyPlaces(room));
   if (op.kind === 'place') {
     const next = applyPlace(room, op.place);
     if (!next.ignored) await store.write(op.token, next.room);
