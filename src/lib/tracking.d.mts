@@ -146,6 +146,7 @@ export function previewOpenJourney(points: TrailSample[] | null | undefined, now
 export function formatJourneyWhen(startedAt: number, endedAt: number): string;
 export function formatJourneyDistance(meters: number): string;
 export function labelJourneyPlace<T extends JourneyPlace>(place: T, spots: JourneySpot[] | null | undefined): T;
+export function collapseDuplicateJourneys(list: JourneyRecord[] | null | undefined): JourneyRecord[];
 export function mergeJourneyLists(existing: JourneyRecord[] | null | undefined, incoming: JourneyRecord[] | null | undefined): JourneyRecord[];
 export function trimJourneyList(list: JourneyRecord[] | null | undefined, now: number): JourneyRecord[];
 export function journeysWithinHistory(

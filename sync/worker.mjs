@@ -1,4 +1,4 @@
-import { applyAlert, applyPlace, applySubscription, alertPushPayload, emptyRoom, parseOperation, removeSubscriptions, viewFamilyPlaces, viewRoom, withCors } from './protocol.mjs';
+import { applyAlert, applyChat, applyPlace, applySubscription, alertPushPayload, emptyRoom, parseOperation, removeSubscriptions, viewChat, viewFamilyPlaces, viewRoom, withCors } from './protocol.mjs';
 import { createVapidKeys, sendWebPush } from './webpush.mjs';
 
 // One Durable Object per family room. The id is a hash of the invite code,
@@ -31,6 +31,15 @@ export class FamilyRoom {
     let room = (await this.ctx.storage.get('room')) || emptyRoom();
     if (op.kind === 'get') return Response.json(viewRoom(room, op.since));
     if (op.kind === 'family') return Response.json(viewFamilyPlaces(room));
+    if (op.kind === 'chat-get') return Response.json(viewChat(room));
+    if (op.kind === 'chat') {
+      const next = applyChat(room, op.message, Date.now());
+      if (!next.ignored) {
+        room = next.room;
+        await this.ctx.storage.put('room', room);
+      }
+      return Response.json({ ok: true });
+    }
     if (op.kind === 'place') {
       const next = applyPlace(room, op.place);
       if (!next.ignored) {

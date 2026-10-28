@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useReducer } from 'react';
-import { hasLocation } from '../../lib/geo';
+import { hasLocation, haversineMeters } from '../../lib/geo';
 import { resolveManagedTarget } from '../../lib/managedPlace.mjs';
 import { localProfile } from '../../lib/localProfile.mjs';
 import { HISTORY_DAYS, JOURNEY_POINT_CAP, TRAIL_POINT_CAP, isWithinHistory, journeysWithinHistory, labelJourneyPlace, mergeJourneyLists, seoulDayKey, settleTrailPoint, splitClosedJourneys, tracksWithinHistory, trimJourneyList, visitsWithinHistory, type JourneyRecord } from '../../lib/tracking.mjs';
@@ -174,7 +174,13 @@ function cleanLeaveAlert(value: unknown): LeaveAlert | null {
   };
 }
 
+function cleanPhoto(value: unknown): string | undefined {
+  if (typeof value !== 'string' || !value.startsWith('data:image/') || value.length > 120_000) return undefined;
+  return value;
+}
+
 function membersFor(profile: Profile): Member[] {
+  const photo = cleanPhoto(profile.photo);
   return [
     {
       id: 'self',
@@ -188,6 +194,7 @@ function membersFor(profile: Profile): Member[] {
       updatedAt: Date.now(),
       moving: null,
       share: 'allowed',
+      ...(photo ? { photo } : {}),
     },
   ];
 }
@@ -354,11 +361,14 @@ function scrubSeed(member: Member, share: ShareState): Member {
 
 function cleanProfile(value: unknown): Profile | null {
   if (!value || typeof value !== 'object') return null;
-  const raw = value as { id?: unknown; name?: unknown; preview?: unknown };
+  const raw = value as { id?: unknown; name?: unknown; preview?: unknown; photo?: unknown };
   let name = typeof raw.name === 'string' ? raw.name : '';
   if (raw.preview === true && (name === '부건' || name === 'Bukeon')) name = '나';
   const id = typeof raw.id === 'string' ? raw.id : '';
-  return localProfile(name, id);
+  const profile = localProfile(name, id);
+  if (!profile) return null;
+  const photo = cleanPhoto(raw.photo);
+  return photo ? { ...profile, photo } : profile;
 }
 
 function withoutDemo(session: Session): Session {
@@ -372,7 +382,16 @@ function withoutDemo(session: Session): Session {
       const share = renamed.role === 'admin-share' ? 'allowed' : asShare(renamed.share, renamed.id === 'self');
       const charging = renamed.charging === true ? true : renamed.charging === false ? false : null;
       const battery = typeof renamed.battery === 'number' && renamed.battery >= 0 && renamed.battery <= 100 ? Math.round(renamed.battery) : null;
-      const next = { ...renamed, share, charging, battery };
+      const photo = cleanPhoto(renamed.photo) || (renamed.id === 'self' ? cleanPhoto(profile?.photo) : undefined);
+      const place = typeof renamed.place === 'string' ? renamed.place.trim().slice(0, 40) : '';
+      const next = {
+        ...renamed,
+        share,
+        charging,
+        battery,
+        ...(photo ? { photo } : { photo: undefined }),
+        ...(place ? { place } : { place: undefined }),
+      };
       if (renamed.role === 'admin-share') return next;
       if (renamed.id !== 'self' && share !== 'allowed') return { ...next, lat: null, lng: null };
       return scrubSeed(next, share);
@@ -387,7 +406,9 @@ function withoutDemo(session: Session): Session {
   const journeys: Record<string, Journey[]> = {};
   for (const [id, list] of Object.entries(session.journeys ?? {})) {
     if (!kept.has(id) || !Array.isArray(list) || list.length === 0) continue;
-    journeys[id] = list;
+    const trimmed = trimJourneyList(list, Date.now());
+    if (trimmed.length === 0) continue;
+    journeys[id] = trimmed;
   }
   const mode = session.mode === 'admin' || session.mode === 'managed' ? session.mode : null;
   return { ...session, profile, members, tracks, journeys, mode, guardians: cleanGuardians(session.guardians) };
@@ -497,7 +518,9 @@ type Action =
   | { type: 'set-room-family-places'; code: string; places: SharedPlace[] }
   | { type: 'merge-visits'; memberId: string; stops: DayStop[] }
   | { type: 'set-visit-label'; memberId: string; id: string; label: string }
-  | { type: 'set-journey-label'; memberId: string; id: string; which: 'start' | 'end'; label: string }
+  | { type: 'set-journey-label'; memberId: string; id: string; which: 'start' | 'end'; label: string; lat?: number; lng?: number }
+  | { type: 'set-photo'; photo: string | null }
+  | { type: 'set-self-place'; place: string | null }
   | { type: 'close-journeys'; now: number }
   | { type: 'set-motion'; moving: boolean }
   | { type: 'notice'; notice: FamilyNotice }
@@ -515,10 +538,12 @@ function reducer(state: Session, action: Action): Session {
       if (!state.mode) return { ...state, stage: 'mode' };
       return { ...state, stage: state.permissions.completed ? 'map' : 'survey' };
     case 'login': {
-      const profile = cleanProfile(action.profile);
-      if (!profile) return state;
+      const cleaned = cleanProfile(action.profile);
+      if (!cleaned) return state;
+      const photo = cleaned.photo || cleanPhoto(state.profile?.photo);
+      const profile = photo ? { ...cleaned, photo } : cleaned;
       const members = state.members.some((member) => member.id === 'self')
-        ? state.members.map((member) => (member.id === 'self' ? { ...member, name: profile.name } : member))
+        ? state.members.map((member) => (member.id === 'self' ? { ...member, name: profile.name, ...(photo ? { photo } : {}) } : member))
         : membersFor(profile);
       return withoutDemo({
         ...state,
@@ -908,14 +933,40 @@ function reducer(state: Session, action: Action): Session {
       if (!label) return state;
       let changed = false;
       const next = list.map((journey) => {
-        if (journey.id !== action.id) return journey;
         const place = journey[action.which];
         if (!place || place.label === label) return journey;
+        const near = Number.isFinite(action.lat) && Number.isFinite(action.lng)
+          && haversineMeters(place, { lat: action.lat as number, lng: action.lng as number }) <= 80;
+        if (journey.id !== action.id && !near) return journey;
+        if (place.label && journey.id !== action.id) return journey;
         changed = true;
         return { ...journey, [action.which]: { ...place, label } };
       });
       if (!changed) return state;
       return { ...state, journeys: { ...state.journeys, [action.memberId]: next } };
+    }
+    case 'set-photo': {
+      if (!state.profile) return state;
+      const photo = cleanPhoto(action.photo);
+      const profile = photo ? { ...state.profile, photo } : { ...state.profile, photo: undefined };
+      return {
+        ...state,
+        profile,
+        members: state.members.map((member) => (
+          member.id === 'self' ? { ...member, ...(photo ? { photo } : { photo: undefined }) } : member
+        )),
+      };
+    }
+    case 'set-self-place': {
+      const place = typeof action.place === 'string' ? action.place.trim().slice(0, 40) : '';
+      const self = state.members.find((member) => member.id === 'self');
+      if (!self || (self.place || '') === place) return state;
+      return {
+        ...state,
+        members: state.members.map((member) => (
+          member.id === 'self' ? { ...member, ...(place ? { place } : { place: undefined }) } : member
+        )),
+      };
     }
     case 'set-motion':
       return {
@@ -969,7 +1020,9 @@ interface FamilyApi {
   mergeVisits: (memberId: string, stops: DayStop[]) => void;
   setVisitLabel: (memberId: string, id: string, label: string) => void;
   closeJourneys: (now: number) => void;
-  setJourneyLabel: (memberId: string, id: string, which: 'start' | 'end', label: string) => void;
+  setJourneyLabel: (memberId: string, id: string, which: 'start' | 'end', label: string, lat?: number, lng?: number) => void;
+  setPhoto: (photo: string | null) => void;
+  setSelfPlace: (place: string | null) => void;
   setMotion: (moving: boolean) => void;
   pushNotice: (title: string, body: string) => void;
   logout: () => void;
@@ -1040,7 +1093,9 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
     mergeVisits: (memberId, stops) => dispatch({ type: 'merge-visits', memberId, stops }),
     setVisitLabel: (memberId, id, label) => dispatch({ type: 'set-visit-label', memberId, id, label }),
     closeJourneys: (now) => dispatch({ type: 'close-journeys', now }),
-    setJourneyLabel: (memberId, id, which, label) => dispatch({ type: 'set-journey-label', memberId, id, which, label }),
+    setJourneyLabel: (memberId, id, which, label, lat, lng) => dispatch({ type: 'set-journey-label', memberId, id, which, label, lat, lng }),
+    setPhoto: (photo) => dispatch({ type: 'set-photo', photo }),
+    setSelfPlace: (place) => dispatch({ type: 'set-self-place', place }),
     setMotion: (moving) => dispatch({ type: 'set-motion', moving }),
     pushNotice: (title, body) => dispatch({ type: 'notice', notice: notice(title, body) }),
     logout: () => dispatch({ type: 'logout' }),

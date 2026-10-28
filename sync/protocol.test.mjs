@@ -506,3 +506,34 @@ test('SOS push subscription is kept for the admin reader and hidden from the roo
   assert.equal(room.pushes[0].phone, undefined);
   assert.equal(room.pushes[0].endpoint, subscription.endpoint);
 });
+
+test('family chat is readable by the admin and by the family token', async () => {
+  const store = createMemoryStore();
+  const code = '48291';
+  const writeKey = randomKey();
+  const readKey = randomKey();
+  const token = await syncTokenFor(writeKey, readKey);
+  const message = { id: 'chatmsg01', name: '하나', text: '집 근처예요', at: Date.now() };
+  const posted = await call(store, 'POST', `/v1/rooms/${code}/chat`, { token, body: message });
+  assert.equal(posted.status, 200);
+
+  const reader = await call(store, 'GET', `/v1/rooms/${code}`, { token, readKey });
+  assert.equal(reader.body.messages.length, 1);
+  assert.equal(reader.body.messages[0].text, '집 근처예요');
+  assert.equal(JSON.stringify(reader.body).includes('writeKey'), false);
+
+  const family = await call(store, 'GET', `/v1/rooms/${code}/family`, { token });
+  assert.equal(family.body.messages[0].name, '하나');
+  const listed = await call(store, 'GET', `/v1/rooms/${code}/chat`, { token });
+  assert.equal(listed.body.messages.length, 1);
+
+  const phone = await call(store, 'POST', `/v1/rooms/${code}/chat`, {
+    token,
+    body: { id: 'chatmsg02', name: '하나', text: '01012345678', at: Date.now() },
+  });
+  assert.equal(phone.status, 400);
+  const again = await call(store, 'POST', `/v1/rooms/${code}/chat`, { token, body: message });
+  assert.equal(again.status, 200);
+  const once = await call(store, 'GET', `/v1/rooms/${code}/chat`, { token });
+  assert.equal(once.body.messages.length, 1);
+});

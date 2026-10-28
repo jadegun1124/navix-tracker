@@ -30,6 +30,7 @@ import {
   liveTrailPoints,
   previewOpenJourney,
   journeysWithinHistory,
+  mergeJourneyLists,
   labelJourneyPlace,
 } from './tracking.mjs';
 
@@ -555,4 +556,45 @@ test('a new walk after archive stays on the live line and old journeys expire', 
   }, now);
   assert.equal(kept.self.length, 1);
   assert.equal(kept.self[0].id, split.journeys[0].id);
+});
+
+test('같은 이동을 조금 다르게 다시 쌓아도 카드는 하나다', () => {
+  const start = Date.UTC(2026, 9, 28, 3, 49, 0);
+  const end = start + 5 * 60_000;
+  const points = [
+    { lat: 37.63635, lng: 127.07041, at: start },
+    { lat: 37.63916, lng: 127.07074, at: end },
+  ];
+  const first = {
+    id: `${start}:${end}:37.6364:127.0704`,
+    startedAt: start,
+    endedAt: end,
+    distanceM: 392,
+    points,
+    start: { lat: 37.63635, lng: 127.07041, label: null },
+    end: { lat: 37.63916, lng: 127.07074, label: null },
+  };
+  const second = {
+    id: `${start + 15_000}:${end + 20_000}:37.6363:127.0704`,
+    startedAt: start + 15_000,
+    endedAt: end + 20_000,
+    distanceM: 398,
+    points,
+    start: { lat: 37.6364, lng: 127.0705, label: '서울특별시 노원구 중계동' },
+    end: { lat: 37.6392, lng: 127.0708, label: null },
+  };
+  const merged = mergeJourneyLists([first], [second]);
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0].distanceM, 398);
+  assert.equal(merged[0].start.label, '서울특별시 노원구 중계동');
+  const later = {
+    id: 'later-trip',
+    startedAt: start + 60 * 60_000,
+    endedAt: start + 70 * 60_000,
+    distanceM: 800,
+    points,
+    start: { lat: 37.65, lng: 127.08, label: null },
+    end: { lat: 37.66, lng: 127.09, label: null },
+  };
+  assert.equal(mergeJourneyLists(merged, [later]).length, 2);
 });

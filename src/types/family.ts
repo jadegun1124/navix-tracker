@@ -2,6 +2,8 @@ export interface Profile {
   /** Device-local id. Not a Google subject and not a phone number. */
   id: string;
   name: string;
+  /** Square JPEG data URL stored on this device. */
+  photo?: string;
 }
 
 export interface TrackPoint {
@@ -46,6 +48,8 @@ export interface Member {
   charging: boolean | null;
   updatedAt: number;
   moving: boolean | null;
+  photo?: string;
+  place?: string | null;
   inviteCode?: string;
   share: ShareState;
 }

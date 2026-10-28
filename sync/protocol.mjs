@@ -14,8 +14,12 @@ const ALERT_TTL_MS = 24 * 60 * 60 * 1000;
 const FUTURE_SKEW_MS = 5 * 60 * 1000;
 const EARLIEST_AT = Date.UTC(2024, 0, 1);
 
+const MAX_MESSAGES = 40;
+const CHAT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const CHAT_ID = /^[A-Za-z0-9_-]{8,80}$/;
+
 export function emptyRoom() {
-  return { places: {}, alerts: [], pushes: [] };
+  return { places: {}, alerts: [], pushes: [], messages: [] };
 }
 
 export function isKeyPart(value) {
@@ -246,6 +250,47 @@ export function applyAlert(room, alert, now) {
   return { room: { ...room, alerts }, ignored: false };
 }
 
+function looksLikePhone(value) {
+  const compact = String(value ?? '').replace(/[\s\-().+]/g, '');
+  if (!compact) return false;
+  const digits = compact.replace(/\D/g, '');
+  if (digits.length < 8 || digits.length > 15) return false;
+  return digits.length / compact.length >= 0.8;
+}
+
+function cleanChat(input, now) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return { error: json({ error: 'chat' }, 400) };
+  if (typeof input.id !== 'string' || !CHAT_ID.test(input.id)) return { error: json({ error: 'chat' }, 400) };
+  if (typeof input.name !== 'string' || typeof input.text !== 'string') return { error: json({ error: 'chat' }, 400) };
+  const name = input.name.trim().slice(0, 20);
+  const text = input.text.trim().slice(0, 200);
+  if (!name || !text || looksLikePhone(name) || looksLikePhone(text)) return { error: json({ error: 'chat' }, 400) };
+  if (!cleanStamp(input.at, now)) return { error: json({ error: 'at' }, 400) };
+  return { message: { id: input.id, name, text, at: input.at } };
+}
+
+function roomMessages(room) {
+  return Array.isArray(room.messages) ? room.messages : [];
+}
+
+export function applyChat(room, message, now) {
+  const messages = roomMessages(room);
+  if (messages.some((item) => item.id === message.id)) return { room, ignored: true };
+  const next = [...messages, message].filter((item) => now - item.at < CHAT_TTL_MS).slice(-MAX_MESSAGES);
+  return { room: { ...room, messages: next }, ignored: false };
+}
+
+export function viewChat(room) {
+  return {
+    messages: roomMessages(room).map((message) => ({
+      id: message.id,
+      name: message.name,
+      text: message.text,
+      at: message.at,
+    })),
+  };
+}
+
 function roomPushes(room) {
   return Array.isArray(room.pushes) ? room.pushes : [];
 }
@@ -267,6 +312,7 @@ export function viewRoom(room, since) {
   return {
     places: Object.values(room.places),
     alerts: room.alerts.filter((alert) => alert.at > cursor),
+    messages: viewChat(room).messages,
   };
 }
 
@@ -296,6 +342,7 @@ function cleanSubscription(input) {
 export function viewFamilyPlaces(room) {
   return {
     places: Object.values(room.places).filter((place) => place.audience === 'family' && place.sharing && place.lat != null && place.lng != null),
+    messages: viewChat(room).messages,
   };
 }
 
@@ -309,7 +356,7 @@ export async function parseOperation(request) {
     return { kind: 'vapid-public' };
   }
 
-  const match = url.pathname.match(/^\/v1\/rooms\/(\d{4,6})(\/place|\/alert|\/family|\/push)?\/?$/);
+  const match = url.pathname.match(/^\/v1\/rooms\/(\d{4,6})(\/place|\/alert|\/family|\/push|\/chat)?\/?$/);
   if (!match) return json({ error: 'not-found' }, 404);
   const code = match[1];
   const action = match[2] || '';
@@ -319,6 +366,10 @@ export async function parseOperation(request) {
 
   if (request.method === 'GET' && action === '/family') {
     return { kind: 'family', token: id };
+  }
+
+  if (request.method === 'GET' && action === '/chat') {
+    return { kind: 'chat-get', token: id };
   }
 
   if (request.method === 'GET' && action === '') {
@@ -355,6 +406,14 @@ export async function parseOperation(request) {
     return { kind: 'push-subscribe', token: id, subscription: cleaned.subscription };
   }
 
+  if (request.method === 'POST' && action === '/chat') {
+    const body = await readJson(request);
+    if (body.error) return body.error;
+    const cleaned = cleanChat(body.value, Date.now());
+    if (cleaned.error) return cleaned.error;
+    return { kind: 'chat', token: id, message: cleaned.message };
+  }
+
   if (request.method === 'POST' && action === '/alert') {
     const body = await readJson(request);
     if (body.error) return body.error;
@@ -385,6 +444,12 @@ export async function handleSyncRequest(store, request) {
   const room = (await store.read(op.token)) || emptyRoom();
   if (op.kind === 'get') return json(viewRoom(room, op.since));
   if (op.kind === 'family') return json(viewFamilyPlaces(room));
+  if (op.kind === 'chat-get') return json(viewChat(room));
+  if (op.kind === 'chat') {
+    const next = applyChat(room, op.message, Date.now());
+    if (!next.ignored) await store.write(op.token, next.room);
+    return json({ ok: true });
+  }
   if (op.kind === 'place') {
     const next = applyPlace(room, op.place);
     if (!next.ignored) await store.write(op.token, next.room);

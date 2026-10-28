@@ -231,13 +231,19 @@ export const StreetMap = forwardRef<StreetMapHandle, {
       const label = escapeHtml(self ? '나' : member.name);
       const initial = escapeHtml(self ? '나' : member.name.slice(0, 1));
       const battery = batteryMarkup(member, selected);
+      const photo = typeof member.photo === 'string' && member.photo.startsWith('data:image/') && member.photo.length < 120_000
+        ? member.photo
+        : '';
+      const face = photo
+        ? `<img alt="" src="${escapeHtml(photo)}" style="width:42px;height:42px;border-radius:999px;object-fit:cover;border:4px solid #fff;box-shadow:0 6px 16px rgba(15,23,42,.2)"/>`
+        : `<span style="width:42px;height:42px;border-radius:999px;border:4px solid #fff;background:${color};color:#fff;display:flex;align-items:center;justify-content:center;font-weight:900;box-shadow:0 6px 16px rgba(15,23,42,.2)">${initial}</span>`;
       const marker = L.marker([member.lat, member.lng], {
         zIndexOffset: selected ? 800 : 400,
         icon: L.divIcon({
           className: 'umap-member-pin',
           html: `<div style="display:flex;flex-direction:column;align-items:center;transform:translate(-50%,-100%)">
             <span style="display:inline-flex;align-items:center;margin-bottom:4px;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;white-space:nowrap;box-shadow:0 1px 4px rgba(15,23,42,.16);background:${selected ? '#0084FF' : '#fff'};color:${selected ? '#fff' : '#0f172a'}">${label}${battery}</span>
-            <span style="width:42px;height:42px;border-radius:999px;border:4px solid #fff;background:${color};color:#fff;display:flex;align-items:center;justify-content:center;font-weight:900;box-shadow:0 6px 16px rgba(15,23,42,.2)">${initial}</span>
+            ${face}
           </div>`,
           iconSize: [0, 0],
           iconAnchor: [0, 0],

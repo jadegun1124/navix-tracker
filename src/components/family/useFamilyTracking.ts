@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { hasLocation } from '../../lib/geo';
+import { hasLocation, haversineMeters } from '../../lib/geo';
 import { buildDayRecord } from '../../lib/tracking.mjs';
 import type { AcceptedFix } from '../../lib/tracking.mjs';
 import { readSharedPlaces, publishSharedPlace, subscribeSharedPlaces, type SharedPlace } from '../../services/familyShare';
 import { familyEndpointAvailable, familySyncUrl, splitSyncToken, startManagedFamilySync, syncTokenFor } from '../../services/familySync';
 import { startLocationWatch } from '../../services/locationWatch';
-import { reverseGeocode } from '../../services/placeGeocode';
+import { mergeChat } from '../../services/familyChat';
+import { cachedAddress, reverseGeocodeCached, shortenAddress } from '../../services/placeGeocode';
 import { openAlwaysLocation, readNativeBattery, umapLocation, umapLocationNative, type KeepAliveTarget } from '../../services/umapLocation';
 import { vworldApiKey } from '../../services/vworld';
 import { useFamily } from './session';
@@ -308,9 +309,10 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
     const links = familyRef.current.state.guardians
       .filter((link) => link.syncToken)
       .map((link) => ({ code: link.code, token: link.syncToken as string }));
-    return startManagedFamilySync(links, (code, places) => {
+    return startManagedFamilySync(links, (code, places, messages) => {
       remoteRooms.current[code] = places;
       familyRef.current.setRoomFamilyPlaces(code, places);
+      if (messages.length > 0) mergeChat(code, messages);
     });
   }, [familyLinkKey, state.mode]);
 
@@ -356,7 +358,12 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
     const next = pending;
     triedGeocode.current.add(next.id);
     let cancel = false;
-    void reverseGeocode(next.lat, next.lng).then((label) => {
+    const cached = cachedAddress(next.lat, next.lng);
+    if (cached) {
+      familyRef.current.setVisitLabel(next.memberId, next.id, cached);
+      return;
+    }
+    void reverseGeocodeCached(next.lat, next.lng).then((label) => {
       if (!cancel && label) familyRef.current.setVisitLabel(next.memberId, next.id, label);
     });
     return () => {
@@ -385,13 +392,46 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
     const next = pending;
     triedGeocode.current.add(`${next.memberId}:${next.id}:${next.which}`);
     let cancel = false;
-    void reverseGeocode(next.lat, next.lng).then((label) => {
-      if (!cancel && label) familyRef.current.setJourneyLabel(next.memberId, next.id, next.which, label);
+    const cached = cachedAddress(next.lat, next.lng);
+    if (cached) {
+      familyRef.current.setJourneyLabel(next.memberId, next.id, next.which, cached, next.lat, next.lng);
+      return;
+    }
+    void reverseGeocodeCached(next.lat, next.lng).then((label) => {
+      if (!cancel && label) familyRef.current.setJourneyLabel(next.memberId, next.id, next.which, label, next.lat, next.lng);
     });
     return () => {
       cancel = true;
     };
   }, [state.journeys]);
+
+  const placeKey = useRef('');
+  useEffect(() => {
+    if (state.stage !== 'map') return;
+    const current = familyRef.current.state;
+    const located = current.members.find((member) => member.id === 'self');
+    if (!located || !hasLocation(located)) return;
+    const key = `${located.lat.toFixed(3)},${located.lng.toFixed(3)}`;
+    if (placeKey.current === key && located.place) return;
+    const home = current.home;
+    if (home && haversineMeters(located, home) <= home.radiusM) {
+      placeKey.current = key;
+      const label = home.label || '우리 집';
+      if (located.place !== label) familyRef.current.setSelfPlace(label);
+      return;
+    }
+    if (!vworldApiKey()) return;
+    let cancel = false;
+    void reverseGeocodeCached(located.lat, located.lng).then((label) => {
+      if (cancel) return;
+      placeKey.current = key;
+      const short = label ? shortenAddress(label) : '';
+      if (short && short !== located.place) familyRef.current.setSelfPlace(short);
+    });
+    return () => {
+      cancel = true;
+    };
+  }, [self?.lat, self?.lng, state.home, state.stage]);
 
   return { waiting, familyShareNote, native: umapLocationNative(), openSettings: openAlwaysLocation };
 }

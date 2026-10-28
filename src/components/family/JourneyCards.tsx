@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { Route } from 'lucide-react';
+import { Pause, Play, Route } from 'lucide-react';
 import { haversineMeters } from '../../lib/geo';
 import { formatJourneyDistance } from '../../lib/tracking.mjs';
 import type { Journey } from '../../types/family';
@@ -17,9 +17,14 @@ export type OpenJourney = {
   end: Place;
 };
 
-function placeText(place: Place) {
-  if (place.label && place.label.trim()) return place.label.trim();
-  return `${place.lat.toFixed(5)}, ${place.lng.toFixed(5)}`;
+function looksLikeCoordinates(text: string) {
+  return /^-?\d{1,3}\.\d{2,}\s*,\s*-?\d{1,3}\.\d{2,}/.test(text.trim());
+}
+
+function placeText(place: Place, fallback: string) {
+  const label = place.label?.trim();
+  if (label && !looksLikeCoordinates(label)) return label;
+  return fallback;
 }
 
 function seoulClock(at: number) {
@@ -96,7 +101,7 @@ function MiniTrail({ points }: { points: { lat: number; lng: number }[] }) {
   const first = ends[0]?.split(',') ?? [];
   const last = ends[ends.length - 1]?.split(',') ?? [];
   return (
-    <svg viewBox="0 0 280 96" className="mt-3 h-24 w-full rounded-xl bg-[#e8f3ff]" aria-hidden="true">
+    <svg viewBox="0 0 280 96" className="h-28 w-full rounded-xl bg-[#e8f3ff]" aria-hidden="true">
       <polyline points={line} fill="none" stroke="#0084FF" strokeWidth="3" strokeLinejoin="round" strokeLinecap="round" />
       {first.length === 2 && <circle cx={first[0]} cy={first[1]} r="4.5" fill="#0084FF" />}
       {last.length === 2 && <circle cx={last[0]} cy={last[1]} r="5" fill="#ffffff" stroke="#0084FF" strokeWidth="2.5" />}
@@ -117,15 +122,24 @@ function SummaryCard({
   journey,
   selected,
   onSelect,
+  onPlay,
 }: {
   journey: Journey;
   selected: boolean;
   onSelect: () => void;
+  onPlay: () => void;
 }) {
   return (
-    <button
-      type="button"
+    <div
+      role="button"
+      tabIndex={0}
       onClick={onSelect}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          onSelect();
+        }
+      }}
       className={`w-full rounded-3xl px-3 py-3 text-left ${selected ? 'bg-blue-50 ring-2 ring-[#0084FF]' : 'bg-slate-50'}`}
     >
       <span className="block text-xs font-black text-slate-400">최근 여정</span>
@@ -135,12 +149,24 @@ function SummaryCard({
         {spacedDistance(journey.distanceM)}
       </span>
       <span className="mt-2 block space-y-1">
-        <PlaceLine hollow={false} text={placeText(journey.start)} />
-        <PlaceLine hollow text={placeText(journey.end)} />
+        <PlaceLine hollow={false} text={placeText(journey.start, '출발지')} />
+        <PlaceLine hollow text={placeText(journey.end, '도착지')} />
       </span>
-      <MiniTrail points={journey.points} />
-      <span className="mt-3 inline-flex rounded-full bg-[#0084FF] px-3 py-1.5 text-xs font-bold text-white">전체 기록 보기 →</span>
-    </button>
+      <span className="relative mt-3 block">
+        <MiniTrail points={journey.points} />
+        <button
+          type="button"
+          aria-label="여정 재생"
+          onClick={(event) => {
+            event.stopPropagation();
+            onPlay();
+          }}
+          className="absolute bottom-2 left-2 flex h-9 w-9 items-center justify-center rounded-full bg-[#0084FF] text-white shadow"
+        >
+          <Play className="h-4 w-4 translate-x-0.5" />
+        </button>
+      </span>
+    </div>
   );
 }
 
@@ -148,34 +174,50 @@ export function JourneyScrubber({
   journey,
   scrub,
   label,
+  playing,
   onScrub,
+  onTogglePlay,
 }: {
-  journey: Journey;
+  journey: OpenJourney | Journey;
   scrub: number;
   label: string;
+  playing: boolean;
   onScrub: (value: number) => void;
+  onTogglePlay: () => void;
 }) {
   return (
     <div className="rounded-3xl bg-slate-50 px-3 py-3">
-      <p className="text-sm font-black text-slate-900">{label}</p>
-      <input
-        type="range"
-        min={0}
-        max={1000}
-        value={scrub}
-        aria-label="여정 시간"
-        onChange={(event) => onScrub(Number(event.target.value))}
-        className="mt-2 w-full accent-[#0084FF]"
-      />
+      <div className="flex items-center gap-3">
+        <button
+          type="button"
+          aria-label={playing ? '일시정지' : '재생'}
+          onClick={onTogglePlay}
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#0084FF] text-white"
+        >
+          {playing ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5 translate-x-0.5" />}
+        </button>
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-black text-slate-900">{label}</p>
+          <input
+            type="range"
+            min={0}
+            max={1000}
+            value={scrub}
+            aria-label="여정 시간"
+            onChange={(event) => onScrub(Number(event.target.value))}
+            className="mt-2 w-full accent-[#0084FF]"
+          />
+        </div>
+      </div>
       <div className="mt-2 space-y-1">
         <p className="flex items-center gap-2 text-xs text-slate-600">
           <span className="h-2.5 w-2.5 rounded-full bg-[#0084FF]" />
-          <span className="min-w-0 flex-1 truncate">{placeText(journey.start)}</span>
+          <span className="min-w-0 flex-1 truncate">{placeText(journey.start, '출발지')}</span>
           <span className="font-bold">{seoulClock(journey.startedAt)}</span>
         </p>
         <p className="flex items-center gap-2 text-xs text-slate-600">
           <span className="h-2.5 w-2.5 rounded-full border-2 border-[#0084FF] bg-white" />
-          <span className="min-w-0 flex-1 truncate">{placeText(journey.end)}</span>
+          <span className="min-w-0 flex-1 truncate">{placeText(journey.end, '도착지')}</span>
           <span className="font-bold">{seoulClock(journey.endedAt)}</span>
         </p>
       </div>
@@ -188,11 +230,13 @@ export function JourneyCards({
   open,
   selectedId,
   onSelect,
+  onPlay,
 }: {
   journeys: Journey[];
   open: OpenJourney | null;
   selectedId: string | null;
   onSelect: (id: string) => void;
+  onPlay?: (id: string) => void;
 }) {
   const [latest, ...older] = journeys;
   return (
@@ -210,22 +254,52 @@ export function JourneyCards({
         </button>
       )}
       {latest ? (
-        <SummaryCard journey={latest} selected={selectedId === latest.id} onSelect={() => onSelect(latest.id)} />
+        <SummaryCard
+          journey={latest}
+          selected={selectedId === latest.id}
+          onSelect={() => onSelect(latest.id)}
+          onPlay={() => (onPlay ?? onSelect)(latest.id)}
+        />
       ) : (
         <p className="rounded-2xl bg-slate-50 px-3 py-3 text-xs leading-5 text-slate-500">
           아직 끝난 여정이 없습니다. 이동한 뒤 한곳에서 7분 이상 머물면 최근 여정으로 남습니다.
         </p>
       )}
       {older.map((journey) => (
-        <button
+        <div
           key={journey.id}
-          type="button"
+          role="button"
+          tabIndex={0}
           onClick={() => onSelect(journey.id)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault();
+              onSelect(journey.id);
+            }
+          }}
           className={`flex w-full items-center justify-between gap-3 rounded-2xl px-3 py-2 text-left ${selectedId === journey.id ? 'bg-blue-50 ring-2 ring-[#0084FF]' : 'bg-slate-50'}`}
         >
-          <span className="min-w-0 truncate text-xs font-bold text-slate-700">{rangeLabel(journey.startedAt, journey.endedAt)}</span>
-          <span className="shrink-0 text-xs font-black text-slate-900">{spacedDistance(journey.distanceM)}</span>
-        </button>
+          <span className="min-w-0">
+            <span className="block truncate text-xs font-bold text-slate-700">{rangeLabel(journey.startedAt, journey.endedAt)}</span>
+            <span className="mt-0.5 block truncate text-[11px] text-slate-500">
+              {placeText(journey.start, '출발지')} → {placeText(journey.end, '도착지')}
+            </span>
+          </span>
+          <span className="flex shrink-0 items-center gap-2">
+            <span className="text-xs font-black text-slate-900">{spacedDistance(journey.distanceM)}</span>
+            <button
+              type="button"
+              aria-label="여정 재생"
+              onClick={(event) => {
+                event.stopPropagation();
+                (onPlay ?? onSelect)(journey.id);
+              }}
+              className="flex h-8 w-8 items-center justify-center rounded-full bg-[#0084FF] text-white"
+            >
+              <Play className="h-3.5 w-3.5 translate-x-0.5" />
+            </button>
+          </span>
+        </div>
       ))}
     </div>
   );

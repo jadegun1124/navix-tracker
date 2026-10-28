@@ -1131,6 +1131,11 @@ function compactJourneyPoints(points) {
   }));
 }
 
+function stableJourneyId(startedAt, lat, lng) {
+  const minute = Math.floor(Number(startedAt) / 60_000);
+  return `${minute}:${Number(lat).toFixed(3)}:${Number(lng).toFixed(3)}`;
+}
+
 function buildClosedJourney(points, departAt, arriveAt) {
   const path = [];
   for (const point of points) {
@@ -1145,7 +1150,7 @@ function buildClosedJourney(points, departAt, arriveAt) {
   const start = path[0];
   const end = path[path.length - 1];
   return {
-    id: `${start.at}:${arriveAt}:${start.lat.toFixed(4)}:${start.lng.toFixed(4)}`,
+    id: stableJourneyId(start.at, start.lat, start.lng),
     startedAt: start.at,
     endedAt: arriveAt,
     distanceM: Math.round(distanceM),
@@ -1181,7 +1186,7 @@ export function splitClosedJourneys(points, now) {
   let cut = 0;
   while (cut < sorted.length && sorted[cut].at < remainFrom) cut += 1;
   if (journeys.length === 0 && cut <= 0) return { journeys: [], remaining: source };
-  return { journeys, remaining: cut <= 0 ? sorted : sorted.slice(cut) };
+  return { journeys: collapseDuplicateJourneys(journeys), remaining: cut <= 0 ? sorted : sorted.slice(cut) };
 }
 
 /** In-progress line for the family map. Finished stays are not on this overlay. */
@@ -1253,6 +1258,47 @@ export function labelJourneyPlace(place, spots) {
   return best ? { ...place, label: best } : place;
 }
 
+function sameTrip(left, right) {
+  if (!left?.start || !right?.start || !Number.isFinite(left.startedAt) || !Number.isFinite(right.startedAt)) return false;
+  if (Math.abs(left.startedAt - right.startedAt) > 3 * 60_000) return false;
+  if (haversineMeters(left.start, right.start) > 250) return false;
+  const overlap = Math.min(left.endedAt, right.endedAt) - Math.max(left.startedAt, right.startedAt);
+  const shorter = Math.min(
+    Math.max(1, left.endedAt - left.startedAt),
+    Math.max(1, right.endedAt - right.startedAt),
+  );
+  if (overlap >= shorter * 0.5) return true;
+  return Math.abs((left.endedAt || 0) - (right.endedAt || 0)) <= 3 * 60_000
+    && !!left.end && !!right.end
+    && haversineMeters(left.end, right.end) < 250;
+}
+
+function preferJourney(left, right) {
+  const richer = (right.distanceM || 0) > (left.distanceM || 0) ? right : left;
+  const other = richer === right ? left : right;
+  const startedAt = Math.min(left.startedAt, right.startedAt);
+  const lat = richer.start?.lat ?? other.start?.lat ?? 0;
+  const lng = richer.start?.lng ?? other.start?.lng ?? 0;
+  return {
+    ...richer,
+    id: stableJourneyId(startedAt, lat, lng),
+    start: { ...richer.start, label: richer.start?.label || other.start?.label || null },
+    end: { ...richer.end, label: richer.end?.label || other.end?.label || null },
+  };
+}
+
+export function collapseDuplicateJourneys(list) {
+  const items = Array.isArray(list) ? list.filter((journey) => journey && typeof journey.id === 'string') : [];
+  const kept = [];
+  for (const journey of items) {
+    const index = kept.findIndex((item) => item.id === journey.id || sameTrip(item, journey));
+    if (index < 0) kept.push(journey);
+    else kept[index] = preferJourney(kept[index], journey);
+  }
+  kept.sort((left, right) => left.startedAt - right.startedAt);
+  return kept;
+}
+
 function journeySame(left, right) {
   return !!left && !!right
     && left.id === right.id
@@ -1267,40 +1313,38 @@ function journeySame(left, right) {
 export function mergeJourneyLists(existing, incoming) {
   const base = Array.isArray(existing) ? existing : [];
   const extra = Array.isArray(incoming) ? incoming : [];
-  if (extra.length === 0) return base;
   const map = new Map();
   for (const journey of base) if (journey?.id) map.set(journey.id, journey);
-  let changed = false;
   for (const journey of extra) {
     if (!journey?.id) continue;
     const prev = map.get(journey.id);
     if (!prev) {
       map.set(journey.id, journey);
-      changed = true;
       continue;
     }
     const startLabel = prev.start?.label || journey.start?.label || null;
     const endLabel = prev.end?.label || journey.end?.label || null;
-    const richer = (journey.distanceM || 0) > (prev.distanceM || 0) + 20;
-    const next = richer
-      ? { ...journey, start: { ...journey.start, label: startLabel }, end: { ...journey.end, label: endLabel } }
-      : { ...prev, start: { ...prev.start, label: startLabel }, end: { ...prev.end, label: endLabel } };
-    if (!journeySame(prev, next)) {
-      map.set(journey.id, next);
-      changed = true;
-    }
+    const richer = (journey.distanceM || 0) >= (prev.distanceM || 0) ? journey : prev;
+    map.set(journey.id, {
+      ...richer,
+      start: { ...richer.start, label: startLabel },
+      end: { ...richer.end, label: endLabel },
+    });
   }
-  if (!changed) return base;
-  return [...map.values()].sort((left, right) => left.startedAt - right.startedAt);
+  const collapsed = collapseDuplicateJourneys([...map.values()]);
+  if (base.length === collapsed.length && base.every((item, index) => journeySame(item, collapsed[index]))) return base;
+  return collapsed;
 }
 
 export function trimJourneyList(list, now) {
   if (!Array.isArray(list) || list.length === 0) return [];
+  const collapsed = collapseDuplicateJourneys(list);
   const today = seoulDayKey(now);
   const oldest = oldestHistoryDay(now);
   const byDay = new Map();
-  let dropped = false;
-  for (const journey of list) {
+  let dropped = collapsed.length !== list.length
+    || collapsed.some((journey, index) => journey.id !== list[index]?.id || journey.distanceM !== list[index]?.distanceM);
+  for (const journey of collapsed) {
     if (!journey || typeof journey.id !== 'string' || !Number.isFinite(journey.endedAt)) {
       dropped = true;
       continue;
