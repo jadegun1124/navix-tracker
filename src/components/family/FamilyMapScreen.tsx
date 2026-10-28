@@ -1268,7 +1268,12 @@ function ProfileSettingsSheet({
         <button
           type="button"
           onClick={() => {
-            if (looksLikePhone(draft) || !localProfile(draft)) {
+            const trimmed = draft.trim();
+            if (!trimmed) {
+              setNote('이름을 입력해 주세요.');
+              return;
+            }
+            if (looksLikePhone(trimmed) || !localProfile(trimmed)) {
               setNote('전화번호는 이름으로 쓰지 않습니다.');
               return;
             }
