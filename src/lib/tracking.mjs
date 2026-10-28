@@ -48,6 +48,12 @@ export const TRAIL_POOR_ACCURACY_M = 40;
 export const TRAIL_STAY_SPEED_MPS = 0.8;
 /** A still phone must clear this before a far multipath spike becomes travel. */
 export const TRAIL_STILL_CONFIRM_M = 80;
+/**
+ * Quiet leaps farther than this are a relocation, not courtyard multipath.
+ * Above the 110m still-phone spike the sampler still rejects, and well under a
+ * neighborhood move such as Hagye to Junggye.
+ */
+export const TRAIL_RELOCATION_M = 120;
 /** Drawn wobble inside about one accuracy bubble is removed. Block corners sit outside it. */
 const TRAIL_SIMPLIFY_MIN_M = 12;
 const TRAIL_SIMPLIFY_MAX_M = 22;
@@ -225,8 +231,8 @@ export function trailMoveGate(last, point) {
 }
 
 /**
- * keep: the coordinate is travel and may extend the polyline.
- * snap: still inside the stay, or a still-phone spike. Keep the anchor pin.
+ * keep: the coordinate is travel, or a relocation past courtyard multipath, and may extend the polyline.
+ * snap: inside the stay bubble, or a short still-phone spike. Not a live-pin hold by itself.
  * drop: the sample is too poor to use.
  */
 export function trailDecision(last, point) {
@@ -242,9 +248,9 @@ export function trailDecision(last, point) {
   if (moved <= gate) return 'snap';
   const speed = typeof point.speedMps === 'number' && Number.isFinite(point.speedMps) ? point.speedMps : null;
   const reportedStill = point.staying === true || (speed != null && speed < TRAIL_STAY_SPEED_MPS);
-  // Precise fixes can still leap between towers. With no walking speed, that leap is not a path.
+  // Precise fixes can still leap between towers. With no walking speed, a short leap is not a path.
   const quiet = reportedStill || (speed == null && accuracy > 0 && accuracy <= 30 && moved < TRAIL_STILL_CONFIRM_M);
-  if (quiet) {
+  if (quiet && moved <= TRAIL_RELOCATION_M) {
     const implied = dt > 0 ? moved / (dt / 1000) : Infinity;
     // One courtyard hop often implies 3–8 m/s for a few seconds. A real departure holds walking pace.
     const sustainedWalk = moved >= Math.max(TRAIL_STILL_CONFIRM_M, accuracy * 3) && dt >= 45_000 && implied >= 0.7 && implied <= 2.5;
@@ -253,6 +259,35 @@ export function trailDecision(last, point) {
   const implied = dt > 0 ? moved / (dt / 1000) : Infinity;
   if (implied > FIX_MAX_JUMP_MPS) return 'drop';
   return 'keep';
+}
+
+/** Bubble inside which the live pin may reuse the anchor. A farther fix is where the phone is now. */
+export function staySnapGate(last, point) {
+  const accuracy = Math.max(positiveMeters(point?.accuracyM), positiveMeters(last?.accuracyM));
+  return Math.max(STOP_RADIUS_M, accuracy * 2);
+}
+
+/**
+ * Live pin and the coordinate published to the family.
+ * Holds only inside the stay bubble. Bus, subway, and a sparse GPS jump past that
+ * bubble move the pin even when the trail sampler still drops the vertex.
+ * A dropped sample (poor accuracy, impossible jump) does not move the pin.
+ */
+export function liveCoordinate(anchor, point) {
+  if (!point || !Number.isFinite(point.lat) || !Number.isFinite(point.lng)) {
+    if (anchor && Number.isFinite(anchor.lat) && Number.isFinite(anchor.lng)) {
+      return { ...point, lat: anchor.lat, lng: anchor.lng };
+    }
+    return point;
+  }
+  if (!anchor || !Number.isFinite(anchor.lat) || !Number.isFinite(anchor.lng)) return point;
+  const decision = trailDecision(anchor, point);
+  if (decision === 'keep') return point;
+  if (decision === 'drop') return { ...point, lat: anchor.lat, lng: anchor.lng };
+  if (haversineMeters(anchor, point) <= staySnapGate(anchor, point)) {
+    return { ...point, lat: anchor.lat, lng: anchor.lng };
+  }
+  return point;
 }
 
 export function shouldKeepTrailPoint(last, point) {
@@ -331,8 +366,7 @@ export function displayCoordinate(points, point) {
   if (!point || !Number.isFinite(point.lat) || !Number.isFinite(point.lng)) return point;
   const anchor = drawnAnchor(visibleTrail(points));
   if (!anchor) return point;
-  if (trailDecision(anchor, point) === 'keep') return point;
-  return { ...point, lat: anchor.lat, lng: anchor.lng };
+  return liveCoordinate(anchor, point);
 }
 
 export function settleTrailPoint(points, point, now) {
@@ -340,12 +374,13 @@ export function settleTrailPoint(points, point, now) {
   const collapsed = collapseStayTrail(existing);
   const anchor = drawnAnchor(collapsed);
   const decision = trailDecision(anchor, point);
+  const pin = liveCoordinate(anchor, point);
   if (decision !== 'keep') {
     const next = decision === 'snap' ? appendHistoryPoint(collapsed, point, now) : collapsed;
     return {
       points: next,
-      lat: anchor ? anchor.lat : null,
-      lng: anchor ? anchor.lng : null,
+      lat: pin && Number.isFinite(pin.lat) ? pin.lat : (anchor ? anchor.lat : null),
+      lng: pin && Number.isFinite(pin.lng) ? pin.lng : (anchor ? anchor.lng : null),
       decision,
     };
   }

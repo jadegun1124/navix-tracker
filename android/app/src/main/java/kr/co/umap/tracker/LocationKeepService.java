@@ -40,8 +40,9 @@ import org.json.JSONObject;
  *
  * Thresholds match src/lib/tracking.mjs: drop fixes older than 30s, precise
  * accuracy above 80m, later fixes worse than 40m, jumps faster than 350 m/s.
- * A still fix inside the stay radius, and a slow leap that is not a sustained
- * walk, is reported at the last stable pin so the trail does not grow a spike.
+ * A fix inside the stay bubble (50m or accuracy×2) is reported at the last
+ * stable pin. Anything farther is a relocation and is published as-is.
+ * Sustained-walk filtering belongs to the trail sampler, not this pin.
  */
 public class LocationKeepService {
     public static final String ACTION_FIX = "kr.co.umap.tracker.LOCATION_FIX";
@@ -364,7 +365,7 @@ public class LocationKeepService {
             }
         }
         Location reported = location;
-        if (stableFix != null && isStayJitter(stableFix, location, accuracy, fixAt)) {
+        if (stableFix != null && isStayJitter(stableFix, location, accuracy)) {
             reported = new Location(stableFix);
             reported.setTime(fixAt);
             reported.setAccuracy(accuracy);
@@ -394,20 +395,16 @@ public class LocationKeepService {
     }
 
     /**
-     * Mirrors trailDecision in src/lib/tracking.mjs. A still or slow fix must
-     * look like a sustained walk before the published pin moves. Admin and
-     * managed phones both upload through this path while the app is backgrounded,
-     * and the viewer stitches those fixes into that member's trail.
+     * Same stay bubble as staySnapGate in src/lib/tracking.mjs.
+     * Admin and managed phones both upload through this path. A bus, subway,
+     * or sparse fix with speed 0 must not be replaced by the previous stay.
+     * Returning true republishes the anchor latitude and longitude.
      */
-    private static boolean isStayJitter(Location anchor, Location next, float accuracy, long fixAt) {
-        float moved = anchor.distanceTo(next);
-        float gate = Math.max(50f, accuracy * 2f);
-        if (moved <= gate) return true;
-        if (next.hasSpeed() && next.getSpeed() >= 0.8f) return false;
-        long dt = Math.max(0L, fixAt - anchor.getTime());
-        float implied = dt > 0L ? moved / (dt / 1000f) : Float.POSITIVE_INFINITY;
-        boolean sustained = moved >= Math.max(80f, accuracy * 3f) && dt >= 45_000L && implied >= 0.7f && implied <= 2.5f;
-        return !sustained;
+    private static boolean isStayJitter(Location anchor, Location next, float accuracy) {
+        float anchorAccuracy = Math.max(0f, anchor.getAccuracy());
+        float nextAccuracy = Math.max(0f, accuracy);
+        float gate = Math.max(50f, Math.max(anchorAccuracy, nextAccuracy) * 2f);
+        return anchor.distanceTo(next) <= gate;
     }
 
     private static void emit(Location location, long fixAt) {
