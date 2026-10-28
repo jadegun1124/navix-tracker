@@ -522,6 +522,7 @@ type Action =
   | { type: 'set-visit-label'; memberId: string; id: string; label: string }
   | { type: 'set-journey-label'; memberId: string; id: string; which: 'start' | 'end'; label: string; lat?: number; lng?: number }
   | { type: 'set-photo'; photo: string | null }
+  | { type: 'set-display-name'; name: string }
   | { type: 'set-self-place'; place: string | null }
   | { type: 'close-journeys'; now: number }
   | { type: 'set-motion'; moving: boolean }
@@ -957,6 +958,17 @@ function reducer(state: Session, action: Action): Session {
       if (!changed) return state;
       return { ...state, journeys: { ...state.journeys, [action.memberId]: next } };
     }
+    case 'set-display-name': {
+      if (!state.profile) return state;
+      const next = localProfile(action.name, state.profile.id);
+      if (!next) return state;
+      const profile = state.profile.photo ? { ...next, photo: state.profile.photo } : next;
+      return {
+        ...state,
+        profile,
+        members: state.members.map((member) => (member.id === 'self' ? { ...member, name: profile.name } : member)),
+      };
+    }
     case 'set-photo': {
       if (!state.profile) return state;
       const photo = cleanPhoto(action.photo);
@@ -1034,6 +1046,7 @@ interface FamilyApi {
   closeJourneys: (now: number) => void;
   setJourneyLabel: (memberId: string, id: string, which: 'start' | 'end', label: string, lat?: number, lng?: number) => void;
   setPhoto: (photo: string | null) => void;
+  setDisplayName: (name: string) => void;
   setSelfPlace: (place: string | null) => void;
   setMotion: (moving: boolean) => void;
   pushNotice: (title: string, body: string) => void;
@@ -1107,6 +1120,7 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
     closeJourneys: (now) => dispatch({ type: 'close-journeys', now }),
     setJourneyLabel: (memberId, id, which, label, lat, lng) => dispatch({ type: 'set-journey-label', memberId, id, which, label, lat, lng }),
     setPhoto: (photo) => dispatch({ type: 'set-photo', photo }),
+    setDisplayName: (name) => dispatch({ type: 'set-display-name', name }),
     setSelfPlace: (place) => dispatch({ type: 'set-self-place', place }),
     setMotion: (moving) => dispatch({ type: 'set-motion', moving }),
     pushNotice: (title, body) => dispatch({ type: 'notice', notice: notice(title, body) }),

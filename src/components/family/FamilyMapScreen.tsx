@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Bell, ChevronLeft, ChevronRight, Copy, Home, LocateFixed, MapPin, Menu, Minus, Plus, Route, Settings, UserPlus, X } from 'lucide-react';
+import { Bell, ChevronLeft, ChevronRight, Copy, Home, LocateFixed, MapPin, Menu, Plus, Route, Settings, UserPlus, X } from 'lucide-react';
+import { looksLikePhone, localProfile } from '../../lib/localProfile.mjs';
 import { buildInviteLink, formatClock, hasLocation, haversineMeters, shouldAlertLeave } from '../../lib/geo';
 import { KEEP_PERMISSION_ASKED_KEY, KEEP_START_ASKED_KEY, keepEntryPrompt, markSessionFlag, readSessionFlag } from '../../lib/systemSettings.mjs';
 import { collapseDuplicateJourneys, displayCoordinate, historyDayKeys, historyDayLabel, liveTrailPoints, previewOpenJourney, seoulDayEndMs, seoulDayKey, visibleTrail } from '../../lib/tracking.mjs';
@@ -66,6 +67,7 @@ export function FamilyMapScreen() {
   const [playing, setPlaying] = useState(false);
   const [dm, setDm] = useState<DirectChatTarget | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
   const [recordId, setRecordId] = useState<string | null>(null);
   const [managedSettings, setManagedSettings] = useState(false);
   const [chatTick, setChatTick] = useState(0);
@@ -486,6 +488,10 @@ export function FamilyMapScreen() {
       setSheet(null);
       return true;
     }
+    if (profileOpen) {
+      setProfileOpen(false);
+      return true;
+    }
     if (managedSettings) {
       setManagedSettings(false);
       return true;
@@ -509,7 +515,7 @@ export function FamilyMapScreen() {
       return true;
     }
     return false;
-  }), [alertsOpen, confirm, dayPicker, detailId, dm, keepPrompt, managedSettings, menuOpen, placingHome, recordId, sheet]);
+  }), [alertsOpen, confirm, dayPicker, detailId, dm, keepPrompt, managedSettings, menuOpen, placingHome, profileOpen, recordId, sheet]);
   const people = state.mode === 'managed'
     ? state.members.filter((member) => member.id === 'self' || member.role === 'admin-share')
     : state.members.filter((member) => member.role !== 'guardian' && member.role !== 'admin-share');
@@ -595,9 +601,6 @@ export function FamilyMapScreen() {
             <RoundButton label="확대" onClick={() => mapRef.current?.zoomBy(1)}>
               <Plus className="h-5 w-5" />
             </RoundButton>
-            <RoundButton label="축소" onClick={() => mapRef.current?.zoomBy(-1)}>
-              <Minus className="h-5 w-5" />
-            </RoundButton>
             <RoundButton
               label="내 위치"
               onClick={() => {
@@ -663,9 +666,6 @@ export function FamilyMapScreen() {
               <div className="absolute right-3 top-3 z-30 flex flex-col gap-2">
                 <RoundButton label="확대" onClick={() => mapRef.current?.zoomBy(1)}>
                   <Plus className="h-5 w-5" />
-                </RoundButton>
-                <RoundButton label="축소" onClick={() => mapRef.current?.zoomBy(-1)}>
-                  <Minus className="h-5 w-5" />
                 </RoundButton>
               </div>
             </>
@@ -1104,8 +1104,11 @@ export function FamilyMapScreen() {
             home={state.home}
             alertHint={unreadAlerts ? '새 알림이 있습니다' : '들어오고 나간 기록'}
             guardians={state.guardians}
-            onPhoto={(photo) => family.setPhoto(photo)}
-            onClose={() => setMenuOpen(false)}
+            onProfile={() => setProfileOpen(true)}
+            onClose={() => {
+              setProfileOpen(false);
+              setMenuOpen(false);
+            }}
             onHome={startHomePick}
             onAlerts={() => {
               setMenuOpen(false);
@@ -1117,6 +1120,18 @@ export function FamilyMapScreen() {
             }}
             onSettings={() => setManagedSettings(true)}
             onToggleShare={(link) => family.setGuardianShare(link.code, link.share === 'allowed' ? 'revoked' : 'allowed')}
+          />
+        )}
+        {managed && profileOpen && (
+          <ProfileSettingsSheet
+            name={state.profile?.name || '나'}
+            photo={state.profile?.photo}
+            onPhoto={(photo) => family.setPhoto(photo)}
+            onSave={(name) => {
+              family.setDisplayName(name);
+              setProfileOpen(false);
+            }}
+            onClose={() => setProfileOpen(false)}
           />
         )}
         {managed && managedSettings && (
@@ -1213,13 +1228,68 @@ function MenuRow({ icon, label, hint, onClick }: { icon: React.ReactNode; label:
   );
 }
 
+function ProfileSettingsSheet({
+  name,
+  photo,
+  onPhoto,
+  onSave,
+  onClose,
+}: {
+  name: string;
+  photo?: string;
+  onPhoto: (photo: string) => void;
+  onSave: (name: string) => void;
+  onClose: () => void;
+}) {
+  const [draft, setDraft] = useState(name);
+  const [note, setNote] = useState<string | null>(null);
+  return (
+    <div className="absolute inset-0 z-[60]">
+      <Sheet title="프로필 설정" onClose={onClose}>
+        <div className="flex items-center gap-3">
+          <PhotoPicker name={draft || name} photo={photo} onPhoto={onPhoto} />
+          <p className="text-sm leading-6 text-slate-500">사진과 이름은 이 기기에만 저장됩니다. 전화번호는 쓰지 않습니다.</p>
+        </div>
+        <label className="mt-4 block text-xs font-bold text-slate-400" htmlFor="profile-name">
+          표시 이름
+        </label>
+        <input
+          id="profile-name"
+          value={draft}
+          onChange={(event) => {
+            setDraft(event.target.value);
+            setNote(null);
+          }}
+          maxLength={20}
+          placeholder="이름"
+          className="mt-1 w-full rounded-2xl border border-slate-200 px-3 py-3 outline-none focus:border-[#0084FF]"
+        />
+        {note && <p className="mt-2 text-sm leading-6 text-amber-800">{note}</p>}
+        <button
+          type="button"
+          onClick={() => {
+            if (looksLikePhone(draft) || !localProfile(draft)) {
+              setNote('전화번호는 이름으로 쓰지 않습니다.');
+              return;
+            }
+            onSave(draft.trim());
+          }}
+          className="mt-4 w-full rounded-full bg-[#0084FF] py-3.5 text-sm font-black text-white"
+        >
+          저장
+        </button>
+      </Sheet>
+    </div>
+  );
+}
+
 function ManagedMenu({
   name,
   photo,
   home,
   alertHint,
   guardians,
-  onPhoto,
+  onProfile,
   onClose,
   onHome,
   onAlerts,
@@ -1232,7 +1302,7 @@ function ManagedMenu({
   home: HomeZone | null;
   alertHint: string;
   guardians: GuardianLink[];
-  onPhoto: (photo: string) => void;
+  onProfile: () => void;
   onClose: () => void;
   onHome: () => void;
   onAlerts: () => void;
@@ -1250,13 +1320,14 @@ function ManagedMenu({
         <span className="h-11 w-11" />
       </header>
       <div className="flex-1 overflow-y-auto px-4 py-4">
-        <div className="flex items-center gap-3 rounded-2xl bg-white px-4 py-4 shadow-sm">
-          <PhotoPicker name={name} photo={photo} onPhoto={onPhoto} />
-          <div className="min-w-0">
-            <p className="truncate text-base font-black">{name}</p>
-            <p className="text-xs text-slate-400">이 기기에만 저장된 이름</p>
-          </div>
-        </div>
+        <button type="button" onClick={onProfile} className="flex w-full items-center gap-3 rounded-2xl bg-white px-4 py-4 text-left shadow-sm">
+          <MemberAvatar name={name} photo={photo} />
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-base font-black">{name}</span>
+            <span className="block text-xs text-slate-400">프로필 설정</span>
+          </span>
+          <ChevronRight className="h-4 w-4 shrink-0 text-slate-300" />
+        </button>
         <div className="mt-4 overflow-hidden rounded-2xl bg-white shadow-sm">
           <MenuRow icon={<Home className="h-4 w-4" />} label="우리 집 설정" hint={home ? `${home.label || '우리 집'} · 반경 ${home.radiusM}m` : '지도에서 집 위치를 정합니다'} onClick={onHome} />
           <MenuRow icon={<Bell className="h-4 w-4" />} label="알림" hint={alertHint} onClick={onAlerts} />
