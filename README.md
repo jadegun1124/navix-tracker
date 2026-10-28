@@ -10,19 +10,19 @@
 | :--- | :--- | :--- |
 | 회사 홈 | GitHub Pages | https://jadegun1124.github.io/umap/ |
 | 앱 화면 미리보기 | 같은 Pages의 `?app=1` | https://jadegun1124.github.io/umap/?app=1 |
-| 안드로이드 앱 | GitHub Releases APK v1.14.0 | https://github.com/jadegun1124/umap/releases/download/v1.14.0/umap-v1.14.0-tracker.apk |
-| 릴리스 페이지 | GitHub Releases | https://github.com/jadegun1124/umap/releases/tag/v1.14.0 |
+| 안드로이드 앱 | GitHub Releases APK v1.15.0 | https://github.com/jadegun1124/umap/releases/download/v1.15.0/umap-v1.15.0-tracker.apk |
+| 릴리스 페이지 | GitHub Releases | https://github.com/jadegun1124/umap/releases/tag/v1.15.0 |
 
 Google Play, App Store, TestFlight에는 올리지 않았습니다. iOS는 아이콘 에셋만 있고 설치 파일은 없습니다.
 
-`main`에 푸시하면 GitHub Actions가 회사 홈을 Pages에 배포하고, 같은 커밋으로 디버그 APK를 만들어 GitHub Release `v1.14.0`의 `umap-v1.14.0-tracker.apk`를 갱신합니다. 이전 빌드는 `v1.13.0`, `v1.12.0`, `v1.11.0`, `v1.10.0`, `v1.9.0`, `v1.8.0`, `v1.7.0`, `v1.6.0`, `v1.5.0`, `v1.4.0`, `v1.3.0`, `v1.2.0`, `v1.1.0`, `v1.0.0`에 남아 있습니다.
+`main`에 푸시하면 GitHub Actions가 회사 홈을 Pages에 배포하고, 같은 커밋으로 디버그 APK를 만들어 GitHub Release `v1.15.0`의 `umap-v1.15.0-tracker.apk`를 갱신합니다. 이전 빌드는 `v1.14.0`, `v1.13.0`, `v1.12.0`, `v1.11.0`, `v1.10.0`, `v1.9.0`, `v1.8.0`, `v1.7.0`, `v1.6.0`, `v1.5.0`, `v1.4.0`, `v1.3.0`, `v1.2.0`, `v1.1.0`, `v1.0.0`에 남아 있습니다.
 
 ## 화면
 
 - 웹(GitHub Pages): 회사 홈페이지. 관제 콘솔은 없습니다.
 - 앱: Capacitor 안드로이드 앱이 가족 위치 화면을 엽니다. 브라우저에서 같은 화면을 보려면 `?app=1` 을 붙입니다.
 
-흐름은 이 기기의 표시 이름 → 관리자/피관리자 선택 → 권한 안내 → 가족 지도입니다. 하단의 기록 탭에서 오늘부터 30일 전까지의 이동을 봅니다. 알림은 지도 왼쪽 위 종 아이콘에서 엽니다. 관리자만 가족을 초대하고 지웁니다. 피관리자는 코드를 수락한 뒤 위치 공유를 따로 허용합니다.
+흐름은 이 기기의 표시 이름 → 관리자/피관리자 선택 → 권한 안내 → 가족 지도입니다. 관리자와 피관리자 모두 하단 탭 없이 지도만 둡니다. 왼쪽 위 메뉴에서 프로필, 우리 집, 알림, 설정을 엽니다. 사람을 누르면 그 사람의 기록을 보며, 날짜는 오늘이 기본이고 누르면 30일 목록이 열립니다. 알림 종은 지도 위에도 있습니다. 관리자만 가족을 초대하고 지웁니다. 피관리자는 코드를 수락한 뒤 위치 공유를 따로 허용합니다.
 
 ## 권한
 
@@ -91,9 +91,9 @@ npm run dev
 
 ## 안드로이드 APK
 
-받는 곳: https://github.com/jadegun1124/umap/releases/download/v1.14.0/umap-v1.14.0-tracker.apk
+받는 곳: https://github.com/jadegun1124/umap/releases/download/v1.15.0/umap-v1.15.0-tracker.apk
 
-`main` 푸시마다 `Build Android APK (Umap)` 워크플로가 웹을 빌드하고 `dist` 를 안드로이드 에셋으로 복사한 뒤 `assembleDebug` 로 APK를 만듭니다. 결과 파일은 GitHub Release `v1.14.0`에 올립니다. 앱 `versionName`은 `1.14.0`, `versionCode`는 15입니다. Play 스토어 트랙은 없습니다.
+`main` 푸시마다 `Build Android APK (Umap)` 워크플로가 웹을 빌드하고 `dist` 를 안드로이드 에셋으로 복사한 뒤 `assembleDebug` 로 APK를 만듭니다. 결과 파일은 GitHub Release `v1.15.0`에 올립니다. 앱 `versionName`은 `1.15.0`, `versionCode`는 16입니다. Play 스토어 트랙은 없습니다.
 
 ## 데이터
 
