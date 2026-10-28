@@ -19,6 +19,21 @@ test('always-allow opens the location radio, then the app permission list, then 
   assert.deepEqual(alwaysAllowScreens(), ['location-radio', 'app-permissions', 'app-details']);
   assert.equal(BATTERY_POPUP_ACTION, 'android.settings.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS');
   assert.equal(BATTERY_POPUP_ACTION.includes('IGNORE_BATTERY_OPTIMIZATION_SETTINGS'), false);
+  const plugin = readFileSync(new URL('../../android/app/src/main/java/kr/co/umap/tracker/UmapLocationPlugin.java', import.meta.url), 'utf8');
+  const open = plugin.slice(plugin.indexOf('private boolean openAlwaysSettings'), plugin.indexOf('private void noteOpened'));
+  assert.ok(open.indexOf('openLocationRadio') < open.indexOf('openAppPermissions'));
+  assert.ok(open.indexOf('openAppPermissions') < open.indexOf('openAppDetails'));
+  const radio = plugin.slice(plugin.indexOf('private boolean openLocationRadio'), plugin.indexOf('private boolean openAppPermissions'));
+  assert.ok(radio.indexOf('com.samsung.android.permissioncontroller') < radio.indexOf('startExplicit'));
+  const intent = plugin.slice(plugin.indexOf('private Intent locationRadioIntent'), plugin.indexOf('private Intent appPermissionsIntent'));
+  assert.match(intent, /PERMISSION_GROUP_NAME/);
+  assert.match(intent, /EXTRA_APP_PACKAGE/);
+  assert.equal(intent.includes('ACCESS_FINE_LOCATION'), false);
+  assert.match(plugin, /android.permission-group.LOCATION/);
+  assert.match(plugin, /ManageAppPermissionActivity/);
+  const resume = plugin.slice(plugin.indexOf('protected void handleOnResume'), plugin.indexOf('public void openBattery'));
+  assert.equal(resume.includes('advanceFallback'), false);
+  assert.ok(resume.indexOf('scheduleBounceConfirm') < resume.indexOf('resolveAlways'));
 });
 
 test('keep-alive notification is asked at entry until allowed, and started only after an explicit tap', () => {
@@ -61,6 +76,24 @@ test('location keep does not post an ongoing shade card', () => {
   assert.match(manifest, /LocationKeepReceiver/);
   assert.match(manifest, /AlertWatchReceiver/);
   assert.match(manifest, /USE_EXACT_ALARM/);
+});
+
+test('chat shade notification is one event and opens that conversation', () => {
+  const watch = readFileSync(new URL('../../android/app/src/main/java/kr/co/umap/tracker/AlertWatchService.java', import.meta.url), 'utf8');
+  const activity = readFileSync(new URL('../../android/app/src/main/java/kr/co/umap/tracker/MainActivity.java', import.meta.url), 'utf8');
+  const plugin = readFileSync(new URL('../../android/app/src/main/java/kr/co/umap/tracker/UmapLocationPlugin.java', import.meta.url), 'utf8');
+  assert.equal(watch.includes('startForeground('), false);
+  assert.equal(watch.includes('Umap 위치 공유'), false);
+  assert.match(watch, /CHAT_CHANNEL = "umap_chat"/);
+  assert.match(watch, /가족 대화/);
+  assert.match(watch, /\/chat\?me=/);
+  assert.match(watch, /umap_chat_peer/);
+  assert.match(watch, /CATEGORY_MESSAGE/);
+  assert.match(watch, /pullChat\(context, base, code, token, me, !MainActivity\.isResumed\(\)\)/);
+  assert.match(activity, /umap_chat_code/);
+  assert.match(activity, /UmapLocationPlugin\.openChat/);
+  assert.match(plugin, /consumePendingChat/);
+  assert.match(plugin, /notifyListeners\("chat"/);
 });
 
 test('gps is 2.5s only while moving and backs off to 2 then 5 minutes while still', () => {

@@ -22,9 +22,10 @@ export function batteryAction(native) {
   return native ? 'ignore-battery-optimizations' : 'explain-only';
 }
 
-// Android UmapLocationPlugin opens these in order. The location screen is the
-// permission-group radio (위치 액세스 권한). If that activity is missing or the
-// OEM closes it, the app permission list (앱 권한) opens, then app info.
+// Android UmapLocationPlugin opens these in order. The location screen is
+// ACTION_MANAGE_APP_PERMISSION for android.permission-group.LOCATION
+// (위치 액세스 권한: 항상 허용 radios). Samsung's controller is tried first.
+// If that activity is missing, the app permission list opens, then app info.
 // Battery is the system popup, not the optimization list.
 export const LOCATION_PERMISSION_ACTION = 'android.intent.action.MANAGE_APP_PERMISSION';
 export const LOCATION_PERMISSION_GROUP = 'android.permission-group.LOCATION';
@@ -40,6 +41,8 @@ export function alwaysAllowScreens() {
 // so the map does not repeat the same prompt immediately after onboarding.
 export const KEEP_PERMISSION_ASKED_KEY = 'umap_keep_permission_asked';
 export const KEEP_START_ASKED_KEY = 'umap_keep_start_asked';
+export const ALWAYS_GUIDE_DISMISSED_KEY = 'umap_always_guide_dismissed';
+export const CHAT_NOTIFY_ASKED_KEY = 'umap_chat_notify_asked';
 
 export function readSessionFlag(key) {
   try {

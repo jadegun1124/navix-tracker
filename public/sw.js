@@ -38,11 +38,34 @@ self.addEventListener('push', (event) => {
     code: payload.code,
     at: payload.at,
     from: payload.from,
+    to: payload.to,
     body,
   };
   event.waitUntil((async () => {
     const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
     const visible = windows.some((client) => client.visibilityState === 'visible');
+    if (payload.kind === 'chat') {
+      const text = typeof payload.text === 'string' && payload.text ? payload.text : body;
+      await Promise.all(windows.map((client) => client.postMessage({
+        type: 'umap-chat',
+        code: payload.code,
+        message: {
+          id: payload.id,
+          from: payload.from,
+          to: payload.to,
+          text,
+          at: payload.at,
+        },
+      })));
+      if (visible) return;
+      await self.registration.showNotification(title, {
+        body,
+        tag: `umap-chat-${payload.code || ''}-${payload.from || ''}`,
+        renotify: true,
+        data: alert,
+      });
+      return;
+    }
     if (visible) {
       await Promise.all(windows.map((client) => client.postMessage({ type: 'umap-alert', alert })));
       return;
@@ -58,15 +81,23 @@ self.addEventListener('push', (event) => {
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  const target = new URL('./?app=1', self.location.href).href;
+  const data = event.notification.data || {};
+  const target = new URL('./?app=1', self.location.href);
+  if (data.kind === 'chat' && data.code && data.from) {
+    target.searchParams.set('room', String(data.code));
+    target.searchParams.set('chat', String(data.from));
+  }
   event.waitUntil((async () => {
     const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
     for (const client of windows) {
       if ('focus' in client) {
         await client.focus();
+        if (data.kind === 'chat' && data.code && data.from) {
+          client.postMessage({ type: 'umap-open-chat', code: data.code, peer: data.from });
+        }
         return;
       }
     }
-    if (self.clients.openWindow) await self.clients.openWindow(target);
+    if (self.clients.openWindow) await self.clients.openWindow(target.href);
   })());
 });

@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { hasLocation, haversineMeters } from '../../lib/geo';
+import { placePriorName } from '../../lib/placeAlias.mjs';
 import { buildDayRecord } from '../../lib/tracking.mjs';
 import type { AcceptedFix } from '../../lib/tracking.mjs';
 import { readSharedPlaces, publishSharedPlace, subscribeSharedPlaces, type SharedPlace } from '../../services/familyShare';
-import { familyEndpointAvailable, familySyncUrl, splitSyncToken, startManagedFamilySync, syncTokenFor } from '../../services/familySync';
+import { familyEndpointAvailable, familySyncUrl, publishProfileRemote, splitSyncToken, startManagedFamilySync, syncTokenFor } from '../../services/familySync';
 import { startLocationWatch } from '../../services/locationWatch';
 import { cachedAddress, reverseGeocodeCached, shortenAddress } from '../../services/placeGeocode';
 import { openAlwaysLocation, readNativeBattery, umapLocation, umapLocationNative, type KeepAliveTarget } from '../../services/umapLocation';
@@ -160,14 +161,26 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
 
   useEffect(() => {
     if (state.mode !== 'managed') return;
-    const name = (state.profile?.name || self?.name || '가족').trim().slice(0, 80) || '가족';
+    const name = (state.profile?.name || self?.name || '가족').trim().slice(0, 20) || '가족';
+    const memberId = state.profile?.profileKey ? state.profile.id : undefined;
     const nextTokens: Record<string, string> = {};
     for (const link of state.guardians) {
       if (link.syncToken) nextTokens[link.code] = link.syncToken;
     }
     for (const [code, token] of Object.entries(sharedTokens.current)) {
       if (nextTokens[code]) continue;
-      publishSharedPlace({ code, name, lat: null, lng: null, accuracyM: 0, at: Date.now(), sharing: false }, token);
+      const priorName = placePriorName(code, 'admin', name) || undefined;
+      publishSharedPlace({
+        code,
+        name,
+        ...(memberId ? { memberId } : {}),
+        ...(priorName ? { priorName } : {}),
+        lat: null,
+        lng: null,
+        accuracyM: 0,
+        at: Date.now(),
+        sharing: false,
+      }, token, state.profile?.profileKey);
     }
     sharedTokens.current = nextTokens;
     const located = self && hasLocation(self) ? self : null;
@@ -176,10 +189,12 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
       const remote = link.syncToken && (sharing || link.share === 'revoked') ? link.syncToken : null;
       // No fix yet: do not publish a newer empty point. That used to replace the native service's coordinates.
       if (sharing && !located) continue;
-      const publishedName = (link.rosterName || name).trim().slice(0, 80) || name;
+      const priorName = placePriorName(link.code, 'admin', name) || (link.rosterName && link.rosterName !== name ? link.rosterName : '');
       publishSharedPlace({
         code: link.code,
-        name: publishedName,
+        name,
+        ...(memberId ? { memberId } : {}),
+        ...(priorName ? { priorName } : {}),
         lat: sharing && located ? located.lat : null,
         lng: sharing && located ? located.lng : null,
         accuracyM: located?.accuracyM ?? 0,
@@ -187,14 +202,15 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
         sharing,
         batteryPct: sharing ? (self?.battery ?? null) : null,
         charging: sharing ? (self?.charging ?? null) : null,
-      }, remote);
+      }, remote, state.profile?.profileKey);
     }
-  }, [selfPublishKey, state.guardians, state.mode, state.profile?.name]);
+  }, [selfPublishKey, state.guardians, state.mode, state.profile?.id, state.profile?.name, state.profile?.profileKey]);
 
   useEffect(() => {
     if (state.mode !== 'admin') return;
     let cancel = false;
-    const name = (state.profile?.name || self?.name || '가족').trim().slice(0, 80) || '가족';
+    const name = (state.profile?.name || self?.name || '가족').trim().slice(0, 20) || '가족';
+    const memberId = state.profile?.profileKey ? state.profile.id : undefined;
     const share = state.shareSelfWithFamily;
     const located = self && hasLocation(self) ? self : null;
     if (!share) setFamilyShareNote(null);
@@ -210,9 +226,12 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
         return;
       }
       setFamilyShareNote(null);
+      const priorName = placePriorName(state.inviteCode, 'family', name);
       publishSharedPlace({
         code: state.inviteCode,
         name,
+        ...(memberId ? { memberId } : {}),
+        ...(priorName ? { priorName } : {}),
         lat: sending && located ? located.lat : null,
         lng: sending && located ? located.lng : null,
         accuracyM: located?.accuracyM ?? 0,
@@ -221,13 +240,53 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
         audience: 'family',
         batteryPct: sending ? located?.battery ?? null : null,
         charging: sending ? located?.charging ?? null : null,
-      }, token);
+      }, token, state.profile?.profileKey);
       adminShared.current = share;
     });
     return () => {
       cancel = true;
     };
-  }, [selfPublishKey, state.inviteCode, state.mode, state.profile?.name, state.shareSelfWithFamily, state.syncReadKey, state.syncWriteKey]);
+  }, [selfPublishKey, state.inviteCode, state.mode, state.profile?.id, state.profile?.name, state.profile?.profileKey, state.shareSelfWithFamily, state.syncReadKey, state.syncWriteKey]);
+
+  const profileSyncKey = [
+    state.mode,
+    state.profile?.id ?? '',
+    state.profile?.name ?? '',
+    state.profile?.photo ?? '',
+    state.profile?.profileKey ?? '',
+    state.inviteCode,
+    state.syncWriteKey,
+    state.syncReadKey,
+    state.guardians.map((link) => `${link.code}:${link.syncToken ?? ''}`).join('|'),
+  ].join('~');
+  useEffect(() => {
+    const current = familyRef.current.state;
+    const profile = current.profile;
+    if (!profile?.profileKey || !profile.id || !profile.name) return;
+    let cancel = false;
+    const send = (code: string, token: string) => {
+      if (cancel) return;
+      publishProfileRemote({
+        memberId: profile.id,
+        name: profile.name,
+        photo: profile.photo ?? null,
+        at: Date.now(),
+      }, code, token, profile.profileKey);
+    };
+    if (current.mode === 'managed') {
+      for (const link of current.guardians) {
+        if (link.syncToken) send(link.code, link.syncToken);
+      }
+    }
+    if (current.mode === 'admin') {
+      void syncTokenFor(current.syncWriteKey, current.syncReadKey).then((token) => {
+        if (!cancel) send(current.inviteCode, token);
+      });
+    }
+    return () => {
+      cancel = true;
+    };
+  }, [profileSyncKey]);
 
   const keepKey = [
     state.mode,
@@ -236,6 +295,8 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
     state.backgroundKeepAlive,
     state.shareSelfWithFamily,
     state.profile?.name ?? '',
+    state.profile?.id ?? '',
+    state.profile?.profileKey ?? '',
     state.inviteCode,
     state.syncWriteKey,
     state.syncReadKey,
@@ -280,7 +341,9 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
       }
       const config: Parameters<typeof JSON.stringify>[0] = {
         baseUrl: base,
-        name: (current.profile?.name || '가족').trim().slice(0, 80) || '가족',
+        name: (current.profile?.name || '가족').trim().slice(0, 20) || '가족',
+        memberId: current.profile?.profileKey ? current.profile.id : '',
+        profileKey: current.profile?.profileKey || '',
         precise: current.permissions.accuracy === 'precise',
         targets,
       };
@@ -308,9 +371,10 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
     const links = familyRef.current.state.guardians
       .filter((link) => link.syncToken)
       .map((link) => ({ code: link.code, token: link.syncToken as string }));
-    return startManagedFamilySync(links, (code, places) => {
+    return startManagedFamilySync(links, (code, places, profiles) => {
       remoteRooms.current[code] = places;
-      familyRef.current.setRoomFamilyPlaces(code, places);
+      familyRef.current.setRoomFamilyPlaces(code, places, profiles);
+      familyRef.current.applySharedProfiles(code, profiles);
     });
   }, [familyLinkKey, state.mode]);
 

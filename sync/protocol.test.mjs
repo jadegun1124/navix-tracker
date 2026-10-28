@@ -4,9 +4,12 @@ import { startSyncServer } from './dev-server.mjs';
 import { bytesToBase64Url } from './webpush.mjs';
 import {
   applyPlace,
+  chatPushPayload,
   createMemoryStore,
   emptyRoom,
   handleSyncRequest,
+  pushesForAlert,
+  pushesForChat,
   randomKey,
   roomToken,
   sha256Base64Url,
@@ -14,15 +17,16 @@ import {
   withCors,
 } from './protocol.mjs';
 
-async function call(store, method, path, { token, readKey, body } = {}) {
+async function call(store, method, path, { token, readKey, profileKey, body, raw } = {}) {
   const headers = new Headers();
   if (token) headers.set('x-umap-sync-key', token);
   if (readKey) headers.set('x-umap-read-key', readKey);
-  if (body !== undefined) headers.set('content-type', 'application/json');
+  if (profileKey) headers.set('x-umap-profile-key', profileKey);
+  if (body !== undefined || raw !== undefined) headers.set('content-type', 'application/json');
   const request = new Request(`http://sync.local${path}`, {
     method,
     headers,
-    body: body === undefined ? undefined : JSON.stringify(body),
+    body: raw !== undefined ? raw : body === undefined ? undefined : JSON.stringify(body),
   });
   const response = await handleSyncRequest(store, request);
   const text = await response.text();
@@ -573,4 +577,205 @@ test('direct messages stay on the pair and off the family view', async () => {
   assert.equal(again.status, 200);
   const once = await call(store, 'GET', `/v1/rooms/${code}/chat?me=${encodeURIComponent('엄마')}&with=${encodeURIComponent('하나')}`, { token });
   assert.equal(once.body.messages.length, 1);
+});
+
+test('chat push names the recipient and hides the endpoint', async () => {
+  const store = createMemoryStore();
+  const code = '24680';
+  const writeKey = randomKey();
+  const readKey = randomKey();
+  const token = await syncTokenFor(writeKey, readKey);
+  const key = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits']);
+  const publicRaw = new Uint8Array(await crypto.subtle.exportKey('raw', key.publicKey));
+  const auth = crypto.getRandomValues(new Uint8Array(16));
+  const base = {
+    p256dh: bytesToBase64Url(publicRaw),
+    auth: bytesToBase64Url(auth),
+  };
+  const child = {
+    ...base,
+    endpoint: 'https://fcm.googleapis.com/fcm/send/umap-child',
+    name: '하나',
+  };
+  const savedChild = await call(store, 'PUT', `/v1/rooms/${code}/push`, { token, body: child });
+  assert.equal(savedChild.status, 200);
+  const phoneName = await call(store, 'PUT', `/v1/rooms/${code}/push`, {
+    token,
+    body: { ...child, endpoint: 'https://fcm.googleapis.com/fcm/send/umap-phone', name: '01012345678' },
+  });
+  assert.equal(phoneName.status, 403);
+  const parent = {
+    ...base,
+    endpoint: 'https://fcm.googleapis.com/fcm/send/umap-parent',
+    name: '엄마',
+  };
+  const savedParent = await call(store, 'PUT', `/v1/rooms/${code}/push`, { token, readKey, body: parent });
+  assert.equal(savedParent.status, 200);
+
+  const id = await roomToken(code, writeKey, token.split('.')[1]);
+  const room = await store.read(id);
+  assert.equal(room.pushes.length, 2);
+  assert.equal(room.pushes.find((item) => item.name === '하나').endpoint.includes('umap-child'), true);
+  assert.equal(room.pushes.some((item) => item.phone), false);
+
+  const message = { id: 'chatpush01', from: '엄마', to: '하나', text: '집 근처예요', at: Date.now() };
+  const posted = await call(store, 'POST', `/v1/rooms/${code}/chat`, { token, body: message });
+  assert.equal(posted.status, 200);
+  assert.equal(posted.body.pushes, undefined);
+  assert.equal(JSON.stringify(posted.body).includes('fcm.googleapis.com'), false);
+  const after = await store.read(id);
+  const targets = pushesForChat(after, message);
+  assert.equal(targets.length, 1);
+  assert.equal(targets[0].name, '하나');
+  const payload = chatPushPayload(message, code);
+  assert.equal(payload.kind, 'chat');
+  assert.equal(payload.title, '엄마');
+  assert.equal(payload.body, '집 근처예요');
+  assert.equal(payload.code, code);
+  assert.equal(JSON.stringify(payload).includes('010'), false);
+  const longText = `${'가'.repeat(90)}`;
+  const longPayload = chatPushPayload({ ...message, text: longText }, code);
+  assert.equal(longPayload.body.length, 80);
+  assert.equal(longPayload.body.endsWith('…'), true);
+  assert.equal(longPayload.text, longText);
+
+  const alertTargets = pushesForAlert(after, { from: '엄마', kind: 'sos' });
+  assert.equal(alertTargets.some((item) => item.name === '엄마'), false);
+  assert.equal(alertTargets.some((item) => item.name === '하나'), true);
+
+  const reader = await call(store, 'GET', `/v1/rooms/${code}`, { token, readKey });
+  assert.equal(JSON.stringify(reader.body).includes('fcm.googleapis.com'), false);
+  assert.equal(JSON.stringify(reader.body).includes('집 근처예요'), false);
+});
+
+test('member id keeps the fix across a rename and only the profile key can change it', async () => {
+  const store = createMemoryStore();
+  const code = '48291';
+  const writeKey = randomKey();
+  const readKey = randomKey();
+  const token = await syncTokenFor(writeKey, readKey);
+  const profileKey = randomKey();
+  const otherKey = randomKey();
+  const memberId = 'local-abc123';
+  const at = Date.now();
+  const photo = 'data:image/jpeg;base64,aaaa';
+
+  const legacy = await call(store, 'PUT', `/v1/rooms/${code}/place`, {
+    token,
+    body: { code, name: '딸', lat: 37.51, lng: 127.02, accuracyM: 8, at, sharing: true },
+  });
+  assert.equal(legacy.status, 200);
+
+  const missingKey = await call(store, 'PUT', `/v1/rooms/${code}/place`, {
+    token,
+    body: { code, name: '민지', memberId, priorName: '딸', lat: 37.52, lng: 127.03, accuracyM: 8, at: at + 1000, sharing: true },
+  });
+  assert.equal(missingKey.status, 403);
+
+  const renamed = await call(store, 'PUT', `/v1/rooms/${code}/place`, {
+    token,
+    profileKey,
+    body: { code, name: '민지', memberId, priorName: '딸', lat: 37.51, lng: 127.02, accuracyM: 8, at: at + 2000, sharing: true },
+  });
+  assert.equal(renamed.status, 200);
+
+  const reader = await call(store, 'GET', `/v1/rooms/${code}`, { token, readKey });
+  assert.equal(reader.body.places.length, 1);
+  assert.equal(reader.body.places[0].name, '민지');
+  assert.equal(reader.body.places[0].memberId, memberId);
+  assert.equal(reader.body.places[0].lat, 37.51);
+  assert.equal(reader.body.places[0].lng, 127.02);
+  assert.equal(JSON.stringify(reader.body).includes(profileKey), false);
+
+  const again = await call(store, 'PUT', `/v1/rooms/${code}/place`, {
+    token,
+    profileKey,
+    body: { code, name: '민지', memberId, lat: 37.55, lng: 127.08, accuracyM: 6, at: at + 3000, sharing: true },
+  });
+  assert.equal(again.status, 200);
+  const moved = await call(store, 'GET', `/v1/rooms/${code}`, { token, readKey });
+  assert.equal(moved.body.places.length, 1);
+  assert.equal(moved.body.places[0].lat, 37.55);
+
+  const stolen = await call(store, 'PUT', `/v1/rooms/${code}/place`, {
+    token,
+    profileKey: otherKey,
+    body: { code, name: '도둑', memberId, lat: 1, lng: 1, accuracyM: 4, at: at + 4000, sharing: true },
+  });
+  assert.equal(stolen.status, 403);
+  const still = await call(store, 'GET', `/v1/rooms/${code}`, { token, readKey });
+  assert.equal(still.body.places[0].name, '민지');
+  assert.equal(still.body.places[0].lat, 37.55);
+
+  const published = await call(store, 'PUT', `/v1/rooms/${code}/profile`, {
+    token,
+    profileKey,
+    body: { memberId, name: '민지', photo, at: at + 5000 },
+  });
+  assert.equal(published.status, 200);
+  const withPhoto = await call(store, 'GET', `/v1/rooms/${code}`, { token, readKey });
+  assert.equal(withPhoto.body.profiles.length, 1);
+  assert.equal(withPhoto.body.profiles[0].name, '민지');
+  assert.equal(withPhoto.body.profiles[0].photo, photo);
+  assert.equal(withPhoto.body.profiles[0].memberId, memberId);
+  const hash = await sha256Base64Url(profileKey);
+  assert.equal(JSON.stringify(withPhoto.body).includes(profileKey), false);
+  assert.equal(JSON.stringify(withPhoto.body).includes(hash), false);
+
+  const family = await call(store, 'GET', `/v1/rooms/${code}/family`, { token });
+  assert.equal(family.body.profiles[0].photo, photo);
+  assert.equal(family.body.places.length, 0);
+
+  const hijack = await call(store, 'PUT', `/v1/rooms/${code}/profile`, {
+    token,
+    profileKey: otherKey,
+    body: { memberId, name: '도둑', photo: null, at: at + 6000 },
+  });
+  assert.equal(hijack.status, 403);
+  const kept = await call(store, 'GET', `/v1/rooms/${code}`, { token, readKey });
+  assert.equal(kept.body.profiles[0].name, '민지');
+  assert.equal(kept.body.profiles[0].photo, photo);
+
+  const phone = await call(store, 'PUT', `/v1/rooms/${code}/profile`, {
+    token,
+    profileKey,
+    body: { memberId, name: '01012345678', photo, at: at + 7000 },
+  });
+  assert.equal(phone.status, 400);
+  const png = await call(store, 'PUT', `/v1/rooms/${code}/profile`, {
+    token,
+    profileKey,
+    body: { memberId, name: '민지', photo: 'data:image/png;base64,aaaa', at: at + 7000 },
+  });
+  assert.equal(png.status, 400);
+  const hugePhoto = `data:image/jpeg;base64,${'a'.repeat(25_000)}`;
+  const oversized = await call(store, 'PUT', `/v1/rooms/${code}/profile`, {
+    token,
+    profileKey,
+    body: { memberId, name: '민지', photo: hugePhoto, at: at + 7000 },
+  });
+  assert.equal(oversized.status, 400);
+  const hugeBody = await call(store, 'PUT', `/v1/rooms/${code}/profile`, {
+    token,
+    profileKey,
+    raw: `{"photo":"${'a'.repeat(40_000)}"}`,
+  });
+  assert.equal(hugeBody.status, 413);
+  const hugePlace = await call(store, 'PUT', `/v1/rooms/${code}/place`, {
+    token,
+    raw: `{"name":"${'a'.repeat(5000)}"}`,
+  });
+  assert.equal(hugePlace.status, 413);
+
+  const siblingKey = randomKey();
+  const sibling = await call(store, 'PUT', `/v1/rooms/${code}/place`, {
+    token,
+    profileKey: siblingKey,
+    body: { code, name: '아들', memberId: 'local-bbb999', lat: 36.1, lng: 127.4, accuracyM: 9, at: at + 8000, sharing: true },
+  });
+  assert.equal(sibling.status, 200);
+  const both = await call(store, 'GET', `/v1/rooms/${code}`, { token, readKey });
+  assert.equal(both.body.places.length, 2);
+  assert.equal(both.body.places.find((place) => place.memberId === memberId).lat, 37.55);
+  assert.equal(both.body.places.find((place) => place.name === '아들').lat, 36.1);
 });

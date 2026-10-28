@@ -5,6 +5,7 @@ export function AlwaysAllowNotice({
   keepAlive,
   native,
   onOpenSettings,
+  onShowGuide,
   onBattery,
   onStart,
   note,
@@ -13,6 +14,7 @@ export function AlwaysAllowNotice({
   keepAlive: boolean;
   native: boolean;
   onOpenSettings: () => void;
+  onShowGuide: () => void;
   onBattery: () => void;
   onStart: () => void;
   note?: string | null;
@@ -43,6 +45,12 @@ export function AlwaysAllowNotice({
       {live && (
         <p className="mt-1 text-[11px] font-semibold leading-4 text-slate-500">
           걷는 동안만 2–3초로 촘촘히 잇습니다. 머물면 2분, 7분이 넘으면 5분으로 줄입니다.
+        </p>
+      )}
+      {!live && locationMode !== 'always' && (
+        <p className="mt-2 text-sm font-semibold leading-5 text-slate-700">
+          앱을 닫으면 가족 지도에 안 보일 수 있습니다.
+          <button type="button" onClick={onShowGuide} className="ml-1 font-black text-[#0084FF]">방법 보기</button>
         </p>
       )}
       {note && <p className="mt-1 text-[11px] font-semibold leading-4 text-slate-500">{note}</p>}

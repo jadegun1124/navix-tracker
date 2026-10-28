@@ -1,4 +1,7 @@
 // Device-local display name. Not a Google account and not a phone number.
+// profileKey stays on this device and authorizes profile writes for this member id.
+
+const PROFILE_KEY = /^[A-Za-z0-9_-]{16,64}$/;
 
 export function looksLikePhone(value) {
   const trimmed = String(value ?? '').trim();
@@ -8,6 +11,15 @@ export function looksLikePhone(value) {
   const digits = compact.replace(/\D/g, '');
   if (digits.length < 8 || digits.length > 15) return false;
   return digits.length / compact.length >= 0.8;
+}
+
+export function deviceProfileKey(existing) {
+  if (typeof existing === 'string' && PROFILE_KEY.test(existing)) return existing;
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
 }
 
 export function localProfile(name, id) {

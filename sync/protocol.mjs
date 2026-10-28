@@ -1,26 +1,39 @@
-// Family location room. The latest point per consented name, plus recent alerts.
+// Family location room. The latest point per member id when the phone sends one,
+// otherwise per consented name, plus a small profile (name and thumbnail).
+// A rename keeps the fix because the storage key is the member id, and the old
+// name key is dropped when it matches the current or prior name.
+// The device profile key authorizes that member id. Readers never receive the key or its hash.
 // Phone numbers are not accepted. The read key is never stored.
 // Admin push subscriptions stay in the room and are never returned to readers.
+// A chat subscription may also store the display name. The write token is enough
+// for that name, so the other phone can receive that conversation. SOS still
+// uses the read key. Endpoints are never returned.
 
 import { base64UrlToBytes, pushEndpointAllowed } from './webpush.mjs';
 
 const KEY_PART = /^[A-Za-z0-9_-]{16,64}$/;
+const MEMBER_ID = /^local-[a-z0-9]{3,64}$/;
+const PHOTO_URL = /^data:image\/(?:jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/;
 const CODE_PART = /^\d{4,6}$/;
 const ALERT_ID = /^[A-Za-z0-9_-]{8,80}$/;
 const MAX_BODY = 4096;
+const MAX_PROFILE_BODY = 32_768;
+const MAX_PHOTO = 24_000;
 const MAX_PLACES = 20;
+const MAX_PROFILES = 20;
 const MAX_ALERTS = 30;
 const ALERT_TTL_MS = 24 * 60 * 60 * 1000;
 const FUTURE_SKEW_MS = 5 * 60 * 1000;
 const EARLIEST_AT = Date.UTC(2024, 0, 1);
 
+const MAX_PUSHES = 12;
 const MAX_MESSAGES = 40;
 const MAX_THREADS = 24;
 const CHAT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const CHAT_ID = /^[A-Za-z0-9_-]{8,80}$/;
 
 export function emptyRoom() {
-  return { places: {}, alerts: [], pushes: [], threads: {} };
+  return { places: {}, alerts: [], pushes: [], threads: {}, profiles: {}, owners: {} };
 }
 
 /** Same pair on both phones. Keep identical to src/services/familyChat.ts chatThreadKey. */
@@ -91,17 +104,17 @@ export function withCors(response) {
   const headers = new Headers(response.headers);
   headers.set('access-control-allow-origin', '*');
   headers.set('access-control-allow-methods', 'GET, PUT, POST, OPTIONS');
-  headers.set('access-control-allow-headers', 'content-type, x-umap-sync-key, x-umap-read-key');
+  headers.set('access-control-allow-headers', 'content-type, x-umap-sync-key, x-umap-read-key, x-umap-profile-key');
   headers.set('access-control-max-age', '86400');
   headers.set('cache-control', 'no-store');
   return new Response(response.body, { status: response.status, headers });
 }
 
-async function readJson(request) {
+async function readJson(request, max = MAX_BODY) {
   const declared = Number(request.headers.get('content-length') || 0);
-  if (Number.isFinite(declared) && declared > MAX_BODY) return { error: json({ error: 'size' }, 413) };
+  if (Number.isFinite(declared) && declared > max) return { error: json({ error: 'size' }, 413) };
   const text = await request.text();
-  if (text.length > MAX_BODY) return { error: json({ error: 'size' }, 413) };
+  if (text.length > max) return { error: json({ error: 'size' }, 413) };
   try {
     return { value: JSON.parse(text) };
   } catch {
@@ -171,6 +184,17 @@ function cleanPlace(input, code, now) {
   if (!Number.isFinite(accuracyM) || accuracyM < 0) accuracyM = 0;
   accuracyM = Math.min(100_000, Math.round(accuracyM));
 
+  let memberId = '';
+  if (input.memberId != null && input.memberId !== '') {
+    if (typeof input.memberId !== 'string' || !MEMBER_ID.test(input.memberId)) return { error: json({ error: 'member' }, 400) };
+    memberId = input.memberId;
+  }
+  let priorName = '';
+  if (typeof input.priorName === 'string') {
+    const trimmed = input.priorName.trim().slice(0, 80);
+    if (trimmed && trimmed !== name && !looksLikePhone(trimmed)) priorName = trimmed;
+  }
+
   return {
     place: {
       code,
@@ -183,6 +207,37 @@ function cleanPlace(input, code, now) {
       audience,
       batteryPct: battery.batteryPct,
       charging: battery.charging,
+      ...(memberId ? { memberId } : {}),
+      ...(priorName ? { priorName } : {}),
+    },
+  };
+}
+
+function cleanProfilePhoto(input) {
+  if (!Object.prototype.hasOwnProperty.call(input, 'photo') || input.photo == null) {
+    return Object.prototype.hasOwnProperty.call(input, 'photo') ? { photo: null } : { photo: undefined };
+  }
+  if (typeof input.photo !== 'string' || input.photo.length > MAX_PHOTO || !PHOTO_URL.test(input.photo)) {
+    return { error: json({ error: 'photo' }, 400) };
+  }
+  return { photo: input.photo };
+}
+
+function cleanProfileInput(input, now) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return { error: json({ error: 'profile' }, 400) };
+  if (typeof input.memberId !== 'string' || !MEMBER_ID.test(input.memberId)) return { error: json({ error: 'member' }, 400) };
+  if (typeof input.name !== 'string') return { error: json({ error: 'name' }, 400) };
+  const name = input.name.trim().replace(/\s+/g, ' ').slice(0, 20);
+  if (!name || looksLikePhone(name)) return { error: json({ error: 'name' }, 400) };
+  if (!cleanStamp(input.at, now)) return { error: json({ error: 'at' }, 400) };
+  const photo = cleanProfilePhoto(input);
+  if (photo.error) return photo;
+  return {
+    profile: {
+      memberId: input.memberId,
+      name,
+      at: input.at,
+      ...(photo.photo === undefined ? {} : { photo: photo.photo }),
     },
   };
 }
@@ -200,8 +255,26 @@ function cleanAlert(input, code, now) {
   return { alert: { id: input.id, kind: input.kind, code, from, body, at: input.at } };
 }
 
+function legacyStorageKey(place, name) {
+  return place.audience === 'family' ? `family\u0000${name}` : name;
+}
+
 function placeStorageKey(place) {
-  return place.audience === 'family' ? `family\u0000${place.name}` : place.name;
+  if (place.memberId) {
+    return place.audience === 'family' ? `id\u0000family\u0000${place.memberId}` : `id\u0000${place.memberId}`;
+  }
+  return legacyStorageKey(place, place.name);
+}
+
+function aliasNames(place) {
+  const names = [];
+  if (place.name) names.push(place.name);
+  if (place.priorName && place.priorName !== place.name) names.push(place.priorName);
+  return names;
+}
+
+function sameAudience(left, right) {
+  return (left?.audience === 'family') === (right?.audience === 'family');
 }
 
 function samePlaceSnapshot(current, place) {
@@ -209,9 +282,11 @@ function samePlaceSnapshot(current, place) {
     && current.lat === place.lat
     && current.lng === place.lng
     && current.accuracyM === place.accuracyM
+    && current.name === place.name
+    && (current.memberId || '') === (place.memberId || '')
     && (current.batteryPct ?? null) === (place.batteryPct ?? null)
     && (current.charging ?? null) === (place.charging ?? null)
-    && (current.audience === 'family' ? 'family' : 'admin') === (place.audience === 'family' ? 'family' : 'admin');
+    && sameAudience(current, place);
 }
 
 function hasFix(place) {
@@ -222,16 +297,63 @@ function isPlaceholder(place) {
   return !!place && place.sharing === true && place.lat == null && place.lng == null;
 }
 
-export function applyPlace(room, place) {
+function adoptCurrent(places, place) {
   const key = placeStorageKey(place);
-  const current = room.places[key];
+  let current = places[key];
+  if (!place.memberId) return current;
+  for (const alias of aliasNames(place)) {
+    const found = places[legacyStorageKey(place, alias)];
+    if (!found || (found.memberId && found.memberId !== place.memberId)) continue;
+    if (!current || found.at > current.at) current = found;
+  }
+  for (const found of Object.values(places)) {
+    if (!found || found.memberId !== place.memberId || !sameAudience(found, place)) continue;
+    if (!current || found.at > current.at) current = found;
+  }
+  return current;
+}
+
+function withoutStaleAliases(places, place, kept) {
+  if (!place.memberId || !kept) return places;
+  const next = { ...places };
+  let changed = false;
+  const drop = (slot, found) => {
+    if (!found || !sameAudience(found, place)) return;
+    if (found.memberId && found.memberId !== place.memberId) return;
+    if (found.at > kept.at) return;
+    if (!Object.prototype.hasOwnProperty.call(next, slot)) return;
+    delete next[slot];
+    changed = true;
+  };
+  for (const alias of aliasNames(place)) drop(legacyStorageKey(place, alias), next[legacyStorageKey(place, alias)]);
+  const canonical = placeStorageKey(place);
+  for (const [slot, found] of Object.entries(next)) {
+    if (slot === canonical || !found || found.memberId !== place.memberId) continue;
+    drop(slot, found);
+  }
+  return changed ? next : places;
+}
+
+function finishAliases(room, place, kept) {
+  const places = withoutStaleAliases(room.places || {}, place, kept);
+  if (places === (room.places || {})) return { room, ignored: true };
+  return { room: { ...room, places }, ignored: false };
+}
+
+export function applyPlace(room, place) {
+  const source = room.places || {};
+  const key = placeStorageKey(place);
+  const current = adoptCurrent(source, place);
   const incomingFix = hasFix(place);
   const currentFix = hasFix(current);
+  const stored = source[key];
   // A heartbeat with no coordinates must not erase a live fix or move its cursor forward.
-  if (place.sharing && !incomingFix && currentFix) return { room, ignored: true };
+  if (place.sharing && !incomingFix && currentFix) return finishAliases(room, place, stored && hasFix(stored) ? stored : null);
   // A sharing heartbeat with no fix can be newer than the first real fix. The fix still wins.
   // A newer stop (sharing false) is not a placeholder, so an older fix cannot undo it.
-  if (current && place.at < current.at && !(incomingFix && isPlaceholder(current))) return { room, ignored: true };
+  if (current && place.at < current.at && !(incomingFix && isPlaceholder(current))) {
+    return finishAliases(room, place, stored && stored.at >= current.at ? stored : null);
+  }
   let next = place;
   if (place.sharing && next.batteryPct == null && current && typeof current.batteryPct === 'number') {
     next = {
@@ -240,8 +362,10 @@ export function applyPlace(room, place) {
       charging: next.charging == null ? (current.charging ?? null) : next.charging,
     };
   }
-  if (current && next.at === current.at && samePlaceSnapshot(current, next)) return { room, ignored: true };
-  const places = { ...room.places, [key]: next };
+  if (current && next.at === current.at && samePlaceSnapshot(current, next)) {
+    return finishAliases(room, place, stored || null);
+  }
+  let places = withoutStaleAliases({ ...source, [key]: next }, place, next);
   const names = Object.keys(places);
   if (names.length > MAX_PLACES) {
     names.sort((left, right) => places[left].at - places[right].at);
@@ -251,6 +375,77 @@ export function applyPlace(room, place) {
     }
   }
   return { room: { ...room, places }, ignored: false };
+}
+
+function roomProfiles(room) {
+  return room.profiles && typeof room.profiles === 'object' ? room.profiles : {};
+}
+
+export function applyProfile(room, profile) {
+  const profiles = { ...roomProfiles(room) };
+  const current = profiles[profile.memberId];
+  const photo = profile.photo === undefined ? (current ? current.photo ?? null : null) : profile.photo;
+  const next = { memberId: profile.memberId, name: profile.name, photo, at: profile.at };
+  if (current && profile.at < current.at) return { room, ignored: true };
+  if (
+    current
+    && current.name === next.name
+    && (current.photo ?? null) === (next.photo ?? null)
+    && current.at === next.at
+  ) {
+    return { room, ignored: true };
+  }
+  profiles[profile.memberId] = next;
+  const ids = Object.keys(profiles);
+  if (ids.length > MAX_PROFILES) {
+    ids.sort((left, right) => profiles[left].at - profiles[right].at);
+    while (ids.length > MAX_PROFILES) {
+      const oldest = ids.shift();
+      if (oldest) delete profiles[oldest];
+    }
+  }
+  return { room: { ...room, profiles }, ignored: false };
+}
+
+function viewProfiles(room) {
+  return Object.values(roomProfiles(room)).map((profile) => ({
+    memberId: profile.memberId,
+    name: profile.name,
+    photo: profile.photo ?? null,
+    at: profile.at,
+  }));
+}
+
+function roomOwners(room) {
+  return room.owners && typeof room.owners === 'object' ? room.owners : {};
+}
+
+export async function authorizeMember(room, memberId, profileKey) {
+  if (typeof profileKey !== 'string' || !isKeyPart(profileKey)) return { error: json({ error: 'profile-key' }, 403) };
+  const hash = await sha256Base64Url(profileKey);
+  const owners = roomOwners(room);
+  const current = owners[memberId];
+  if (current && !safeEqual(current, hash)) return { error: json({ error: 'profile-key' }, 403) };
+  if (current) return { room, error: null };
+  return { room: { ...room, owners: { ...owners, [memberId]: hash } }, error: null };
+}
+
+export async function commitPlace(room, place, profileKey) {
+  let nextRoom = room;
+  if (place.memberId) {
+    const auth = await authorizeMember(nextRoom, place.memberId, profileKey || '');
+    if (auth.error) return { error: auth.error, room, ignored: true };
+    nextRoom = auth.room;
+  }
+  const applied = applyPlace(nextRoom, place);
+  return { error: null, room: applied.room, ignored: applied.ignored && nextRoom === room };
+}
+
+export async function commitProfile(room, profile, profileKey) {
+  const auth = await authorizeMember(room, profile.memberId, profileKey || '');
+  if (auth.error) return { error: auth.error, room, ignored: true };
+  const applied = applyProfile(auth.room, profile);
+  return { error: null, room: applied.room, ignored: applied.ignored && auth.room === room };
 }
 
 export function applyAlert(room, alert, now) {
@@ -343,8 +538,34 @@ function roomPushes(room) {
 export function applySubscription(room, subscription) {
   const pushes = roomPushes(room).filter((item) => item.endpoint !== subscription.endpoint);
   pushes.push(subscription);
-  while (pushes.length > 8) pushes.shift();
+  while (pushes.length > MAX_PUSHES) pushes.shift();
   return { ...room, pushes };
+}
+
+export function pushesForChat(room, message) {
+  if (!message || !message.to) return [];
+  return roomPushes(room).filter((item) => item && item.name === message.to && item.name !== message.from);
+}
+
+export function pushesForAlert(room, alert) {
+  const from = alert && typeof alert.from === 'string' ? alert.from : '';
+  return roomPushes(room).filter((item) => item && item.endpoint && (!item.name || item.name !== from));
+}
+
+export function chatPushPayload(message, code) {
+  const text = typeof message.text === 'string' ? message.text : '';
+  const preview = text.length > 80 ? `${text.slice(0, 79)}…` : text;
+  return {
+    id: message.id,
+    kind: 'chat',
+    code: typeof code === 'string' ? code : '',
+    from: message.from,
+    to: message.to,
+    title: message.from,
+    body: preview,
+    text,
+    at: message.at,
+  };
 }
 
 export function removeSubscriptions(room, endpoints) {
@@ -355,8 +576,9 @@ export function removeSubscriptions(room, endpoints) {
 export function viewRoom(room, since) {
   const cursor = Number.isFinite(since) ? since : 0;
   return {
-    places: Object.values(room.places),
-    alerts: room.alerts.filter((alert) => alert.at > cursor),
+    places: Object.values(room.places || {}),
+    alerts: (room.alerts || []).filter((alert) => alert.at > cursor),
+    profiles: viewProfiles(room),
   };
 }
 
@@ -380,12 +602,16 @@ function cleanSubscription(input) {
   if (publicKey.length !== 65 || publicKey[0] !== 4 || auth.length < 16 || auth.length > 32) {
     return { error: json({ error: 'push' }, 400) };
   }
-  return { subscription: { endpoint: input.endpoint, p256dh: input.p256dh, auth: input.auth } };
+  const name = cleanChatName(typeof input.name === 'string' ? input.name : '');
+  const subscription = { endpoint: input.endpoint, p256dh: input.p256dh, auth: input.auth };
+  if (name) subscription.name = name;
+  return { subscription };
 }
 
 export function viewFamilyPlaces(room) {
   return {
-    places: Object.values(room.places).filter((place) => place.audience === 'family' && place.sharing && place.lat != null && place.lng != null),
+    places: Object.values(room.places || {}).filter((place) => place.audience === 'family' && place.sharing && place.lat != null && place.lng != null),
+    profiles: viewProfiles(room),
   };
 }
 
@@ -399,7 +625,7 @@ export async function parseOperation(request) {
     return { kind: 'vapid-public' };
   }
 
-  const match = url.pathname.match(/^\/v1\/rooms\/(\d{4,6})(\/place|\/alert|\/family|\/push|\/chat)?\/?$/);
+  const match = url.pathname.match(/^\/v1\/rooms\/(\d{4,6})(\/place|\/profile|\/alert|\/family|\/push|\/chat)?\/?$/);
   if (!match) return json({ error: 'not-found' }, 404);
   const code = match[1];
   const action = match[2] || '';
@@ -434,23 +660,45 @@ export async function parseOperation(request) {
     if (body.error) return body.error;
     const cleaned = cleanPlace(body.value, code, Date.now());
     if (cleaned.error) return cleaned.error;
-    return { kind: 'place', token: id, place: cleaned.place };
+    return {
+      kind: 'place',
+      token: id,
+      place: cleaned.place,
+      profileKey: request.headers.get('x-umap-profile-key') || '',
+    };
+  }
+
+  if (request.method === 'PUT' && action === '/profile') {
+    const body = await readJson(request, MAX_PROFILE_BODY);
+    if (body.error) return body.error;
+    const cleaned = cleanProfileInput(body.value, Date.now());
+    if (cleaned.error) return cleaned.error;
+    return {
+      kind: 'profile',
+      token: id,
+      profile: cleaned.profile,
+      profileKey: request.headers.get('x-umap-profile-key') || '',
+    };
   }
 
   if ((request.method === 'PUT' || request.method === 'DELETE') && action === '/push') {
     const readKey = request.headers.get('x-umap-read-key') || '';
-    if (!isKeyPart(readKey)) return json({ error: 'read-key' }, 403);
-    const actual = await sha256Base64Url(readKey);
-    if (!safeEqual(actual, token.readKeyHash)) return json({ error: 'read-key' }, 403);
+    let hasRead = false;
+    if (isKeyPart(readKey)) {
+      const actual = await sha256Base64Url(readKey);
+      hasRead = safeEqual(actual, token.readKeyHash);
+    }
     const body = await readJson(request);
     if (body.error) return body.error;
     if (request.method === 'DELETE') {
+      if (!hasRead) return json({ error: 'read-key' }, 403);
       const endpoint = body.value && typeof body.value.endpoint === 'string' ? body.value.endpoint : '';
       if (!pushEndpointAllowed(endpoint)) return json({ error: 'push' }, 400);
       return { kind: 'push-remove', token: id, endpoints: [endpoint] };
     }
     const cleaned = cleanSubscription(body.value);
     if (cleaned.error) return cleaned.error;
+    if (!hasRead && !cleaned.subscription.name) return json({ error: 'read-key' }, 403);
     return { kind: 'push-subscribe', token: id, subscription: cleaned.subscription };
   }
 
@@ -459,7 +707,7 @@ export async function parseOperation(request) {
     if (body.error) return body.error;
     const cleaned = cleanChat(body.value, Date.now());
     if (cleaned.error) return cleaned.error;
-    return { kind: 'chat', token: id, message: cleaned.message };
+    return { kind: 'chat', token: id, code, message: cleaned.message };
   }
 
   if (request.method === 'POST' && action === '/alert') {
@@ -503,7 +751,14 @@ export async function handleSyncRequest(store, request) {
     return json(viewDirectMessages(next.room, op.message.from, op.message.to) || { messages: [] });
   }
   if (op.kind === 'place') {
-    const next = applyPlace(room, op.place);
+    const next = await commitPlace(room, op.place, op.profileKey || '');
+    if (next.error) return next.error;
+    if (!next.ignored) await store.write(op.token, next.room);
+    return json({ ok: true });
+  }
+  if (op.kind === 'profile') {
+    const next = await commitProfile(room, op.profile, op.profileKey || '');
+    if (next.error) return next.error;
     if (!next.ignored) await store.write(op.token, next.room);
     return json({ ok: true });
   }

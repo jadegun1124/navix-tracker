@@ -1,6 +1,7 @@
+import { rememberPlaceName } from '../lib/placeAlias.mjs';
 import type { FamilyAlert } from './familyAlert';
-import { isFamilyChatMessage, type FamilyChatMessage } from './familyChat';
-import type { SharedPlace } from './familyShare';
+import { chatName, isFamilyChatMessage, type FamilyChatMessage } from './familyChat';
+import type { SharedPlace, SharedProfile } from './familyShare';
 
 // Keep the hash identical to sync/protocol.mjs.
 // sha256Base64Url('umap-read-key') === 'BL04F54qEIA94kVM3un2L2ITH4kcV-H8m2JJNnuuHVQ'
@@ -106,20 +107,24 @@ function classify(response: Response) {
   else setPhase('down');
 }
 
-let placeQueue: { code: string; token: string; body: Record<string, unknown> } | null = null;
+let placeQueue: { code: string; token: string; body: Record<string, unknown>; profileKey: string } | null = null;
+let profileQueue: { code: string; token: string; body: Record<string, unknown>; profileKey: string } | null = null;
 let alertQueue: { alert: FamilyAlert; token: string } | null = null;
 let flushing = false;
 let retryMs = 3000;
 
+const MAX_PROFILE_PHOTO = 24_000;
+
 function hasPending() {
-  return placeQueue != null || alertQueue != null;
+  return placeQueue != null || alertQueue != null || profileQueue != null;
 }
 
-export function publishPlaceRemote(place: SharedPlace, syncToken?: string | null): boolean {
+export function publishPlaceRemote(place: SharedPlace, syncToken?: string | null, profileKey?: string | null): boolean {
   if (!syncToken || !splitSyncToken(syncToken) || !familySyncUrl()) return false;
+  const name = place.name.trim().slice(0, 80);
   const body: Record<string, unknown> = {
     code: place.code,
-    name: place.name.trim().slice(0, 80),
+    name,
     lat: place.sharing ? place.lat : null,
     lng: place.sharing ? place.lng : null,
     accuracyM: place.accuracyM,
@@ -131,7 +136,30 @@ export function publishPlaceRemote(place: SharedPlace, syncToken?: string | null
   }
   if (place.sharing && typeof place.charging === 'boolean') body.charging = place.charging;
   if (place.audience === 'family') body.audience = 'family';
-  placeQueue = { code: place.code, token: syncToken, body };
+  const memberId = typeof place.memberId === 'string' && /^local-[a-z0-9]{3,64}$/.test(place.memberId) ? place.memberId : '';
+  const key = typeof profileKey === 'string' ? profileKey : '';
+  if (memberId && key) body.memberId = memberId;
+  const priorName = typeof place.priorName === 'string' ? place.priorName.trim().slice(0, 80) : '';
+  if (priorName && priorName !== name) body.priorName = priorName;
+  placeQueue = { code: place.code, token: syncToken, body, profileKey: memberId ? key : '' };
+  void flushQueues();
+  return true;
+}
+
+export function publishProfileRemote(
+  profile: { memberId: string; name: string; photo?: string | null; at: number },
+  code: string,
+  syncToken?: string | null,
+  profileKey?: string | null,
+): boolean {
+  if (!syncToken || !splitSyncToken(syncToken) || !familySyncUrl() || !/^\d{4,6}$/.test(code)) return false;
+  if (!/^local-[a-z0-9]{3,64}$/.test(profile.memberId) || !profileKey) return false;
+  const name = profile.name.trim().slice(0, 20);
+  if (!name) return false;
+  const body: Record<string, unknown> = { memberId: profile.memberId, name, at: profile.at };
+  if (!profile.photo) body.photo = null;
+  else if (profile.photo.startsWith('data:image/') && profile.photo.length <= MAX_PROFILE_PHOTO) body.photo = profile.photo;
+  profileQueue = { code, token: syncToken, body, profileKey };
   void flushQueues();
   return true;
 }
@@ -220,15 +248,18 @@ export function publishAlertRemote(alert: FamilyAlert, syncToken?: string | null
   void flushQueues();
 }
 
-async function sendQueued(path: string, token: string, body: unknown, drop: () => void) {
+async function sendQueued(path: string, token: string, body: unknown, drop: () => void, profileKey = '') {
+  const headers: Record<string, string> = { 'content-type': 'application/json', 'x-umap-sync-key': token };
+  if (profileKey) headers['x-umap-profile-key'] = profileKey;
   const response = await request(path, {
     method: path.endsWith('/alert') ? 'POST' : 'PUT',
-    headers: { 'content-type': 'application/json', 'x-umap-sync-key': token },
+    headers,
     body: JSON.stringify(body),
   });
-  classify(response);
-  if (response.ok || response.status === 400 || response.status === 401 || response.status === 403) drop();
-  return response.ok;
+  const staleProfile = path.endsWith('/profile') && response.status === 404;
+  if (!staleProfile) classify(response);
+  if (response.ok || staleProfile || response.status === 400 || response.status === 401 || response.status === 403 || response.status === 413) drop();
+  return response.ok || staleProfile;
 }
 
 async function flushQueues() {
@@ -240,7 +271,19 @@ async function flushQueues() {
     if (place) {
       const ok = await sendQueued(`/v1/rooms/${place.code}/place`, place.token, place.body, () => {
         if (placeQueue === place) placeQueue = null;
-      });
+      }, place.profileKey);
+      if (ok) {
+        const sentName = typeof place.body.name === 'string' ? place.body.name : '';
+        const sentAudience = place.body.audience === 'family' ? 'family' : 'admin';
+        if (sentName) rememberPlaceName(place.code, sentAudience, sentName);
+      }
+      if (!ok) failed = true;
+    }
+    const profile = profileQueue;
+    if (profile) {
+      const ok = await sendQueued(`/v1/rooms/${profile.code}/profile`, profile.token, profile.body, () => {
+        if (profileQueue === profile) profileQueue = null;
+      }, profile.profileKey);
       if (!ok) failed = true;
     }
     const alert = alertQueue;
@@ -311,11 +354,32 @@ function isRemoteAlert(value: unknown): value is FamilyAlert {
   return typeof alert.id === 'string' && (alert.kind === 'sos' || alert.kind === 'leave') && typeof alert.code === 'string' && typeof alert.at === 'number';
 }
 
+function isSharedProfile(value: unknown): value is SharedProfile {
+  if (!value || typeof value !== 'object') return false;
+  const profile = value as SharedProfile;
+  if (typeof profile.memberId !== 'string' || !/^local-[a-z0-9]{3,64}$/.test(profile.memberId)) return false;
+  if (typeof profile.name !== 'string' || !profile.name.trim()) return false;
+  if (typeof profile.at !== 'number' || !Number.isFinite(profile.at)) return false;
+  if (profile.photo != null && (typeof profile.photo !== 'string' || !profile.photo.startsWith('data:image/') || profile.photo.length > 120_000)) return false;
+  return true;
+}
+
+function readProfiles(body: unknown): SharedProfile[] {
+  if (!body || typeof body !== 'object' || !Array.isArray((body as { profiles?: unknown }).profiles)) return [];
+  return (body as { profiles: unknown[] }).profiles.filter(isSharedProfile).map((profile) => ({
+    memberId: profile.memberId,
+    name: profile.name.trim().slice(0, 20),
+    photo: typeof profile.photo === 'string' ? profile.photo : null,
+    at: profile.at,
+  }));
+}
+
 export function startAdminRemoteSync(
   link: RemoteLink | null,
   handlers: {
     onPlace: (place: SharedPlace) => void;
     onAlert: (alert: FamilyAlert) => void;
+    onProfiles?: (profiles: SharedProfile[]) => void;
   },
 ): () => void {
   if (!link || !familySyncUrl() || !isKeyPart(link.writeKey) || !isKeyPart(link.readKey) || !/^\d{4,6}$/.test(link.code)) return () => {};
@@ -350,6 +414,7 @@ export function startAdminRemoteSync(
         for (const place of places) {
           if (isSharedPlace(place)) handlers.onPlace(place);
         }
+        handlers.onProfiles?.(readProfiles(body));
         for (const alert of alerts) {
           if (!isRemoteAlert(alert)) continue;
           handlers.onAlert(alert);
@@ -409,7 +474,7 @@ export async function familyEndpointAvailable(code: string, token: string): Prom
 
 export function startManagedFamilySync(
   links: { code: string; token: string }[],
-  onRoom: (code: string, places: SharedPlace[]) => void,
+  onRoom: (code: string, places: SharedPlace[], profiles: SharedProfile[]) => void,
 ): () => void {
   const usable = links.filter((link) => splitSyncToken(link.token) && /^\d{4,6}$/.test(link.code));
   if (!familySyncUrl() || usable.length === 0) return () => {};
@@ -435,7 +500,7 @@ export function startManagedFamilySync(
         const body: unknown = await response.json();
         const raw = body && typeof body === 'object' && Array.isArray((body as { places?: unknown[] }).places) ? (body as { places: unknown[] }).places : [];
         const places = raw.filter((place): place is SharedPlace => isSharedPlace(place) && place.audience === 'family' && place.sharing);
-        onRoom(link.code, places);
+        onRoom(link.code, places, readProfiles(body));
       }
     } catch {
       if (!stopped && familySyncUrl()) setPhase('down');
@@ -470,10 +535,20 @@ function base64UrlToBytes(value: string): Uint8Array<ArrayBuffer> {
   return bytes;
 }
 
-/** Subscribe this admin browser for Worker-sent Web Push. Returns false when the WebView has no Push API. */
-export async function registerAdminPush(link: RemoteLink): Promise<boolean> {
-  if (!familySyncUrl() || typeof navigator === 'undefined' || !('serviceWorker' in navigator) || !('PushManager' in window)) return false;
+export interface RoomPushLink {
+  code: string;
+  token: string;
+  name: string;
+  readKey?: string;
+}
+
+/** Subscribe this browser for Worker-sent Web Push. Returns false when the WebView has no Push API. */
+export async function registerRoomPush(link: RoomPushLink): Promise<boolean> {
+  const name = chatName(link.name);
+  if (!familySyncUrl() || !name || name === '나') return false;
+  if (typeof navigator === 'undefined' || !('serviceWorker' in navigator) || !('PushManager' in window)) return false;
   if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return false;
+  if (!link.token.includes('.')) return false;
   try {
     const registration = await navigator.serviceWorker.ready;
     const keyResponse = await request('/v1/push/vapid', { method: 'GET' });
@@ -492,15 +567,15 @@ export async function registerAdminPush(link: RemoteLink): Promise<boolean> {
     const p256dh = json.keys?.p256dh;
     const auth = json.keys?.auth;
     if (!endpoint || !p256dh || !auth) return false;
-    const token = await syncTokenFor(link.writeKey, link.readKey);
+    const headers: Record<string, string> = {
+      'content-type': 'application/json',
+      'x-umap-sync-key': link.token,
+    };
+    if (link.readKey) headers['x-umap-read-key'] = link.readKey;
     const response = await request(`/v1/rooms/${link.code}/push`, {
       method: 'PUT',
-      headers: {
-        'content-type': 'application/json',
-        'x-umap-sync-key': token,
-        'x-umap-read-key': link.readKey,
-      },
-      body: JSON.stringify({ endpoint, p256dh, auth }),
+      headers,
+      body: JSON.stringify({ endpoint, p256dh, auth, name }),
     });
     classify(response);
     return response.ok;

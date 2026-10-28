@@ -2,14 +2,15 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Bell, ChevronLeft, ChevronRight, Copy, Home, LocateFixed, MapPin, Menu, Plus, Route, Settings, UserPlus, X } from 'lucide-react';
 import { looksLikePhone, localProfile } from '../../lib/localProfile.mjs';
 import { buildInviteLink, formatClock, hasLocation, haversineMeters, shouldAlertLeave } from '../../lib/geo';
-import { KEEP_PERMISSION_ASKED_KEY, KEEP_START_ASKED_KEY, keepEntryPrompt, markSessionFlag, readSessionFlag } from '../../lib/systemSettings.mjs';
+import { ALWAYS_GUIDE_DISMISSED_KEY, CHAT_NOTIFY_ASKED_KEY, KEEP_PERMISSION_ASKED_KEY, KEEP_START_ASKED_KEY, keepEntryPrompt, markSessionFlag, readSessionFlag } from '../../lib/systemSettings.mjs';
 import { collapseDuplicateJourneys, displayCoordinate, historyDayKeys, historyDayLabel, liveTrailPoints, previewOpenJourney, seoulDayEndMs, seoulDayKey, visibleTrail } from '../../lib/tracking.mjs';
 import { ackFamilyAlert, isFamilyAlertAcked, publishFamilyAlert, readFamilyAlert, subscribeFamilyAlerts, type FamilyAlert } from '../../services/familyAlert';
 import { readSharedPlaces, subscribeSharedPlaces } from '../../services/familyShare';
-import { currentSyncPhase, familySyncConfigured, familySyncUrl, fetchMyDirectThreads, registerAdminPush, splitSyncToken, startAdminRemoteSync, startSyncMonitor, subscribeSyncPhase, syncTokenFor, type SyncPhase } from '../../services/familySync';
-import { umapLocation, umapLocationNative } from '../../services/umapLocation';
+import { currentSyncPhase, familySyncConfigured, familySyncUrl, fetchMyDirectThreads, registerRoomPush, splitSyncToken, startAdminRemoteSync, startSyncMonitor, subscribeSyncPhase, syncTokenFor, type SyncPhase } from '../../services/familySync';
+import { consumePendingChat, listenChatOpen, umapLocation, umapLocationNative } from '../../services/umapLocation';
 import { sounds } from '../../utils/audio';
 import { DEFAULT_CENTER, type GuardianLink, type HomeZone, type Member } from '../../types/family';
+import { AlwaysAllowGuide, AlwaysAllowMapHint } from './AlwaysAllowGuide';
 import { AlwaysAllowNotice } from './AlwaysAllowNotice';
 import { InviteQrImage, InviteQrScan } from './InviteQr';
 import { StreetMap, type StreetMapHandle } from './StreetMap';
@@ -17,7 +18,7 @@ import { JourneyCards, JourneyScrubber, playbackMark } from './JourneyCards';
 import { FamilyChatSheet, type DirectChatTarget } from './FamilyChatSheet';
 import { MemberAvatar } from './MemberAvatar';
 import { PhotoPicker } from './ProfilePhoto';
-import { chatName, mergeDirectChat, subscribeChat, unreadCount } from '../../services/familyChat';
+import { chatName, isFamilyChatMessage, mergeDirectChat, subscribeChat, unreadCount } from '../../services/familyChat';
 import { TodayRecord } from './TodayRecord';
 import { askAlwaysLocation, askBattery, askNotifications } from '../../services/systemPermissions';
 import { useFamilyTracking } from './useFamilyTracking';
@@ -67,6 +68,9 @@ export function FamilyMapScreen() {
   const [playing, setPlaying] = useState(false);
   const [dm, setDm] = useState<DirectChatTarget | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [alwaysGuide, setAlwaysGuide] = useState(false);
+  const [guideBusy, setGuideBusy] = useState(false);
+  const [guideHintHidden, setGuideHintHidden] = useState(() => readSessionFlag(ALWAYS_GUIDE_DISMISSED_KEY));
   const [profileOpen, setProfileOpen] = useState(false);
   const [recordId, setRecordId] = useState<string | null>(null);
   const [managedSettings, setManagedSettings] = useState(false);
@@ -198,6 +202,7 @@ export function FamilyMapScreen() {
       { code: state.inviteCode, writeKey: state.syncWriteKey, readKey: state.syncReadKey },
       {
         onPlace: (place) => familyRef.current.applySharedPlace(place),
+        onProfiles: (profiles) => familyRef.current.applySharedProfiles(familyRef.current.state.inviteCode, profiles),
         onAlert: handle,
       },
     );
@@ -243,25 +248,114 @@ export function FamilyMapScreen() {
   }, [dmRoomKey, state.tab]);
 
   useEffect(() => {
-    if (state.mode !== 'admin' || state.permissions.notifications !== 'granted' || !familySyncConfigured()) return;
+    if (!familySyncConfigured() || state.permissions.notifications !== 'unknown' || keepPrompt !== 'none') return;
+    if (readSessionFlag(CHAT_NOTIFY_ASKED_KEY)) return;
+    markSessionFlag(CHAT_NOTIFY_ASKED_KEY);
+    void askNotifications().then((result) => {
+      const notifications = result.state === 'granted' || result.state === 'denied' || result.state === 'skipped' ? result.state : 'denied';
+      const current = familyRef.current.state.permissions;
+      familyRef.current.finishPermissions({ ...current, notifications, completed: true });
+    });
+  }, [keepPrompt, state.mode, state.permissions.notifications]);
+
+  const chatIdentity = `${dmRoomKey}:${state.profile?.name ?? ''}:${notifyOk ? '1' : '0'}`;
+  useEffect(() => {
+    if (!notifyOk || !familySyncConfigured()) return;
     let cancel = false;
-    const link = { code: state.inviteCode, writeKey: state.syncWriteKey, readKey: state.syncReadKey };
     void (async () => {
-      const pushed = await registerAdminPush(link);
-      if (cancel || pushed || !umapLocationNative()) return;
+      const current = familyRef.current.state;
+      const rooms: Array<{ code: string; token: string; me: string; readKey?: string }> = [];
+      if (current.mode === 'admin' && current.syncWriteKey && current.syncReadKey) {
+        const token = await syncTokenFor(current.syncWriteKey, current.syncReadKey);
+        rooms.push({
+          code: current.inviteCode,
+          token,
+          me: myChatName(current, current.inviteCode),
+          readKey: current.syncReadKey,
+        });
+      } else if (current.mode === 'managed') {
+        for (const link of current.guardians) {
+          if (link.share === 'revoked' || !link.syncToken?.includes('.')) continue;
+          rooms.push({ code: link.code, token: link.syncToken, me: myChatName(current, link.code) });
+        }
+      }
+      if (cancel || rooms.length === 0) return;
+      let allPushed = true;
+      for (const room of rooms) {
+        const pushed = await registerRoomPush({ code: room.code, token: room.token, name: room.me, readKey: room.readKey });
+        if (!pushed) allPushed = false;
+      }
+      if (cancel || allPushed || !umapLocationNative()) return;
       const status = await umapLocation.alertWatchStatus().catch(() => ({ running: false, userStopped: false }));
       if (cancel || status.userStopped) return;
-      const token = await syncTokenFor(link.writeKey, link.readKey);
       const base = familySyncUrl();
       if (!base) return;
       await umapLocation.startAlertWatch({
-        config: JSON.stringify({ baseUrl: base, code: link.code, token, readKey: link.readKey }),
+        config: JSON.stringify({
+          baseUrl: base,
+          rooms: rooms.map((room) => ({
+            code: room.code,
+            token: room.token,
+            me: room.me,
+            ...(room.readKey ? { readKey: room.readKey } : {}),
+          })),
+        }),
       }).catch(() => undefined);
     })();
     return () => {
       cancel = true;
     };
-  }, [state.inviteCode, state.mode, state.permissions.notifications, state.syncReadKey, state.syncWriteKey]);
+  }, [chatIdentity, notifyOk]);
+
+  useEffect(() => {
+    const open = (code: string, peer: string) => {
+      const target = chatTargetFor(familyRef.current.state, code, peer);
+      if (!target) return;
+      setMenuOpen(false);
+      setAdminSettings(false);
+      setManagedSettings(false);
+      setSheet(null);
+      setDm(target);
+    };
+    const onPush = (event: MessageEvent) => {
+      const data = event.data as { type?: string; code?: string; peer?: string; message?: unknown } | null;
+      if (!data) return;
+      if (data.type === 'umap-open-chat' && data.code && data.peer) {
+        open(data.code, data.peer);
+        return;
+      }
+      if (data.type !== 'umap-chat' || !data.code || !isFamilyChatMessage(data.message)) return;
+      const current = familyRef.current.state;
+      const me = myChatName(current, data.code);
+      const peer = chatName(data.message.from) === me ? data.message.to : data.message.from;
+      mergeDirectChat(data.code, me, peer, [data.message]);
+    };
+    navigator.serviceWorker?.addEventListener('message', onPush);
+    const params = new URLSearchParams(window.location.search);
+    const queryPeer = chatName(params.get('chat') || '');
+    const queryCode = (params.get('room') || '').replace(/\D/g, '').slice(0, 6);
+    if (queryPeer && /^\d{4,6}$/.test(queryCode) && chatTargetFor(familyRef.current.state, queryCode, queryPeer)) {
+      open(queryCode, queryPeer);
+      params.delete('chat');
+      params.delete('room');
+      const query = params.toString();
+      window.history.replaceState(null, '', `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash}`);
+    }
+    let removeNative = () => {};
+    void consumePendingChat().then((pending) => {
+      if (pending) open(pending.code, pending.peer);
+    });
+    void listenChatOpen((pending) => {
+      open(pending.code, pending.peer);
+      void consumePendingChat();
+    }).then((remove) => {
+      removeNative = remove;
+    });
+    return () => {
+      navigator.serviceWorker?.removeEventListener('message', onPush);
+      removeNative();
+    };
+  }, [state.mode, state.inviteCode, state.profile?.name, state.guardians]);
 
   const stopIncoming = () => {
     if (incoming) ackFamilyAlert(incoming.id);
@@ -459,7 +553,24 @@ export function FamilyMapScreen() {
     setDm(null);
     if (hasLocation(member)) mapRef.current?.panTo(member.lat, member.lng);
   };
+  const openLocationSettings = () => {
+    setGuideBusy(true);
+    void askAlwaysLocation(state.permissions.accuracy === 'precise').then((result) => {
+      setGuideBusy(false);
+      setSettingsNote(result.note);
+      if (result.location === 'always' || result.location === 'while-using' || result.location === 'denied') {
+        family.finishPermissions({ ...state.permissions, locationMode: result.location, completed: true });
+      }
+    });
+  };
+  const openBatterySettings = () => {
+    void askBattery().then((result) => setSettingsNote(result.note));
+  };
   useEffect(() => consumeAndroidBack(() => {
+    if (alwaysGuide) {
+      setAlwaysGuide(false);
+      return true;
+    }
     if (confirm) {
       setConfirm(null);
       return true;
@@ -515,7 +626,7 @@ export function FamilyMapScreen() {
       return true;
     }
     return false;
-  }), [adminSettings, alertsOpen, confirm, dayPicker, detailId, dm, keepPrompt, managedSettings, menuOpen, placingHome, profileOpen, recordId, sheet]);
+  }), [adminSettings, alertsOpen, alwaysGuide, confirm, dayPicker, detailId, dm, keepPrompt, managedSettings, menuOpen, placingHome, profileOpen, recordId, sheet]);
   const people = state.mode === 'managed'
     ? state.members.filter((member) => member.id === 'self' || member.role === 'admin-share')
     : state.members.filter((member) => member.role !== 'guardian' && member.role !== 'admin-share');
@@ -575,6 +686,15 @@ export function FamilyMapScreen() {
             </div>
           )}
 
+          {state.permissions.locationMode !== 'always' && !guideHintHidden && !placingHome && (
+            <AlwaysAllowMapHint
+              onOpen={() => setAlwaysGuide(true)}
+              onDismiss={() => {
+                markSessionFlag(ALWAYS_GUIDE_DISMISSED_KEY);
+                setGuideHintHidden(true);
+              }}
+            />
+          )}
           <div className="absolute right-3 top-3 z-30 flex flex-col gap-2">
             <RoundButton label="안심존 표시" onClick={() => setShowZone((value) => !value)}>
               <Home className={`h-5 w-5 ${showZone ? 'text-[#0084FF]' : 'text-slate-400'}`} />
@@ -909,7 +1029,7 @@ export function FamilyMapScreen() {
                   setKeepPrompt('none');
                   return;
                 }
-                setKeepNote(result.note ?? '알림을 허용하지 않았습니다. 위치를 항상 허용으로 고르면 위치 유지를 켤 수 있습니다. SOS 알림만 알림 권한이 필요합니다.');
+                setKeepNote(result.note ?? '알림을 허용하지 않았습니다. 위치를 항상 허용으로 고르면 위치 유지를 켤 수 있습니다. SOS와 새 대화 알림은 알림 권한이 필요합니다.');
               });
             }}
           />
@@ -937,6 +1057,7 @@ export function FamilyMapScreen() {
               setSheet('accept');
             }}
             onSettings={() => setManagedSettings(true)}
+            onAlwaysGuide={() => setAlwaysGuide(true)}
             onToggleShare={(link) => family.setGuardianShare(link.code, link.share === 'allowed' ? 'revoked' : 'allowed')}
           />
         ) : (
@@ -959,6 +1080,7 @@ export function FamilyMapScreen() {
               setAlertsOpen(true);
             }}
             onSettings={() => setAdminSettings(true)}
+            onAlwaysGuide={() => setAlwaysGuide(true)}
             onToggleShare={() => family.setShareSelf(!state.shareSelfWithFamily)}
           />
         ))}
@@ -979,20 +1101,16 @@ export function FamilyMapScreen() {
             <p className="text-sm leading-6 text-slate-500">위치는 초대를 수락하고 공유를 허용한 뒤에만 나갑니다. 위치 유지를 켠 뒤에는 이 화면에서 끄지 않습니다.</p>
             <button
               type="button"
-              onClick={() => {
-                void askAlwaysLocation(state.permissions.accuracy === 'precise').then((result) => {
-                  setSettingsNote(result.note);
-                  if (result.location === 'always' || result.location === 'while-using' || result.location === 'denied') {
-                    family.finishPermissions({ ...state.permissions, locationMode: result.location, completed: true });
-                  }
-                });
-              }}
+              onClick={openLocationSettings}
               className="mt-4 w-full rounded-full bg-slate-100 py-3 text-sm font-bold"
             >
               {tracking.native ? '항상 허용' : '위치 허용'}
             </button>
+            <button type="button" onClick={() => setAlwaysGuide(true)} className="mt-2 w-full py-2 text-sm font-bold text-[#0084FF]">
+              방법 보기
+            </button>
             {tracking.native && (
-              <button type="button" onClick={() => { void askBattery().then((result) => setSettingsNote(result.note)); }} className="mt-2 w-full rounded-full bg-slate-100 py-3 text-sm font-bold">
+              <button type="button" onClick={openBatterySettings} className="mt-2 w-full rounded-full bg-slate-100 py-3 text-sm font-bold">
                 배터리 제한 없음
               </button>
             )}
@@ -1052,17 +1170,9 @@ export function FamilyMapScreen() {
                 keepAlive={state.backgroundKeepAlive}
                 native={tracking.native}
                 note={settingsNote}
-                onOpenSettings={() => {
-                  void askAlwaysLocation(state.permissions.accuracy === 'precise').then((result) => {
-                    setSettingsNote(result.note);
-                    if (result.location === 'always' || result.location === 'while-using' || result.location === 'denied') {
-                      family.finishPermissions({ ...state.permissions, locationMode: result.location, completed: true });
-                    }
-                  });
-                }}
-                onBattery={() => {
-                  void askBattery().then((result) => setSettingsNote(result.note));
-                }}
+                onOpenSettings={openLocationSettings}
+                onShowGuide={() => setAlwaysGuide(true)}
+                onBattery={openBatterySettings}
                 onStart={() => {
                   void (async () => {
                     const notifications = await askNotifications();
@@ -1087,10 +1197,10 @@ export function FamilyMapScreen() {
               <Line k="배터리 안내" v={state.permissions.battery === 'acknowledged' ? '확인함' : state.permissions.battery === 'skipped' ? '나중에' : '해당 없음'} />
             </dl>
             <p className="mt-3 text-xs leading-5 text-slate-400">
-              가족 위치와 배터리는 초대 동기화 키로 위치 서버에 올라가고, 관리자 폰이 그 서버에서 받아 지도에 표시합니다. 예시 좌표나 하드코딩된 팝업이 아닙니다. 알림을 허용하면 앱을 닫아도 SOS가 푸시로 옵니다. 전화번호로는 위치를 찾지 않습니다.
+              가족 위치와 배터리는 초대 동기화 키로 위치 서버에 올라가고, 관리자 폰이 그 서버에서 받아 지도에 표시합니다. 예시 좌표나 하드코딩된 팝업이 아닙니다. 알림을 허용하면 앱을 닫아도 SOS와 새 대화가 알림 목록에 옵니다. 전화번호로는 위치를 찾지 않습니다.
             </p>
             <p className="mt-3 text-xs leading-5 text-slate-400">
-              항상 허용을 누르면 이 앱의 위치 권한 화면이 바로 열립니다. 배터리 제한 없음을 누르면 시스템 팝업이 바로 열립니다. Umap은 그 스위치를 대신 바꾸지 않습니다. 위치 유지는 사용자가 켠 뒤에만 백그라운드에서 보냅니다. 걷는 동안만 촘촘히 받고, 머물면 2분·5분으로 줄입니다. 알림 목록에 Umap 카드는 나오지 않습니다.
+              항상 허용을 누르면 「위치 액세스 권한」 화면이 바로 열립니다. 거기서 항상 허용을 고르고, 「정확한 위치 사용」을 직접 켭니다. 그 화면이 아니면 앱 권한 목록, 그다음 앱 정보로 갑니다. 배터리 제한 없음을 누르면 시스템 팝업이 바로 열립니다. Umap은 그 스위치를 대신 바꾸지 않습니다. 위치 유지는 사용자가 켠 뒤에만 백그라운드에서 보냅니다. 걷는 동안만 촘촘히 받고, 머물면 2분·5분으로 줄입니다. 알림 목록에 Umap 카드는 나오지 않습니다.
             </p>
             <div className="mt-4 space-y-2">
               <button type="button" onClick={family.reopenMode} className="w-full rounded-full bg-slate-100 py-3 text-sm font-bold">
@@ -1125,6 +1235,16 @@ export function FamilyMapScreen() {
               else family.leaveGuardian(confirm.id);
               setConfirm(null);
             }}
+          />
+        )}
+        {alwaysGuide && (
+          <AlwaysAllowGuide
+            native={tracking.native}
+            busy={guideBusy}
+            note={settingsNote}
+            onOpenSettings={openLocationSettings}
+            onBattery={openBatterySettings}
+            onClose={() => setAlwaysGuide(false)}
           />
         )}
       </div>
@@ -1165,7 +1285,7 @@ function ProfileSettingsSheet({
       <Sheet title="프로필 설정" onClose={onClose}>
         <div className="flex items-center gap-3">
           <PhotoPicker name={draft || name} photo={photo} onPhoto={onPhoto} />
-          <p className="text-sm leading-6 text-slate-500">사진과 이름은 이 기기에만 저장됩니다. 전화번호는 쓰지 않습니다.</p>
+          <p className="text-sm leading-6 text-slate-500">이름과 사진은 이 기기에 바로 저장됩니다. 가족 서버에 연결되면 같은 초대의 다른 폰 지도와 목록에도 보입니다. 다른 사람의 프로필은 바꿀 수 없습니다. 전화번호는 쓰지 않습니다.</p>
         </div>
         <label className="mt-4 block text-xs font-bold text-slate-400" htmlFor="profile-name">
           표시 이름
@@ -1217,6 +1337,7 @@ function ManagedMenu({
   onAlerts,
   onInvite,
   onSettings,
+  onAlwaysGuide,
   onToggleShare,
 }: {
   name: string;
@@ -1230,6 +1351,7 @@ function ManagedMenu({
   onAlerts: () => void;
   onInvite: () => void;
   onSettings: () => void;
+  onAlwaysGuide: () => void;
   onToggleShare: (link: GuardianLink) => void;
 }) {
   return (
@@ -1254,6 +1376,7 @@ function ManagedMenu({
           <MenuRow icon={<Home className="h-4 w-4" />} label="우리 집 설정" hint={home ? `${home.label || '우리 집'} · 반경 ${home.radiusM}m` : '지도에서 집 위치를 정합니다'} onClick={onHome} />
           <MenuRow icon={<Bell className="h-4 w-4" />} label="알림" hint={alertHint} onClick={onAlerts} />
           <MenuRow icon={<UserPlus className="h-4 w-4" />} label="초대 수락" hint="관리자에게 받은 코드" onClick={onInvite} />
+          <MenuRow icon={<MapPin className="h-4 w-4" />} label="항상 허용 방법" hint="앱을 닫아도 위치를 보내기" onClick={onAlwaysGuide} />
         </div>
         {guardians.length > 0 && (
           <div className="mt-4 overflow-hidden rounded-2xl bg-white shadow-sm">
@@ -1298,6 +1421,7 @@ function AdminMenu({
   onHome,
   onAlerts,
   onSettings,
+  onAlwaysGuide,
   onToggleShare,
 }: {
   name: string;
@@ -1311,6 +1435,7 @@ function AdminMenu({
   onHome: () => void;
   onAlerts: () => void;
   onSettings: () => void;
+  onAlwaysGuide: () => void;
   onToggleShare: () => void;
 }) {
   return (
@@ -1334,6 +1459,7 @@ function AdminMenu({
         <div className="mt-4 overflow-hidden rounded-2xl bg-white shadow-sm">
           <MenuRow icon={<Home className="h-4 w-4" />} label="우리 집 설정" hint={home ? `${home.label || '우리 집'} · 반경 ${home.radiusM}m` : '지도에서 집 위치를 정합니다'} onClick={onHome} />
           <MenuRow icon={<Bell className="h-4 w-4" />} label="알림" hint={alertHint} onClick={onAlerts} />
+          <MenuRow icon={<MapPin className="h-4 w-4" />} label="항상 허용 방법" hint="앱을 닫아도 위치를 보내기" onClick={onAlwaysGuide} />
         </div>
         <div className="mt-4 overflow-hidden rounded-2xl bg-white shadow-sm">
           <button type="button" onClick={onToggleShare} className="flex w-full items-center gap-3 px-4 py-3.5 text-left">
@@ -1357,12 +1483,37 @@ function AdminMenu({
   );
 }
 
+function chatTargetFor(state: {
+  mode: string | null;
+  profile: { name?: string } | null;
+  guardians: GuardianLink[];
+  inviteCode: string;
+  syncWriteKey: string;
+  syncReadKey: string;
+}, code: string, peer: string): DirectChatTarget | null {
+  const name = chatName(peer);
+  if (!name || !/^\d{4,6}$/.test(code)) return null;
+  if (state.mode === 'admin' && code === state.inviteCode) {
+    const me = myChatName(state, code);
+    if (!me || me === name) return null;
+    return { code, me, peer: name, label: name, writeKey: state.syncWriteKey, readKey: state.syncReadKey };
+  }
+  if (state.mode !== 'managed') return null;
+  const link = state.guardians.find((item) => item.code === code && item.share !== 'revoked' && item.syncToken);
+  if (!link) return null;
+  const me = myChatName(state, code);
+  if (!me || me === name) return null;
+  return { code, me, peer: name, label: name, token: link.syncToken };
+}
+
 function myChatName(state: { mode: string | null; profile: { name?: string } | null; guardians: GuardianLink[] }, code: string): string {
+  const own = chatName(state.profile?.name);
+  if (own) return own;
   if (state.mode === 'managed') {
     const link = state.guardians.find((item) => item.code === code && item.share !== 'revoked');
-    return chatName(link?.rosterName || state.profile?.name) || '나';
+    return chatName(link?.rosterName) || '나';
   }
-  return chatName(state.profile?.name) || '나';
+  return '나';
 }
 
 function directThreadFor(state: {
@@ -1406,9 +1557,10 @@ function guardianThreads(state: {
 }): DirectChatTarget[] {
   if (state.mode !== 'managed') return [];
   const shown = new Set(state.members.filter((member) => member.role === 'admin-share').map((member) => chatName(member.name)));
+  const shownCodes = new Set(state.members.filter((member) => member.role === 'admin-share' && member.id.startsWith('family:')).map((member) => member.id.split(':')[1] || ''));
   const threads: DirectChatTarget[] = [];
   for (const link of state.guardians) {
-    if (link.share === 'revoked') continue;
+    if (link.share === 'revoked' || shownCodes.has(link.code)) continue;
     const peer = chatName(link.adminName || link.label);
     const me = myChatName(state, link.code);
     if (!peer || peer === me || shown.has(peer)) continue;
@@ -1836,7 +1988,7 @@ function KeepNoticeSheet({
         <h2 className="text-lg font-black">{mode === 'permission' ? '알림을 허용할까요?' : '위치 유지를 켤까요?'}</h2>
         <p className="mt-2 text-sm leading-6 text-slate-600">
           {mode === 'permission'
-            ? '알림 권한은 SOS와 집 반경 알림에 씁니다. 허용을 누르면 알림 창이 열립니다. 위치 공유 중에는 알림 목록에 Umap 카드가 나오지 않습니다. 앱이 혼자 켜지 않습니다. 전화번호는 쓰지 않습니다.'
+            ? '알림 권한은 SOS, 집 반경, 새 대화에 씁니다. 허용을 누르면 알림 창이 열립니다. 위치 공유 중에는 알림 목록에 Umap 카드가 나오지 않습니다. 앱이 혼자 켜지 않습니다. 전화번호는 쓰지 않습니다.'
             : '켜면 앱을 닫아도 위치를 보냅니다. 걷는 동안만 촘촘히 받고, 한곳에 머물면 2분에서 5분으로 줄입니다. 알림 목록에 Umap 카드는 나오지 않습니다. 배터리 제한이 없으면 그 간격을 더 잘 지킵니다. 앱이 혼자 켜지 않습니다.'}
         </p>
         {note && <p className="mt-3 text-sm leading-6 text-amber-800">{note}</p>}

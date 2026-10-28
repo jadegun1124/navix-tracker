@@ -10,12 +10,12 @@
 | :--- | :--- | :--- |
 | 회사 홈 | GitHub Pages | https://jadegun1124.github.io/umap/ |
 | 앱 화면 미리보기 | 같은 Pages의 `?app=1` | https://jadegun1124.github.io/umap/?app=1 |
-| 안드로이드 앱 | GitHub Releases APK v1.15.0 | https://github.com/jadegun1124/umap/releases/download/v1.15.0/umap-v1.15.0-tracker.apk |
-| 릴리스 페이지 | GitHub Releases | https://github.com/jadegun1124/umap/releases/tag/v1.15.0 |
+| 안드로이드 앱 | GitHub Releases APK v1.16.0 | https://github.com/jadegun1124/umap/releases/download/v1.16.0/umap-v1.16.0-tracker.apk |
+| 릴리스 페이지 | GitHub Releases | https://github.com/jadegun1124/umap/releases/tag/v1.16.0 |
 
 Google Play, App Store, TestFlight에는 올리지 않았습니다. iOS는 아이콘 에셋만 있고 설치 파일은 없습니다.
 
-`main`에 푸시하면 GitHub Actions가 회사 홈을 Pages에 배포하고, 같은 커밋으로 디버그 APK를 만들어 GitHub Release `v1.15.0`의 `umap-v1.15.0-tracker.apk`를 갱신합니다. 이전 빌드는 `v1.14.0`, `v1.13.0`, `v1.12.0`, `v1.11.0`, `v1.10.0`, `v1.9.0`, `v1.8.0`, `v1.7.0`, `v1.6.0`, `v1.5.0`, `v1.4.0`, `v1.3.0`, `v1.2.0`, `v1.1.0`, `v1.0.0`에 남아 있습니다.
+`main`에 푸시하면 GitHub Actions가 회사 홈을 Pages에 배포하고, 같은 커밋으로 디버그 APK를 만들어 GitHub Release `v1.16.0`의 `umap-v1.16.0-tracker.apk`를 갱신합니다. 이전 빌드는 `v1.15.0`, `v1.14.0`, `v1.13.0`, `v1.12.0`, `v1.11.0`, `v1.10.0`, `v1.9.0`, `v1.8.0`, `v1.7.0`, `v1.6.0`, `v1.5.0`, `v1.4.0`, `v1.3.0`, `v1.2.0`, `v1.1.0`, `v1.0.0`에 남아 있습니다.
 
 ## 화면
 
@@ -38,13 +38,13 @@ Google Play, App Store, TestFlight에는 올리지 않았습니다. iOS는 아�
 
 마이크, 문자, 주변 소리, 원격으로 소리를 울리는 기능은 없습니다. 전화번호만으로 다른 사람을 찾지 않습니다.
 
-항상 허용을 누르면 이 앱의 위치 액세스 권한 화면이 먼저 열리고, 거기서 라디오를 직접 고릅니다. 그 화면을 열지 못하면 앱 권한 목록(위치, 알림, 신체 활동)으로 가고, 그것도 막히면 앱 정보로 갑니다. 앱은 OS 스위치를 대신 바꾸지 않습니다. 위치 유지는 사용자가 켠 뒤에만 시작합니다. 백그라운드에서 위치를 보내며, 알림 목록에 Umap 상시 카드는 나오지 않습니다. 배터리 제한 없음을 누르면 `ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` 팝업이 바로 열립니다.
+항상 허용을 누르면 `ACTION_MANAGE_APP_PERMISSION`과 `android.permission-group.LOCATION`으로 「위치 액세스 권한」 화면을 바로 엽니다. 삼성 권한 컨트롤러를 먼저 고르고, 그 화면이 없으면 앱 권한 목록, 그다음 앱 정보로 갑니다. 번호 안내는 메뉴의 「항상 허용 방법」에 있습니다. 화면의 「항상 허용」을 고르고, 같은 화면의 「정확한 위치 사용」은 직접 켭니다. 「앱 사용 중에만 허용」이나 「항상 확인 또는 공유 시 허용」은 아닙니다. 어떤 폰은 「앱을 사용하지 않을 때도 허용」이라고 나옵니다. 그 화면을 열지 못하면 앱 권한 목록(위치, 알림, 신체 활동)으로 가고, 그것도 막히면 앱 정보로 갑니다. 앱은 OS 스위치를 대신 바꾸지 않습니다. 위치 유지는 사용자가 켠 뒤에만 시작합니다. 백그라운드에서 위치를 보내며, 알림 목록에 Umap 상시 카드는 나오지 않습니다. 배터리 제한 없음을 누르면 `ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` 팝업이 바로 열립니다.
 
 ### 알림 목록
 
 1.6.0은 위치 포그라운드 서비스와 SOS 대기 포그라운드 서비스가 `startForeground`로 알림을 올렸습니다. 제목과 본문은 빈 문자였고 채널 중요도는 최소였습니다. 안드로이드 12 이상은 포그라운드 서비스 알림을 중요도와 상관없이 알림 목록에 남깁니다. 삼성 One UI는 그 빈 알림을 앱 아이콘만 있는 카드로 접고, 같은 앱의 두 번째 알림을 "1개 알림 더보기"로 묶습니다. 채널 이름을 바꿔도 서비스가 다시 `startForeground`를 호출하면 카드가 돌아옵니다.
 
-1.7.0은 그 포그라운드 서비스를 쓰지 않습니다. 항상 허용 뒤 `LocationManager` PendingIntent로 위치를 받습니다. 이 경로에는 알림 객체가 없습니다. 앱을 열면 예전 채널 `umap_location`, `umap_location_quiet`, `umap_alert_watch`와 알림 id 4108·5108을 지웁니다. SOS와 집 반경만 `umap_alert`(가족 알림, 높은 중요도)로 올립니다. 알림 대기는 정확한 알람으로 약 12초마다 읽고, 대기 중에는 카드를 올리지 않습니다.
+1.7.0은 그 포그라운드 서비스를 쓰지 않습니다. 항상 허용 뒤 `LocationManager` PendingIntent로 위치를 받습니다. 이 경로에는 알림 객체가 없습니다. 앱을 열면 예전 채널 `umap_location`, `umap_location_quiet`, `umap_alert_watch`와 알림 id 4108·5108을 지웁니다. SOS와 집 반경은 `umap_alert`(가족 알림, 높은 중요도)로 올립니다. 새 대화는 `umap_chat`(가족 대화)으로, 보낸 사람 이름과 짧은 내용만 올립니다. 둘 다 사건이 있을 때만 뜨고 상시 카드는 아닙니다. 알림 대기는 정확한 알람으로 약 12초마다 읽고, 대기 중에는 카드를 올리지 않습니다. 대화 알림을 누르면 그 대화가 열립니다.
 
 상태 표시줄의 위치 사용 아이콘은 시스템 표시라 앱이 지울 수 없습니다. 배터리 제한 없음이 아니면 안드로이드 8 이상의 백그라운드 위치 제한으로 갱신이 한 시간에 몇 번으로 줄어들 수 있습니다. 절전 중이고 정확한 알람이 없으면 SOS 대기는 더 띄엄띄엄 일어납니다. 포그라운드 서비스 알림을 다시 띄우면 안드로이드 12 이상에서 Umap 카드가 다시 생깁니다.
 
@@ -57,7 +57,7 @@ VITE_VWORLD_API_KEY=
 VITE_FAMILY_SYNC_URL=
 ```
 
-- 이름: 가족 지도에 보일 표시 이름을 이 기기에만 저장합니다. Google 로그인과 전화번호 본인 확인은 없습니다.
+- 이름: 가족 지도에 보일 표시 이름과 프로필 사진을 이 기기에서 정합니다. 가족 서버에 연결되면 같은 초대의 다른 폰에도 보입니다. Google 로그인과 전화번호 본인 확인은 없습니다.
 - 지도: 국토교통부 [VWorld](https://www.vworld.kr/) 2D Base 한 종류입니다. 위성, CARTO, OpenStreetMap 전환은 없습니다.
   - `https://api.vworld.kr/req/wmts/1.0.0/{API_KEY}/Base/{z}/{y}/{x}.png`
   - 키는 `import.meta.env.VITE_VWORLD_API_KEY`만 읽습니다. 빌드 시점에 JS 안에 들어갑니다.
@@ -91,15 +91,15 @@ npm run dev
 
 ## 안드로이드 APK
 
-받는 곳: https://github.com/jadegun1124/umap/releases/download/v1.15.0/umap-v1.15.0-tracker.apk
+받는 곳: https://github.com/jadegun1124/umap/releases/download/v1.16.0/umap-v1.16.0-tracker.apk
 
-`main` 푸시마다 `Build Android APK (Umap)` 워크플로가 웹을 빌드하고 `dist` 를 안드로이드 에셋으로 복사한 뒤 `assembleDebug` 로 APK를 만듭니다. 결과 파일은 GitHub Release `v1.15.0`에 올립니다. 앱 `versionName`은 `1.15.0`, `versionCode`는 16입니다. Play 스토어 트랙은 없습니다.
+`main` 푸시마다 `Build Android APK (Umap)` 워크플로가 웹을 빌드하고 `dist` 를 안드로이드 에셋으로 복사한 뒤 `assembleDebug` 로 APK를 만듭니다. 결과 파일은 GitHub Release `v1.16.0`에 올립니다. 앱 `versionName`은 `1.16.0`, `versionCode`는 17입니다. Play 스토어 트랙은 없습니다.
 
 ## 데이터
 
 가족, 모드, 우리 집 반경, 권한, 위치 공유 허용은 이 탭의 `sessionStorage`와 모드별 `localStorage`(`umap_family_v1:admin`, `umap_family_v1:managed`)에 있습니다. 관리자 지도는 내 위치와, 위치 공유를 허용한 아이의 핀만 보여 줍니다. 피관리자 지도는 내 위치만 보여 주고, 관리자 카드는 공유 스위치일 뿐 위치 핀이 아닙니다.
 
-같은 브라우저에서 피관리자가 공유를 허용하면 그 좌표가 `umap_family_places_v1`로 관리자 탭의 아이 핀에 붙습니다. 다른 폰은 초대 링크의 동기화 키로 가족 위치 서버에 최신 위치와 배터리를 올리고, 관리자 폰이 그 서버에서 받아 지도와 목록에 표시합니다. 예시 좌표나 하드코딩된 팝업이 아닙니다. 서버가 없거나 끊기면 같은 브라우저 공유만 남고, 화면에 그 사실을 한국어로 알립니다. 집 이탈 사이렌은 관리자 화면에만, SOS 사이렌은 피관리자 폰과 관리자 화면에 울립니다. 서버가 연결되어 있으면 다른 폰의 관리자 화면에도 전달되고, 알림을 허용한 관리자는 앱이 꺼져 있어도 Web Push 또는 알림 대기로 SOS를 받습니다. 문자는 쓰지 않습니다. 전화번호로 위치를 찾지 않습니다.
+같은 브라우저에서 피관리자가 공유를 허용하면 그 좌표가 `umap_family_places_v1`로 관리자 탭의 아이 핀에 붙습니다. 다른 폰은 초대 링크의 동기화 키로 가족 위치 서버에 최신 위치와 배터리를 올리고, 관리자 폰이 그 서버에서 받아 지도와 목록에 표시합니다. 예시 좌표나 하드코딩된 팝업이 아닙니다. 서버가 없거나 끊기면 같은 브라우저 공유만 남고, 화면에 그 사실을 한국어로 알립니다. 집 이탈 사이렌은 관리자 화면에만, SOS 사이렌은 피관리자 폰과 관리자 화면에 울립니다. 서버가 연결되어 있으면 다른 폰의 관리자 화면에도 전달되고, 알림을 허용한 관리자는 앱이 꺼져 있어도 Web Push 또는 알림 대기로 SOS를 받습니다. 개인 대화도 받는 사람의 알림 목록에 보낸 이름과 짧은 내용으로 옵니다. 브라우저가 Push를 구독할 수 있으면 Web Push이고, 이 앱의 WebView처럼 Push가 없으면 알림 대기가 대화를 읽어 올립니다. 문자는 쓰지 않습니다. 전화번호로 위치를 찾지 않습니다.
 
 ## 다른 폰과 위치 나누기
 
@@ -112,7 +112,7 @@ npm run dev
 3. 위치 공유를 허용한 피관리자 폰이 최신 점 하나를 `PUT /v1/rooms/{코드}/place` 로 보냅니다. 걷는 동안에는 5초마다, 머무름이 이어지면 30초 이상으로 다시 보냅니다.
 4. 관리자 화면은 약 2.5초마다 읽기 키로 그 방을 읽습니다. 쓰기 키만 가진 폰은 좌표를 읽을 수 없습니다.
 5. 집 이탈과 SOS도 같은 방으로 갑니다. 다른 폰의 관리자 화면에서 사이렌이 울립니다.
-6. 서버에는 이름별 최신 좌표와 최근 알림만 있습니다. 이동 경로 전체는 각 기기에만 쌓입니다.
+6. 서버에는 구성원 id별 최신 좌표와 최근 알림, 그리고 이름·썸네일 프로필이 있습니다. id가 없는 예전 점은 이름별로 남아 있고, 그 폰이 id를 보내면 같은 이름의 점을 id 슬롯으로 옮깁니다. 이동 경로 전체는 각 기기에만 쌓입니다. 프로필 수정은 그 기기의 프로필 키로만 됩니다.
 
 같은 브라우저의 `localStorage`와 `BroadcastChannel`은 그대로 둡니다. 서버가 죽어도 그 경로로 같은 브라우저 안에서는 핀이 움직입니다.
 
@@ -135,6 +135,8 @@ cd sync
 npx wrangler@4 login
 npx wrangler@4 deploy
 ```
+
+프로필은 `PUT /v1/rooms/:code/profile` 입니다. 본문에는 구성원 id, 이름, 작은 JPEG 또는 WebP 썸네일이 들어가고, 헤더 `x-umap-profile-key` 가 그 id의 주인만 고치게 합니다. 위치 `PUT /place` 에는 사진을 넣지 않고, 구성원 id가 있으면 같은 키로 그 슬롯만 갱신합니다. 이름을 바꿔도 id 슬롯의 최신 좌표는 남습니다.
 
 개인 대화는 `POST /v1/rooms/:code/chat` 과 `GET /v1/rooms/:code/chat?me=&with=` 입니다. `me`만 있으면 그 이름이 참여한 대화만 돌아옵니다. 방 조회와 `GET /family`에는 글을 넣지 않습니다. 이 경로가 있는 Worker를 다시 올려야 다른 폰과 글이 오갑니다. 예전 Worker면 글은 이 기기에만 남고, 화면에 그 사실을 알립니다.
 

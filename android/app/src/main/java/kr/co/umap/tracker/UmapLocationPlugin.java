@@ -49,7 +49,12 @@ import org.json.JSONObject;
     }
 )
 public class UmapLocationPlugin extends Plugin {
+    private static volatile UmapLocationPlugin active;
+    private static volatile String pendingChatCode;
+    private static volatile String pendingChatPeer;
     private static final long BOUNCE_MS = 450L;
+    private static final long BOUNCE_CONFIRM_MS = 800L;
+    private static final long OPEN_WATCH_MS = 2000L;
     private static final String MANAGE_APP_PERMISSION = "android.intent.action.MANAGE_APP_PERMISSION";
     private static final String MANAGE_APP_PERMISSIONS = "android.intent.action.MANAGE_APP_PERMISSIONS";
     private static final String LOCATION_GROUP = "android.permission-group.LOCATION";
@@ -61,8 +66,22 @@ public class UmapLocationPlugin extends Plugin {
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private Runnable bounceFallback;
 
+    public static void openChat(String code, String peer) {
+        if (code == null || peer == null || code.isEmpty() || peer.isEmpty()) return;
+        pendingChatCode = code;
+        pendingChatPeer = peer;
+        UmapLocationPlugin plugin = active;
+        if (plugin == null) return;
+        try {
+            plugin.notifyChat(code, peer);
+        } catch (RuntimeException ignored) {
+            /* 화면이 아직 없어도 다음에 남은 대화를 연다 */
+        }
+    }
+
     @Override
     public void load() {
+        active = this;
         Context context = getContext();
         LocationKeepService.attach(context);
         AlertWatchService.attach(context);
@@ -197,7 +216,9 @@ public class UmapLocationPlugin extends Plugin {
             long elapsed = SystemClock.uptimeMillis() - openedAt;
             if (elapsed < BOUNCE_MS && !"app-details".equals(openedScreen)) {
                 leftForSettings = false;
-                advanceFallback();
+                // Samsung often finishes a trampoline, which resumes us, then opens
+                // 위치 액세스 권한. Wait before covering that page with app info.
+                scheduleBounceConfirm();
                 return;
             }
             PluginCall call = pendingAlways;
@@ -272,6 +293,23 @@ public class UmapLocationPlugin extends Plugin {
         JSObject result = new JSObject();
         result.put("stopped", true);
         call.resolve(result);
+    }
+
+    @PluginMethod
+    public void consumePendingChat(PluginCall call) {
+        JSObject result = new JSObject();
+        result.put("code", pendingChatCode == null ? "" : pendingChatCode);
+        result.put("peer", pendingChatPeer == null ? "" : pendingChatPeer);
+        pendingChatCode = null;
+        pendingChatPeer = null;
+        call.resolve(result);
+    }
+
+    private void notifyChat(String code, String peer) {
+        JSObject data = new JSObject();
+        data.put("code", code);
+        data.put("peer", peer);
+        notifyListeners("chat", data);
     }
 
     @PluginMethod
@@ -384,7 +422,17 @@ public class UmapLocationPlugin extends Plugin {
             if (pendingAlways == null || leftForSettings) return;
             advanceFallback();
         };
-        mainHandler.postDelayed(bounceFallback, 700L);
+        mainHandler.postDelayed(bounceFallback, OPEN_WATCH_MS);
+    }
+
+    private void scheduleBounceConfirm() {
+        clearBounce();
+        if ("app-details".equals(openedScreen) || pendingAlways == null) return;
+        bounceFallback = () -> {
+            if (pendingAlways == null || leftForSettings) return;
+            advanceFallback();
+        };
+        mainHandler.postDelayed(bounceFallback, BOUNCE_CONFIRM_MS);
     }
 
     private void clearBounce() {
@@ -410,10 +458,12 @@ public class UmapLocationPlugin extends Plugin {
         if (call != null) resolveAlways(call, false);
     }
 
+    /** 위치 액세스 권한: 항상 허용 / 앱 사용 중에만 허용 / 정확한 위치 사용. */
     private Intent locationRadioIntent(String pkg) {
         Intent intent = new Intent(MANAGE_APP_PERMISSION);
         intent.addCategory(Intent.CATEGORY_DEFAULT);
         intent.putExtra(Intent.EXTRA_PACKAGE_NAME, pkg);
+        intent.putExtra(Settings.EXTRA_APP_PACKAGE, pkg);
         intent.putExtra("android.intent.extra.PERMISSION_GROUP_NAME", LOCATION_GROUP);
         return intent;
     }
@@ -427,15 +477,8 @@ public class UmapLocationPlugin extends Plugin {
 
     private boolean openLocationRadio() {
         String pkg = getContext().getPackageName();
-        String[][] targets = new String[][] {
-            {"com.samsung.android.permissioncontroller", "com.android.permissioncontroller.permission.ui.AppPermissionActivity"},
-            {"com.samsung.android.permissioncontroller", "com.samsung.android.permissioncontroller.permission.ui.AppPermissionActivity"},
-            {"com.google.android.permissioncontroller", "com.android.permissioncontroller.permission.ui.AppPermissionActivity"},
-            {"com.android.permissioncontroller", "com.android.permissioncontroller.permission.ui.AppPermissionActivity"},
-            {"com.google.android.permissioncontroller", "com.android.permissioncontroller.permission.ui.ManageAppPermissionActivity"},
-            {"com.android.permissioncontroller", "com.android.permissioncontroller.permission.ui.ManageAppPermissionActivity"}
-        };
-        if (startExplicit(locationRadioIntent(pkg), targets)) return true;
+        // Let the OEM permission controller pick the location-group activity.
+        // A guessed class can resolve and finish, which used to fall through to app info.
         String[] controllers = new String[] {
             "com.samsung.android.permissioncontroller",
             "com.google.android.permissioncontroller",
@@ -446,6 +489,19 @@ public class UmapLocationPlugin extends Plugin {
             intent.setPackage(controller);
             if (canStart(intent) && startExternal(intent)) return true;
         }
+        String[][] targets = new String[][] {
+            {"com.samsung.android.permissioncontroller", "com.android.permissioncontroller.permission.ui.ManageAppPermissionActivity"},
+            {"com.samsung.android.permissioncontroller", "com.android.permissioncontroller.permission.ui.AppPermissionActivity"},
+            {"com.samsung.android.permissioncontroller", "com.samsung.android.permissioncontroller.permission.ui.AppPermissionActivity"},
+            {"com.samsung.android.permissioncontroller", "com.android.permissioncontroller.permission.ui.handheld.AppPermissionActivity"},
+            {"com.google.android.permissioncontroller", "com.android.permissioncontroller.permission.ui.ManageAppPermissionActivity"},
+            {"com.google.android.permissioncontroller", "com.android.permissioncontroller.permission.ui.AppPermissionActivity"},
+            {"com.google.android.permissioncontroller", "com.android.permissioncontroller.permission.ui.handheld.AppPermissionActivity"},
+            {"com.android.permissioncontroller", "com.android.permissioncontroller.permission.ui.ManageAppPermissionActivity"},
+            {"com.android.permissioncontroller", "com.android.permissioncontroller.permission.ui.AppPermissionActivity"},
+            {"com.android.permissioncontroller", "com.android.permissioncontroller.permission.ui.handheld.AppPermissionActivity"}
+        };
+        if (startExplicit(locationRadioIntent(pkg), targets)) return true;
         Intent implicit = locationRadioIntent(pkg);
         return canStart(implicit) && startExternal(implicit);
     }

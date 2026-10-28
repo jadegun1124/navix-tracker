@@ -3,6 +3,8 @@ import { Bell, BatteryCharging, ChevronLeft, Footprints, MapPin, Shield, UserRou
 import { localProfile } from '../../lib/localProfile.mjs';
 import { KEEP_PERMISSION_ASKED_KEY, markSessionFlag } from '../../lib/systemSettings.mjs';
 import { askAlwaysLocation, askBattery, askMotion, askNotifications, askWhileUsing } from '../../services/systemPermissions';
+import { umapLocationNative } from '../../services/umapLocation';
+import { AlwaysAllowGuide } from './AlwaysAllowGuide';
 import { REQUIRED_TERMS, type AppMode, type PermissionState, type Profile } from '../../types/family';
 import { useFamily } from './session';
 
@@ -133,7 +135,7 @@ function Login({ onSubmit }: { onSubmit: (profile: Profile) => void }) {
       <img src={iconSrc} alt="" className="h-16 w-16 rounded-2xl shadow-md" />
       <h1 className="mt-6 text-[28px] font-black leading-tight">이 폰에서 쓸 이름</h1>
       <p className="mt-3 text-sm leading-6 text-slate-600">
-        가족 지도에 보이는 이름입니다. 이 기기에만 저장됩니다. 전화번호나 Google 계정은 쓰지 않습니다.
+        가족 지도에 보이는 이름입니다. 이 기기에 저장되고, 초대로 연결되면 가족 폰에도 보입니다. 전화번호나 Google 계정은 쓰지 않습니다.
       </p>
       <form
         className="mt-8"
@@ -344,6 +346,7 @@ function Permissions({
   const [draft, setDraft] = useState<PermissionState>({ ...initial, completed: false });
   const [busy, setBusy] = useState(false);
   const [askedAlways, setAskedAlways] = useState(false);
+  const [alwaysGuide, setAlwaysGuide] = useState(false);
   const [note, setNote] = useState<string | null>(null);
 
   const finish = (next: PermissionState, wantsBackground = false) => {
@@ -357,7 +360,7 @@ function Permissions({
   };
 
   return (
-    <div className="flex h-full flex-col bg-[#eef3f8]">
+    <div className="relative flex h-full flex-col bg-[#eef3f8]">
       <div className="flex items-center justify-between px-3 pt-3">
         <button type="button" onClick={onBack} className="p-2 text-slate-500" aria-label="이전">
           <ChevronLeft className="h-5 w-5" />
@@ -390,7 +393,7 @@ function Permissions({
         <Dialog
           icon={<Bell className="h-7 w-7 text-[#0084FF]" />}
           title="알림을 허용할까요?"
-          body="알림 권한은 SOS와 집 반경 알림에 씁니다. 허용을 누르면 알림 창이 열립니다. 위치 공유 중에는 알림 목록에 Umap 카드가 나오지 않습니다. 앱이 혼자 위치를 백그라운드로 올리지 않습니다. 전화번호는 쓰지 않습니다."
+          body="알림 권한은 SOS, 집 반경, 새 대화에 씁니다. 허용을 누르면 알림 창이 열립니다. 위치 공유 중에는 알림 목록에 Umap 카드가 나오지 않습니다. 앱이 혼자 위치를 백그라운드로 올리지 않습니다. 전화번호는 쓰지 않습니다."
           note={note}
           busy={busy}
           primary="알림 허용"
@@ -432,11 +435,14 @@ function Permissions({
               onClick={() => setDraft({ ...draft, accuracy: 'approximate' })}
             />
           </div>
-          <p className="mt-3 text-center text-xs leading-5 text-slate-500">
+          <p className="mt-3 text-center text-sm font-semibold leading-6 text-slate-600">
+            항상 허용을 누르면 「위치 액세스 권한」 화면이 바로 열립니다. 거기서 맨 위의 항상 허용을 고르고, 「정확한 위치 사용」을 직접 켭니다.
+          </p>
+          <p className="mt-2 text-center text-xs leading-5 text-slate-500">
             {draft.notifications === 'granted'
               ? '알림을 허용했습니다. 항상 허용을 고른 뒤 지도에서 위치 유지를 켭니다. 알림 목록에 Umap 카드는 나오지 않습니다.'
               : draft.notifications === 'denied'
-                ? '알림을 허용하지 않았습니다. 위치 유지는 항상 허용 뒤에 켤 수 있습니다. SOS 알림만 알림 권한이 필요합니다.'
+                ? '알림을 허용하지 않았습니다. 위치 유지는 항상 허용 뒤에 켤 수 있습니다. SOS와 새 대화 알림은 알림 권한이 필요합니다.'
                 : '이 브라우저에는 알림 창이 없습니다.'}
           </p>
           {note && <p className="mt-3 text-center text-sm leading-6 text-slate-600">{note}</p>}
@@ -457,21 +463,27 @@ function Permissions({
             <TextButton
               disabled={busy}
               label="항상 허용"
-              onClick={async () => {
+              onClick={() => {
                 setAskedAlways(true);
                 setBusy(true);
-                const result = await askAlwaysLocation(draft.accuracy === 'precise');
-                setBusy(false);
-                if (result.location === 'unavailable') {
+                void askAlwaysLocation(draft.accuracy === 'precise').then((result) => {
+                  setBusy(false);
+                  if (result.location === 'unavailable') {
+                    setNote(result.note);
+                    return;
+                  }
                   setNote(result.note);
-                  return;
-                }
-                setNote(result.note);
-                const locationMode = result.location === 'always' ? 'always' as const : result.location === 'while-using' ? 'while-using' as const : 'denied' as const;
-                const next = { ...draft, locationMode };
-                setDraft(next);
-                setStep('motion');
+                  const locationMode = result.location === 'always' ? 'always' as const : result.location === 'while-using' ? 'while-using' as const : 'denied' as const;
+                  const next = { ...draft, locationMode };
+                  setDraft(next);
+                  setStep('motion');
+                });
               }}
+            />
+            <TextButton
+              disabled={busy}
+              label="방법 보기"
+              onClick={() => setAlwaysGuide(true)}
             />
             <TextButton
               disabled={busy}
@@ -484,6 +496,38 @@ function Permissions({
             />
           </div>
         </div>
+      )}
+
+      {alwaysGuide && (
+        <AlwaysAllowGuide
+          native={umapLocationNative()}
+          busy={busy}
+          note={note}
+          onClose={() => setAlwaysGuide(false)}
+          onBattery={() => {
+            setBusy(true);
+            void askBattery().then((result) => {
+              setBusy(false);
+              setNote(result.note);
+            });
+          }}
+          onOpenSettings={() => {
+            setBusy(true);
+            void askAlwaysLocation(draft.accuracy === 'precise').then((result) => {
+              setBusy(false);
+              setAlwaysGuide(false);
+              if (result.location === 'unavailable') {
+                setNote(result.note);
+                return;
+              }
+              setNote(result.note);
+              const locationMode = result.location === 'always' ? 'always' as const : result.location === 'while-using' ? 'while-using' as const : 'denied' as const;
+              const next = { ...draft, locationMode };
+              setDraft(next);
+              setStep('motion');
+            });
+          }}
+        />
       )}
 
       {step === 'motion' && (

@@ -1,10 +1,11 @@
 import React, { createContext, useContext, useEffect, useReducer } from 'react';
 import { hasLocation, haversineMeters } from '../../lib/geo';
+import { deviceProfileKey, localProfile } from '../../lib/localProfile.mjs';
 import { resolveManagedTarget } from '../../lib/managedPlace.mjs';
-import { localProfile } from '../../lib/localProfile.mjs';
+import { familyPinId, isMemberId, moveKeyed } from '../../lib/sharedIdentity.mjs';
 import { HISTORY_DAYS, JOURNEY_POINT_CAP, TRAIL_POINT_CAP, isWithinHistory, journeysWithinHistory, labelJourneyPlace, mergeJourneyLists, seoulDayKey, settleTrailPoint, splitClosedJourneys, tracksWithinHistory, trimJourneyList, visitsWithinHistory, type JourneyRecord } from '../../lib/tracking.mjs';
 import type { DayStop } from '../../lib/tracking.mjs';
-import type { SharedPlace } from '../../services/familyShare';
+import type { SharedPlace, SharedProfile } from '../../services/familyShare';
 import { umapLocation } from '../../services/umapLocation';
 import { createKeyPart, isKeyPart, splitSyncToken } from '../../services/familySync';
 import {
@@ -363,14 +364,45 @@ function scrubSeed(member: Member, share: ShareState): Member {
 
 function cleanProfile(value: unknown): Profile | null {
   if (!value || typeof value !== 'object') return null;
-  const raw = value as { id?: unknown; name?: unknown; preview?: unknown; photo?: unknown };
+  const raw = value as { id?: unknown; name?: unknown; preview?: unknown; photo?: unknown; profileKey?: unknown };
   let name = typeof raw.name === 'string' ? raw.name : '';
   if (raw.preview === true && (name === '부건' || name === 'Bukeon')) name = '나';
   const id = typeof raw.id === 'string' ? raw.id : '';
   const profile = localProfile(name, id);
   if (!profile) return null;
   const photo = cleanPhoto(raw.photo);
-  return photo ? { ...profile, photo } : profile;
+  const profileKey = deviceProfileKey(raw.profileKey);
+  return { ...profile, profileKey, ...(photo ? { photo } : {}) };
+}
+
+function memberIdOf(place: SharedPlace): string {
+  return isMemberId(place.memberId) ? place.memberId : '';
+}
+
+function withPublisher(member: Member, place: SharedPlace): Member {
+  const memberId = memberIdOf(place);
+  if (!memberId) return member;
+  const name = place.name.trim().slice(0, 80);
+  return { ...member, ...(name ? { name } : {}), publisherId: memberId };
+}
+
+function describeFamilyPlace(code: string, place: SharedPlace, profiles: SharedProfile[], current: Member[]) {
+  const memberId = memberIdOf(place);
+  const profile = memberId ? profiles.find((item) => item.memberId === memberId) : undefined;
+  const name = (profile?.name || place.name).trim().slice(0, 80) || place.name;
+  const photo = profile?.photo ? cleanPhoto(profile.photo) : undefined;
+  const id = familyPinId(code, place);
+  const legacyId = place.priorName ? `family:${code}:${place.priorName}` : `family:${code}:${place.name}`;
+  const battery = typeof place.batteryPct === 'number' ? Math.round(place.batteryPct) : null;
+  const charging = place.charging === true ? true : place.charging === false ? false : null;
+  const previous = current.find((entry) => entry.id === id || (memberId !== '' && entry.publisherId === memberId));
+  return { id, legacyId, memberId, name, photo: photo || previous?.photo, battery, charging, place };
+}
+
+function memberIndexForProfile(members: Member[], profile: SharedProfile, code: string): number {
+  const byPublisher = members.findIndex((member) => member.id !== 'self' && member.publisherId === profile.memberId);
+  if (byPublisher >= 0) return byPublisher;
+  return members.findIndex((member) => member.id === `remote:${code}:${profile.memberId}` || member.id === `family:${code}:${profile.memberId}`);
 }
 
 function withoutDemo(session: Session): Session {
@@ -386,12 +418,14 @@ function withoutDemo(session: Session): Session {
       const battery = typeof renamed.battery === 'number' && renamed.battery >= 0 && renamed.battery <= 100 ? Math.round(renamed.battery) : null;
       const photo = cleanPhoto(renamed.photo) || (renamed.id === 'self' ? cleanPhoto(profile?.photo) : undefined);
       const place = typeof renamed.place === 'string' ? renamed.place.trim().slice(0, 40) : '';
+      const publisherId = isMemberId(renamed.publisherId) ? renamed.publisherId : '';
       const next = {
         ...renamed,
         share,
         charging,
         battery,
         ...(photo ? { photo } : { photo: undefined }),
+        ...(publisherId ? { publisherId } : { publisherId: undefined }),
         ...(place ? { place } : { place: undefined }),
       };
       if (renamed.role === 'admin-share') return next;
@@ -517,7 +551,8 @@ type Action =
   | { type: 'set-share-self'; share: boolean }
   | { type: 'set-keep-alive'; on: boolean }
   | { type: 'apply-shared-place'; place: SharedPlace }
-  | { type: 'set-room-family-places'; code: string; places: SharedPlace[] }
+  | { type: 'apply-shared-profiles'; code: string; profiles: SharedProfile[] }
+  | { type: 'set-room-family-places'; code: string; places: SharedPlace[]; profiles: SharedProfile[] }
   | { type: 'merge-visits'; memberId: string; stops: DayStop[] }
   | { type: 'set-visit-label'; memberId: string; id: string; label: string }
   | { type: 'set-journey-label'; memberId: string; id: string; which: 'start' | 'end'; label: string; lat?: number; lng?: number }
@@ -541,7 +576,7 @@ function reducer(state: Session, action: Action): Session {
       if (!state.mode) return { ...state, stage: 'mode' };
       return { ...state, stage: state.permissions.completed ? 'map' : 'survey' };
     case 'login': {
-      const cleaned = cleanProfile(action.profile);
+      const cleaned = cleanProfile({ ...action.profile, profileKey: action.profile.profileKey || state.profile?.profileKey });
       if (!cleaned) return state;
       const photo = cleaned.photo || cleanPhoto(state.profile?.photo);
       const profile = photo ? { ...cleaned, photo } : cleaned;
@@ -789,7 +824,7 @@ function reducer(state: Session, action: Action): Session {
         delete tracks[member.id];
         return {
           ...archived,
-          members: archived.members.map((item) => (item.id === member.id ? { ...item, share: 'revoked', lat: null, lng: null, updatedAt: place.at } : item)),
+          members: archived.members.map((item) => (item.id === member.id ? withPublisher({ ...item, share: 'revoked', lat: null, lng: null, updatedAt: place.at }, place) : item)),
           tracks,
         };
       }
@@ -797,16 +832,17 @@ function reducer(state: Session, action: Action): Session {
         const battery = typeof place.batteryPct === 'number' ? Math.round(place.batteryPct) : member.battery;
         const charging = place.charging === true ? true : place.charging === false ? false : member.charging;
         if (hasLocation(member)) {
-          if (member.share === 'allowed' && member.battery === battery && member.charging === charging) return state;
+          const nextName = memberIdOf(place) ? place.name.trim().slice(0, 80) : member.name;
+          if (member.share === 'allowed' && member.battery === battery && member.charging === charging && member.name === nextName && (member.publisherId || '') === (memberIdOf(place) || '')) return state;
           return {
             ...state,
-            members: state.members.map((item) => (item.id === member.id ? { ...item, share: 'allowed', battery, charging } : item)),
+            members: state.members.map((item) => (item.id === member.id ? withPublisher({ ...item, share: 'allowed', battery, charging }, place) : item)),
           };
         }
-        if (member.share === 'allowed') return state;
+        if (member.share === 'allowed' && (member.publisherId || '') === (memberIdOf(place) || '') && member.name === (memberIdOf(place) ? place.name.trim().slice(0, 80) : member.name)) return state;
         return {
           ...state,
-          members: state.members.map((item) => (item.id === member.id ? { ...item, share: 'allowed', lat: null, lng: null, battery, charging } : item)),
+          members: state.members.map((item) => (item.id === member.id ? withPublisher({ ...item, share: 'allowed', lat: null, lng: null, battery, charging }, place) : item)),
         };
       }
       if (isSeedLocation(place.lat, place.lng) && place.accuracyM === 18) return state;
@@ -814,7 +850,16 @@ function reducer(state: Session, action: Action): Session {
       const battery = typeof place.batteryPct === 'number' ? Math.round(place.batteryPct) : member.battery;
       const charging = place.charging === true ? true : place.charging === false ? false : member.charging;
       const sameSpot = hasLocation(member) && member.lat === place.lat && member.lng === place.lng;
-      if (sameSpot && member.updatedAt === place.at && member.battery === battery && member.charging === charging && member.share === 'allowed') return state;
+      const nextName = memberIdOf(place) ? place.name.trim().slice(0, 80) : member.name;
+      if (
+        sameSpot
+        && member.updatedAt === place.at
+        && member.battery === battery
+        && member.charging === charging
+        && member.share === 'allowed'
+        && member.name === nextName
+        && (member.publisherId || '') === (memberIdOf(place) || '')
+      ) return state;
       const now = Date.now();
       const keptTracks = tracksWithinHistory(state.tracks, now);
       const settled = settleTrailPoint(keptTracks[member.id], {
@@ -833,7 +878,7 @@ function reducer(state: Session, action: Action): Session {
         visits: visitsWithinHistory(state.visits, now),
         members: state.members.map((item) =>
           item.id === member.id
-            ? {
+            ? withPublisher({
                 ...item,
                 share: 'allowed',
                 lat,
@@ -842,7 +887,7 @@ function reducer(state: Session, action: Action): Session {
                 battery,
                 charging,
                 updatedAt: place.at,
-              }
+              }, place)
             : item,
         ),
         tracks,
@@ -853,39 +898,54 @@ function reducer(state: Session, action: Action): Session {
       const prefix = `family:${action.code}:`;
       const now = Date.now();
       const today = seoulDayKey(now);
+      const profiles = action.profiles ?? [];
       const incoming = action.places.filter((place) => place.audience === 'family' && place.sharing && place.lat != null && place.lng != null && Number.isFinite(place.lat) && Number.isFinite(place.lng));
       const current = state.members.filter((member) => member.id.startsWith(prefix));
-      const unchanged = current.length === incoming.length && incoming.every((place) => {
-        const member = current.find((item) => item.id === `family:${action.code}:${place.name}`);
-        const battery = typeof place.batteryPct === 'number' ? Math.round(place.batteryPct) : null;
-        const charging = place.charging === true ? true : place.charging === false ? false : null;
-        return !!member && member.updatedAt === place.at && member.lat === place.lat && member.lng === place.lng && member.battery === battery && member.charging === charging;
+      const described = incoming.map((place) => describeFamilyPlace(action.code, place, profiles, current));
+      const unchanged = current.length === described.length && described.every((item) => {
+        const member = current.find((entry) => entry.id === item.id || (item.memberId && entry.publisherId === item.memberId));
+        return !!member
+          && member.id === item.id
+          && member.updatedAt === item.place.at
+          && member.lat === item.place.lat
+          && member.lng === item.place.lng
+          && member.battery === item.battery
+          && member.charging === item.charging
+          && member.name === item.name
+          && (member.photo || '') === (item.photo || '');
       });
       if (unchanged) return state;
       let tracks = tracksWithinHistory(state.tracks, now);
-      const visits = visitsWithinHistory(state.visits, now);
+      let visits = visitsWithinHistory(state.visits, now);
+      let journeys = state.journeys ?? {};
       let members = state.members.filter((member) => !member.id.startsWith(prefix));
-      for (const place of incoming) {
+      for (const item of described) {
+        const place = item.place;
         if (place.lat == null || place.lng == null) continue;
-        const id = `family:${action.code}:${place.name}`;
-        const battery = typeof place.batteryPct === 'number' ? Math.round(place.batteryPct) : null;
-        const charging = place.charging === true ? true : place.charging === false ? false : null;
+        const previous = current.find((entry) => entry.id === item.id || (item.memberId !== '' && entry.publisherId === item.memberId) || entry.id === item.legacyId);
+        if (previous && previous.id !== item.id) {
+          tracks = moveKeyed(tracks, previous.id, item.id);
+          visits = moveKeyed(visits, previous.id, item.id);
+          journeys = moveKeyed(journeys, previous.id, item.id);
+        }
         members = [...members, {
-          id,
-          name: place.name,
+          id: item.id,
+          name: item.name,
           role: 'admin-share',
           lat: place.lat,
           lng: place.lng,
           accuracyM: Math.max(1, Math.round(place.accuracyM || 1)),
-          battery,
-          charging,
+          battery: item.battery,
+          charging: item.charging,
           updatedAt: place.at,
           moving: null,
           share: 'allowed',
+          ...(item.memberId ? { publisherId: item.memberId } : {}),
+          ...(item.photo ? { photo: item.photo } : {}),
         }];
         if (isWithinHistory(place.at, now)) {
-          const settled = settleTrailPoint(tracks[id], { lat: place.lat, lng: place.lng, at: place.at, accuracyM: place.accuracyM }, now);
-          tracks = { ...tracks, [id]: settled.points };
+          const settled = settleTrailPoint(tracks[item.id], { lat: place.lat, lng: place.lng, at: place.at, accuracyM: place.accuracyM }, now);
+          tracks = { ...tracks, [item.id]: settled.points };
           const pinned = members[members.length - 1];
           if (pinned && settled.decision !== 'keep' && settled.lat != null && settled.lng != null) {
             members[members.length - 1] = { ...pinned, lat: settled.lat, lng: settled.lng };
@@ -895,7 +955,28 @@ function reducer(state: Session, action: Action): Session {
       for (const member of current) {
         if (!members.some((item) => item.id === member.id)) delete tracks[member.id];
       }
-      return archiveJourneys({ ...state, members, tracks, visits, trailDay: today }, now);
+      return archiveJourneys({ ...state, members, tracks, visits, journeys, trailDay: today }, now);
+    }
+    case 'apply-shared-profiles': {
+      const profiles = action.profiles.filter((profile) => isMemberId(profile.memberId) && profile.memberId !== state.profile?.id);
+      if (profiles.length === 0) return state;
+      let members = state.members;
+      let changed = false;
+      for (const profile of profiles) {
+        const index = memberIndexForProfile(members, profile, action.code);
+        if (index < 0) continue;
+        const member = members[index];
+        const name = profile.name.trim().slice(0, 20);
+        if (!name) continue;
+        const sentPhoto = typeof profile.photo === 'string' ? cleanPhoto(profile.photo) : undefined;
+        const photo = typeof profile.photo === 'string' ? (sentPhoto || member.photo) : undefined;
+        if (member.name === name && (member.photo || '') === (photo || '') && member.publisherId === profile.memberId) continue;
+        changed = true;
+        members = members.map((item, itemIndex) => (itemIndex === index
+          ? { ...item, name, publisherId: profile.memberId, ...(photo ? { photo } : { photo: undefined }) }
+          : item));
+      }
+      return changed ? { ...state, members } : state;
     }
     case 'merge-visits': {
       const now = Date.now();
@@ -962,7 +1043,11 @@ function reducer(state: Session, action: Action): Session {
       if (!state.profile) return state;
       const next = localProfile(action.name, state.profile.id);
       if (!next) return state;
-      const profile = state.profile.photo ? { ...next, photo: state.profile.photo } : next;
+      const profile = {
+        ...next,
+        profileKey: state.profile.profileKey || deviceProfileKey(),
+        ...(state.profile.photo ? { photo: state.profile.photo } : {}),
+      };
       return {
         ...state,
         profile,
@@ -1040,7 +1125,8 @@ interface FamilyApi {
   setShareSelf: (share: boolean) => void;
   setKeepAlive: (on: boolean) => void;
   applySharedPlace: (place: SharedPlace) => void;
-  setRoomFamilyPlaces: (code: string, places: SharedPlace[]) => void;
+  applySharedProfiles: (code: string, profiles: SharedProfile[]) => void;
+  setRoomFamilyPlaces: (code: string, places: SharedPlace[], profiles?: SharedProfile[]) => void;
   mergeVisits: (memberId: string, stops: DayStop[]) => void;
   setVisitLabel: (memberId: string, id: string, label: string) => void;
   closeJourneys: (now: number) => void;
@@ -1114,7 +1200,8 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
     setShareSelf: (share) => dispatch({ type: 'set-share-self', share }),
     setKeepAlive: (on) => dispatch({ type: 'set-keep-alive', on }),
     applySharedPlace: (place) => dispatch({ type: 'apply-shared-place', place }),
-    setRoomFamilyPlaces: (code, places) => dispatch({ type: 'set-room-family-places', code, places }),
+    applySharedProfiles: (code, profiles) => dispatch({ type: 'apply-shared-profiles', code, profiles }),
+    setRoomFamilyPlaces: (code, places, profiles) => dispatch({ type: 'set-room-family-places', code, places, profiles: profiles ?? [] }),
     mergeVisits: (memberId, stops) => dispatch({ type: 'merge-visits', memberId, stops }),
     setVisitLabel: (memberId, id, label) => dispatch({ type: 'set-visit-label', memberId, id, label }),
     closeJourneys: (now) => dispatch({ type: 'close-journeys', now }),
