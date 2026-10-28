@@ -70,6 +70,7 @@ export function FamilyMapScreen() {
   const [profileOpen, setProfileOpen] = useState(false);
   const [recordId, setRecordId] = useState<string | null>(null);
   const [managedSettings, setManagedSettings] = useState(false);
+  const [adminSettings, setAdminSettings] = useState(false);
   const [chatTick, setChatTick] = useState(0);
   const placingRef = useRef(false);
   const scrubRef = useRef(0);
@@ -284,7 +285,7 @@ export function FamilyMapScreen() {
   };
 
   const managed = state.mode === 'managed';
-  const selected = (managed && recordId ? state.members.find((member) => member.id === recordId) : null)
+  const selected = (recordId ? state.members.find((member) => member.id === recordId) : null)
     ?? state.members.find((member) => member.id === selectedId)
     ?? state.members.find((member) => member.id === 'self');
   const liveDay = seoulDayKey(now);
@@ -327,7 +328,7 @@ export function FamilyMapScreen() {
   }, [shareKey, state.members, state.mode]);
   const historyDays = historyDayKeys(now);
   const activeHistoryDay = historyDays.includes(historyDay) ? historyDay : historyDays[0];
-  const viewingRecords = managed ? recordId != null && !placingHome : state.tab === 'history';
+  const viewingRecords = recordId != null && !placingHome;
   const pathDay = viewingRecords ? activeHistoryDay : liveDay;
   const memberPoints = selected ? state.tracks[selected.id] ?? [] : [];
   const dayPoints = useMemo(
@@ -353,23 +354,22 @@ export function FamilyMapScreen() {
     setPlaying(false);
   }, [pathDay, selected?.id]);
   useEffect(() => {
-    if (state.mode === 'managed' && state.tab !== 'map') familyRef.current.setTab('map');
-  }, [state.mode, state.tab]);
+    if (state.tab !== 'map') familyRef.current.setTab('map');
+  }, [state.tab]);
   useEffect(() => {
     if (!viewingRecords) {
       setDetailId(null);
       setPlaying(false);
       setDayPicker(false);
     }
-    if (!managed && state.tab !== 'map') setDm(null);
-  }, [managed, state.tab, viewingRecords]);
+  }, [viewingRecords]);
   const detailJourney = detailId && detailId !== 'open'
     ? dayJourneys.find((journey) => journey.id === detailId) ?? null
     : null;
   const detailOpen = viewingRecords && !!detailId && (detailId === 'open' ? !!openJourney : !!detailJourney);
   const detailPoints = detailId === 'open' ? liveLine : detailJourney?.points ?? [];
   const mapPoints = detailOpen ? detailPoints : liveLine;
-  const showPath = detailOpen || (!!selected && (managed || state.tab === 'map') && showTrail && (selected.id === 'self' || selected.share === 'allowed' || selected.role === 'admin-share'));
+  const showPath = detailOpen || (!!selected && showTrail && (selected.id === 'self' || selected.share === 'allowed' || selected.role === 'admin-share'));
   const dayVisits = useMemo(() => {
     const list = selected ? state.visits[selected.id] ?? [] : [];
     return list.filter((visit) => seoulDayKey(visit.arrivedAt) === pathDay);
@@ -444,24 +444,20 @@ export function FamilyMapScreen() {
       : { label: '우리 집', address: '', lat: start.lat, lng: start.lng, radiusM: 200, alertPhone: '' });
     setMenuOpen(false);
     setManagedSettings(false);
+    setAdminSettings(false);
     setRecordId(null);
     setPlacingHome(true);
     family.setTab('map');
     window.setTimeout(() => mapRef.current?.panTo(start.lat, start.lng), 60);
   };
   const openPerson = (member: Member) => {
-    if (managed) {
-      setSelectedId(member.id);
-      setRecordId(member.id);
-      setHistoryDay(seoulDayKey(Date.now()));
-      setDetailId(null);
-      setPlaying(false);
-      if (hasLocation(member)) mapRef.current?.panTo(member.lat, member.lng);
-      return;
-    }
-    const thread = directThreadFor(state, member);
-    if (hasLocation(member)) focusMember(member, true);
-    if (thread) setDm(thread);
+    setSelectedId(member.id);
+    setRecordId(member.id);
+    setHistoryDay(seoulDayKey(Date.now()));
+    setDetailId(null);
+    setPlaying(false);
+    setDm(null);
+    if (hasLocation(member)) mapRef.current?.panTo(member.lat, member.lng);
   };
   useEffect(() => consumeAndroidBack(() => {
     if (confirm) {
@@ -496,6 +492,10 @@ export function FamilyMapScreen() {
       setManagedSettings(false);
       return true;
     }
+    if (adminSettings) {
+      setAdminSettings(false);
+      return true;
+    }
     if (menuOpen) {
       setMenuOpen(false);
       return true;
@@ -515,7 +515,7 @@ export function FamilyMapScreen() {
       return true;
     }
     return false;
-  }), [alertsOpen, confirm, dayPicker, detailId, dm, keepPrompt, managedSettings, menuOpen, placingHome, profileOpen, recordId, sheet]);
+  }), [adminSettings, alertsOpen, confirm, dayPicker, detailId, dm, keepPrompt, managedSettings, menuOpen, placingHome, profileOpen, recordId, sheet]);
   const people = state.mode === 'managed'
     ? state.members.filter((member) => member.id === 'self' || member.role === 'admin-share')
     : state.members.filter((member) => member.role !== 'guardian' && member.role !== 'admin-share');
@@ -523,8 +523,7 @@ export function FamilyMapScreen() {
 
   return (
     <div className="flex h-full justify-center bg-[#d7e3ee]">
-      <div className="relative flex h-full w-full max-w-[430px] flex-col overflow-hidden bg-white">
-        {(managed || state.tab !== 'history' || detailOpen) && (
+      <div className="relative flex h-full w-full max-w-[430px] flex-col overflow-hidden bg-white pb-[env(safe-area-inset-bottom)]">
         <div className="relative min-h-0 flex-1">
           <StreetMap
             ref={mapRef}
@@ -539,8 +538,7 @@ export function FamilyMapScreen() {
             onSelect={(id) => {
               const member = state.members.find((item) => item.id === id);
               if (!member) return;
-              if (managed) openPerson(member);
-              else focusMember(member, true);
+              openPerson(member);
             }}
             onMove={(next) => {
               if (!placingRef.current) return;
@@ -552,9 +550,8 @@ export function FamilyMapScreen() {
             }}
           />
 
-          {(managed || state.tab === 'map') && !detailOpen && (
+          {!detailOpen && (
           <>
-          {managed && (
             <button
               type="button"
               aria-label="메뉴"
@@ -563,12 +560,11 @@ export function FamilyMapScreen() {
             >
               <Menu className="h-5 w-5 text-slate-800" />
             </button>
-          )}
           <button
             type="button"
             aria-label="알림"
             onClick={() => setAlertsOpen(true)}
-            className={`absolute top-3 z-30 flex h-11 w-11 items-center justify-center rounded-full bg-white shadow-md ${managed ? 'left-16' : 'left-3'}`}
+            className="absolute left-16 top-3 z-30 flex h-11 w-11 items-center justify-center rounded-full bg-white shadow-md"
           >
             <Bell className={`h-5 w-5 ${unreadAlerts ? 'text-[#0084FF]' : 'text-slate-700'}`} />
             {unreadAlerts && <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-[#ff8a34]" />}
@@ -671,9 +667,8 @@ export function FamilyMapScreen() {
             </>
           )}
         </div>
-        )}
 
-        {state.tab === 'map' && placingHome && draftHome && (
+        {placingHome && draftHome && (
           <HomePlaceBar
             draft={draftHome}
             saved={!!state.home}
@@ -685,7 +680,6 @@ export function FamilyMapScreen() {
             onCancel={() => {
               setDraftHome(null);
               setPlacingHome(false);
-              if (!managed) family.setTab('menu');
             }}
             onSave={() => {
               family.saveHome(draftHome);
@@ -697,12 +691,11 @@ export function FamilyMapScreen() {
               family.clearHome();
               setDraftHome(null);
               setPlacingHome(false);
-              if (!managed) family.setTab('menu');
             }}
           />
         )}
 
-        {managed && recordId && !placingHome && !detailOpen && (
+        {recordId && !placingHome && !detailOpen && (
           <section className="max-h-[48%] overflow-y-auto rounded-t-3xl bg-white px-4 pb-3 pt-3 shadow-[0_-8px_30px_rgba(15,23,42,0.08)]">
             <div className="mb-2 flex items-center justify-between gap-2">
               <h2 className="truncate text-lg font-black">{selected?.id === 'self' ? '내 기록' : `${selected?.name ?? ''} 기록`}</h2>
@@ -748,11 +741,11 @@ export function FamilyMapScreen() {
           </section>
         )}
 
-        {(managed || state.tab === 'map') && !placingHome && !(managed && recordId) && (
+        {!placingHome && !recordId && (
           <section className="rounded-t-3xl bg-white px-4 pb-2 pt-3 shadow-[0_-8px_30px_rgba(15,23,42,0.08)]">
             <div className="mb-1">
               <h2 className="text-lg font-black">우리 가족</h2>
-              <p className="text-[11px] font-semibold text-slate-400">{managed ? '사람을 누르면 그 사람의 기록을 봅니다' : '사람을 누르면 그 사람과만 대화합니다'}</p>
+              <p className="text-[11px] font-semibold text-slate-400">사람을 누르면 그 사람의 기록을 봅니다</p>
             </div>
             <div className="max-h-52 overflow-y-auto">
               {people.map((member) => {
@@ -765,7 +758,6 @@ export function FamilyMapScreen() {
                     home={state.mode === 'admin' ? state.home : null}
                     selected={member.id === selected?.id}
                     unread={chatTick >= 0 ? unread : 0}
-                    chatHint={!managed && member.id !== 'self'}
                     onSelect={() => openPerson(member)}
                     onPhoto={member.id === 'self' ? (photo) => family.setPhoto(photo) : undefined}
                     onRemove={state.mode === 'admin' && member.id !== 'self' ? () => setConfirm({ kind: 'remove', id: member.id, name: member.name }) : undefined}
@@ -792,49 +784,6 @@ export function FamilyMapScreen() {
           </section>
         )}
 
-        {!managed && state.tab === 'history' && !detailOpen && (
-          <section className="min-h-0 flex-1 overflow-y-auto bg-white px-4 pb-4 pt-4">
-            <h2 className="text-lg font-black">이동 기록</h2>
-            <button
-              type="button"
-              aria-haspopup="dialog"
-              aria-label={`날짜 ${historyDayLabel(activeHistoryDay, now)}`}
-              onClick={() => setDayPicker(true)}
-              className="mt-3 flex w-full items-center justify-between rounded-2xl bg-slate-100 px-4 py-3 text-left"
-            >
-              <span>
-                <span className="block text-[11px] font-semibold text-slate-400">날짜</span>
-                <span className="block text-sm font-black text-slate-900">{historyDayLabel(activeHistoryDay, now)}</span>
-              </span>
-              <span className="text-xs font-bold text-[#0084FF]">변경</span>
-            </button>
-            {visibleMembers.length > 1 && (
-              <div className="mt-2 flex gap-2 overflow-x-auto pb-1">
-                {visibleMembers.map((member) => (
-                  <button
-                    key={member.id}
-                    type="button"
-                    onClick={() => focusMember(member, false)}
-                    className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-bold ${member.id === selected?.id ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600'}`}
-                  >
-                    {member.name}
-                  </button>
-                ))}
-              </div>
-            )}
-            <div className="mt-3 space-y-3">
-              <JourneyCards
-                journeys={dayJourneys}
-                open={openJourney}
-                selectedId={detailId}
-                onSelect={(id) => openDetail(id, false)}
-                onPlay={(id) => openDetail(id, true)}
-              />
-              <TodayRecord visits={dayVisits} />
-            </div>
-          </section>
-        )}
-
         {detailOpen && (detailJourney || openJourney) && (
           <section className="bg-white px-4 pb-3 pt-3 shadow-[0_-8px_30px_rgba(15,23,42,0.08)]">
             <JourneyScrubber
@@ -851,145 +800,13 @@ export function FamilyMapScreen() {
           </section>
         )}
 
-        {!managed && state.tab === 'menu' && (
-          <section className="min-h-[52%] overflow-y-auto bg-white px-4 py-4 text-sm">
-            <h2 className="text-lg font-black">메뉴</h2>
-            <p className="mt-3 text-xs font-bold text-[#0084FF]">{state.mode === 'admin' ? '관리자 모드' : '피관리자 모드'}</p>
-            <div className="mt-3 flex items-center gap-3 rounded-2xl bg-slate-50 p-3">
-              <PhotoPicker name={state.profile?.name || '나'} photo={state.profile?.photo} onPhoto={(photo) => family.setPhoto(photo)} />
-              <div>
-                <p className="font-bold">{state.profile?.name}</p>
-                <p className="text-xs font-bold text-[#0084FF]">프로필 사진</p>
-                <p className="text-xs text-slate-400">사진을 누르면 이 기기에만 저장됩니다.</p>
-              </div>
-            </div>
-            <p className="mt-1 text-xs leading-5 text-slate-400">이 기기에만 저장된 이름입니다. 전화번호나 Google 계정으로 본인을 확인하지 않습니다.</p>
-            {state.mode === 'admin' && (
-              <div className="mt-3 rounded-2xl bg-slate-50 p-3">
-                <p className="text-xs font-bold text-slate-400">우리 집</p>
-                {state.home ? (
-                  <>
-                    <p className="mt-1 font-black">{state.home.label || '우리 집'}</p>
-                    <p className="text-xs leading-5 text-slate-500">
-                      반경 {state.home.radiusM}m{state.home.address ? ` · ${state.home.address}` : ''}. 이 원을 나가면 알림이 남습니다.
-                    </p>
-                    <button type="button" onClick={startHomePick} className="mt-3 w-full rounded-full bg-[#0084FF] py-3 text-sm font-black text-white">
-                      지도에서 다시 고르기
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    <p className="mt-1 text-sm leading-6 text-slate-600">아직 집이 없습니다. 지도에서 위치를 고르면, 가족이 그 반경을 나갈 때 알림이 남습니다.</p>
-                    <button type="button" onClick={startHomePick} className="mt-3 w-full rounded-full bg-[#0084FF] py-3 text-sm font-black text-white">
-                      지도에서 집 정하기
-                    </button>
-                  </>
-                )}
-              </div>
-            )}
-            {state.mode === 'admin' && (
-              <button
-                type="button"
-                onClick={() => family.setShareSelf(!state.shareSelfWithFamily)}
-                className={`mt-2 w-full rounded-2xl px-3 py-3 text-left text-xs font-bold ${state.shareSelfWithFamily ? 'bg-blue-50 text-[#0084FF]' : 'bg-slate-50 text-slate-600'}`}
-              >
-                {state.shareSelfWithFamily ? '내 위치를 가족에게 보여주는 중 · 끄기' : '내 위치를 피관리자에게 공유'}
-                {tracking.familyShareNote && <span className="mt-1 block font-semibold text-amber-700">{tracking.familyShareNote}</span>}
-              </button>
-            )}
-            <div className="mt-3">
-              <AlwaysAllowNotice
-                locationMode={state.permissions.locationMode}
-                keepAlive={state.backgroundKeepAlive}
-                native={tracking.native}
-                note={settingsNote}
-                onOpenSettings={() => {
-                  void askAlwaysLocation(state.permissions.accuracy === 'precise').then((result) => {
-                    setSettingsNote(result.note);
-                    if (result.location === 'always' || result.location === 'while-using' || result.location === 'denied') {
-                      family.finishPermissions({ ...state.permissions, locationMode: result.location, completed: true });
-                    }
-                  });
-                }}
-                onBattery={() => {
-                  void askBattery().then((result) => setSettingsNote(result.note));
-                }}
-                onStart={() => {
-                  void (async () => {
-                    const notifications = await askNotifications();
-                    if (notifications.note) setSettingsNote(notifications.note);
-                    if (tracking.native) {
-                      const battery = await askBattery();
-                      if (battery.note) setSettingsNote(battery.note);
-                    }
-                    family.setKeepAlive(true);
-                  })();
-                }}
-              />
-            </div>
-            {state.mode === 'managed' && state.guardians.map((link) => (
-              <div key={link.id} className="mt-2">
-                <GuardianCard
-                  link={link}
-                  remote={familySyncConfigured() && !!link.syncToken}
-                  onAllow={() => family.setGuardianShare(link.code, 'allowed')}
-                  onRevoke={() => family.setGuardianShare(link.code, 'revoked')}
-                  onLeave={() => setConfirm({ kind: 'leave', id: link.id, name: link.label })}
-                />
-              </div>
-            ))}
-            {state.mode === 'managed' && state.guardians.length === 0 && (
-              <p className="mt-3 rounded-2xl bg-slate-50 px-3 py-3 text-xs leading-5 text-slate-500">아직 수락한 초대가 없습니다. 관리자에게 받은 코드로 참여한 뒤, 위치를 따로 허용하세요.</p>
-            )}
-            <dl className="mt-4 space-y-2 rounded-2xl bg-slate-50 p-3 text-slate-600">
-              <Line k="알림" v={labelOf(state.permissions.notifications)} />
-              <Line k="위치 정확도" v={state.permissions.accuracy === 'precise' ? '정확한 위치' : '대략적인 위치'} />
-              <Line k="위치 허용" v={locationLabel(state.permissions.locationMode)} />
-              <Line k="움직임" v={labelOf(state.permissions.motion)} />
-              <Line k="배터리 안내" v={state.permissions.battery === 'acknowledged' ? '확인함' : state.permissions.battery === 'skipped' ? '나중에' : '해당 없음'} />
-            </dl>
-            <p className="mt-3 text-xs leading-5 text-slate-400">
-              가족 위치와 배터리는 초대 동기화 키로 위치 서버에 올라가고, 관리자 폰이 그 서버에서 받아 지도에 표시합니다. 예시 좌표나 하드코딩된 팝업이 아닙니다. 알림을 허용하면 앱을 닫아도 SOS가 푸시로 옵니다. 전화번호로는 위치를 찾지 않습니다.
-            </p>
-            <p className="mt-3 text-xs leading-5 text-slate-400">
-              항상 허용을 누르면 이 앱의 위치 권한 화면이 바로 열립니다. 배터리 제한 없음을 누르면 시스템 팝업이 바로 열립니다. Umap은 그 스위치를 대신 바꾸지 않습니다. 위치 유지는 사용자가 켠 뒤에만 백그라운드에서 보냅니다. 걷는 동안만 촘촘히 받고, 머물면 2분·5분으로 줄입니다. 알림 목록에 Umap 카드는 나오지 않습니다.
-            </p>
-            <div className="mt-4 space-y-2">
-              <button type="button" onClick={family.reopenMode} className="w-full rounded-full bg-slate-100 py-3 font-bold">
-                모드 다시 고르기
-              </button>
-              <button type="button" onClick={family.revisitPermissions} className="w-full rounded-full bg-slate-100 py-3 font-bold">
-                권한 안내 다시 보기
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  void umapLocation.stopAlertWatch();
-                  family.logout();
-                }}
-                className="w-full rounded-full py-3 font-bold text-slate-500"
-              >
-                로그아웃
-              </button>
-            </div>
-          </section>
-        )}
-
-        {!managed && (
-        <nav className="grid grid-cols-3 border-t border-slate-100 bg-white pb-[env(safe-area-inset-bottom)] text-[11px] font-bold text-slate-400">
-          <NavButton active={state.tab === 'map'} label="지도" onClick={() => family.setTab('map')} icon={<MapPin className="h-5 w-5" />} />
-          <NavButton active={state.tab === 'history'} label="기록" onClick={() => family.setTab('history')} icon={<Route className="h-5 w-5" />} />
-          <NavButton active={state.tab === 'menu'} label="메뉴" onClick={() => family.setTab('menu')} icon={<span className="text-lg leading-none">☰</span>} />
-        </nav>
-        )}
-
-        {dm && (managed || state.tab === 'map') && (
+        {dm && (
           <FamilyChatSheet
             target={dm}
             onClose={() => setDm(null)}
           />
         )}
-        {dayPicker && !detailOpen && (managed ? !!recordId : state.tab === 'history') && (
+        {dayPicker && !detailOpen && !!recordId && (
           <Sheet title="날짜" onClose={() => setDayPicker(false)}>
             <p className="mb-3 text-sm leading-6 text-slate-500">오늘부터 30일 전입니다. 서울 날짜로 고릅니다.</p>
             <div className="space-y-1">
@@ -1097,7 +914,7 @@ export function FamilyMapScreen() {
             }}
           />
         )}
-        {managed && menuOpen && (
+        {menuOpen && (managed ? (
           <ManagedMenu
             name={state.profile?.name || '나'}
             photo={state.profile?.photo}
@@ -1107,6 +924,7 @@ export function FamilyMapScreen() {
             onProfile={() => setProfileOpen(true)}
             onClose={() => {
               setProfileOpen(false);
+              setManagedSettings(false);
               setMenuOpen(false);
             }}
             onHome={startHomePick}
@@ -1121,8 +939,30 @@ export function FamilyMapScreen() {
             onSettings={() => setManagedSettings(true)}
             onToggleShare={(link) => family.setGuardianShare(link.code, link.share === 'allowed' ? 'revoked' : 'allowed')}
           />
-        )}
-        {managed && profileOpen && (
+        ) : (
+          <AdminMenu
+            name={state.profile?.name || '나'}
+            photo={state.profile?.photo}
+            home={state.home}
+            alertHint={unreadAlerts ? '새 알림이 있습니다' : '들어오고 나간 기록'}
+            shareSelf={state.shareSelfWithFamily}
+            shareNote={tracking.familyShareNote}
+            onProfile={() => setProfileOpen(true)}
+            onClose={() => {
+              setProfileOpen(false);
+              setAdminSettings(false);
+              setMenuOpen(false);
+            }}
+            onHome={startHomePick}
+            onAlerts={() => {
+              setMenuOpen(false);
+              setAlertsOpen(true);
+            }}
+            onSettings={() => setAdminSettings(true)}
+            onToggleShare={() => family.setShareSelf(!state.shareSelfWithFamily)}
+          />
+        ))}
+        {profileOpen && (
           <ProfileSettingsSheet
             name={state.profile?.name || '나'}
             photo={state.profile?.photo}
@@ -1193,6 +1033,83 @@ export function FamilyMapScreen() {
                 {link.label} 연결 끊기
               </button>
             ))}
+          </Sheet>
+        )}
+        {!managed && adminSettings && (
+          <Sheet title="설정" onClose={() => setAdminSettings(false)}>
+            <p className="text-sm leading-6 text-slate-500">관리자 모드입니다. 위치 유지를 켠 뒤에는 이 화면에서 끄지 않습니다.</p>
+            <button
+              type="button"
+              onClick={() => family.setShareSelf(!state.shareSelfWithFamily)}
+              className={`mt-4 w-full rounded-2xl px-3 py-3 text-left text-xs font-bold ${state.shareSelfWithFamily ? 'bg-blue-50 text-[#0084FF]' : 'bg-slate-50 text-slate-600'}`}
+            >
+              {state.shareSelfWithFamily ? '내 위치를 가족에게 보여주는 중 · 끄기' : '내 위치를 피관리자에게 공유'}
+              {tracking.familyShareNote && <span className="mt-1 block font-semibold text-amber-700">{tracking.familyShareNote}</span>}
+            </button>
+            <div className="mt-3">
+              <AlwaysAllowNotice
+                locationMode={state.permissions.locationMode}
+                keepAlive={state.backgroundKeepAlive}
+                native={tracking.native}
+                note={settingsNote}
+                onOpenSettings={() => {
+                  void askAlwaysLocation(state.permissions.accuracy === 'precise').then((result) => {
+                    setSettingsNote(result.note);
+                    if (result.location === 'always' || result.location === 'while-using' || result.location === 'denied') {
+                      family.finishPermissions({ ...state.permissions, locationMode: result.location, completed: true });
+                    }
+                  });
+                }}
+                onBattery={() => {
+                  void askBattery().then((result) => setSettingsNote(result.note));
+                }}
+                onStart={() => {
+                  void (async () => {
+                    const notifications = await askNotifications();
+                    if (notifications.note) setSettingsNote(notifications.note);
+                    if (tracking.native) {
+                      const battery = await askBattery();
+                      if (battery.note) setSettingsNote(battery.note);
+                    }
+                    family.setKeepAlive(true);
+                  })();
+                }}
+              />
+            </div>
+            {state.backgroundKeepAlive && state.permissions.locationMode === 'always' && (
+              <p className="text-xs font-semibold leading-5 text-slate-500">위치 유지가 켜져 있습니다. 끄는 버튼은 없습니다.</p>
+            )}
+            <dl className="mt-3 space-y-2 rounded-2xl bg-slate-50 p-3 text-sm text-slate-600">
+              <Line k="알림" v={labelOf(state.permissions.notifications)} />
+              <Line k="위치 정확도" v={state.permissions.accuracy === 'precise' ? '정확한 위치' : '대략적인 위치'} />
+              <Line k="위치 허용" v={locationLabel(state.permissions.locationMode)} />
+              <Line k="움직임" v={labelOf(state.permissions.motion)} />
+              <Line k="배터리 안내" v={state.permissions.battery === 'acknowledged' ? '확인함' : state.permissions.battery === 'skipped' ? '나중에' : '해당 없음'} />
+            </dl>
+            <p className="mt-3 text-xs leading-5 text-slate-400">
+              가족 위치와 배터리는 초대 동기화 키로 위치 서버에 올라가고, 관리자 폰이 그 서버에서 받아 지도에 표시합니다. 예시 좌표나 하드코딩된 팝업이 아닙니다. 알림을 허용하면 앱을 닫아도 SOS가 푸시로 옵니다. 전화번호로는 위치를 찾지 않습니다.
+            </p>
+            <p className="mt-3 text-xs leading-5 text-slate-400">
+              항상 허용을 누르면 이 앱의 위치 권한 화면이 바로 열립니다. 배터리 제한 없음을 누르면 시스템 팝업이 바로 열립니다. Umap은 그 스위치를 대신 바꾸지 않습니다. 위치 유지는 사용자가 켠 뒤에만 백그라운드에서 보냅니다. 걷는 동안만 촘촘히 받고, 머물면 2분·5분으로 줄입니다. 알림 목록에 Umap 카드는 나오지 않습니다.
+            </p>
+            <div className="mt-4 space-y-2">
+              <button type="button" onClick={family.reopenMode} className="w-full rounded-full bg-slate-100 py-3 text-sm font-bold">
+                모드 다시 고르기
+              </button>
+              <button type="button" onClick={family.revisitPermissions} className="w-full rounded-full bg-slate-100 py-3 text-sm font-bold">
+                권한 안내 다시 보기
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  void umapLocation.stopAlertWatch();
+                  family.logout();
+                }}
+                className="w-full rounded-full py-3 text-sm font-bold text-slate-500"
+              >
+                로그아웃
+              </button>
+            </div>
           </Sheet>
         )}
         {confirm && (
@@ -1369,6 +1286,77 @@ function ManagedMenu({
   );
 }
 
+function AdminMenu({
+  name,
+  photo,
+  home,
+  alertHint,
+  shareSelf,
+  shareNote,
+  onProfile,
+  onClose,
+  onHome,
+  onAlerts,
+  onSettings,
+  onToggleShare,
+}: {
+  name: string;
+  photo?: string;
+  home: HomeZone | null;
+  alertHint: string;
+  shareSelf: boolean;
+  shareNote: string | null;
+  onProfile: () => void;
+  onClose: () => void;
+  onHome: () => void;
+  onAlerts: () => void;
+  onSettings: () => void;
+  onToggleShare: () => void;
+}) {
+  return (
+    <div className="absolute inset-0 z-50 flex flex-col bg-[#f2f4f7]">
+      <header className="flex items-center bg-white px-1 py-2">
+        <button type="button" aria-label="닫기" onClick={onClose} className="flex h-11 w-11 items-center justify-center text-slate-800">
+          <X className="h-6 w-6" />
+        </button>
+        <h2 className="flex-1 text-center text-base font-bold">메뉴</h2>
+        <span className="h-11 w-11" />
+      </header>
+      <div className="flex-1 overflow-y-auto px-4 py-4">
+        <button type="button" onClick={onProfile} className="flex w-full items-center gap-3 rounded-2xl bg-white px-4 py-4 text-left shadow-sm">
+          <MemberAvatar name={name} photo={photo} />
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-base font-black">{name}</span>
+            <span className="block text-xs text-slate-400">프로필 설정</span>
+          </span>
+          <ChevronRight className="h-4 w-4 shrink-0 text-slate-300" />
+        </button>
+        <div className="mt-4 overflow-hidden rounded-2xl bg-white shadow-sm">
+          <MenuRow icon={<Home className="h-4 w-4" />} label="우리 집 설정" hint={home ? `${home.label || '우리 집'} · 반경 ${home.radiusM}m` : '지도에서 집 위치를 정합니다'} onClick={onHome} />
+          <MenuRow icon={<Bell className="h-4 w-4" />} label="알림" hint={alertHint} onClick={onAlerts} />
+        </div>
+        <div className="mt-4 overflow-hidden rounded-2xl bg-white shadow-sm">
+          <button type="button" onClick={onToggleShare} className="flex w-full items-center gap-3 px-4 py-3.5 text-left">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-700">
+              <MapPin className="h-4 w-4" />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-sm font-bold">내 위치 공유</span>
+              <span className="block truncate text-xs text-slate-400">{shareNote || (shareSelf ? '피관리자에게 보여주는 중' : '피관리자에게 보여 주지 않음')}</span>
+            </span>
+            <span className={`text-xs font-bold ${shareSelf ? 'text-[#0084FF]' : 'text-slate-400'}`}>
+              {shareSelf ? '공유 중' : '공유 안 함'}
+            </span>
+          </button>
+        </div>
+        <div className="mt-4 overflow-hidden rounded-2xl bg-white shadow-sm">
+          <MenuRow icon={<Settings className="h-4 w-4" />} label="설정" hint="위치 권한 · 모드" onClick={onSettings} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function myChatName(state: { mode: string | null; profile: { name?: string } | null; guardians: GuardianLink[] }, code: string): string {
   if (state.mode === 'managed') {
     const link = state.guardians.find((item) => item.code === code && item.share !== 'revoked');
@@ -1452,7 +1440,6 @@ function MemberCard({
   home,
   selected,
   unread = 0,
-  chatHint = false,
   onSelect,
   onPhoto,
   onRemove,
@@ -1461,7 +1448,6 @@ function MemberCard({
   home: HomeZone | null;
   selected: boolean;
   unread?: number;
-  chatHint?: boolean;
   onSelect: () => void;
   onPhoto?: (photo: string) => void;
   onRemove?: () => void;
@@ -1477,7 +1463,7 @@ function MemberCard({
       <button type="button" onClick={onSelect} className="min-w-0 flex-1 text-left">
         <span className="block truncate font-bold">{member.name}</span>
         <span className="block truncate text-xs text-slate-500">
-          {personArea(member, home)}{live ? ` · ${live}` : ''}{chatHint ? ' · 개인 대화' : ''}
+          {personArea(member, home)}{live ? ` · ${live}` : ''}
         </span>
       </button>
       {unread > 0 && <span className="shrink-0 rounded-full bg-[#ff8a34] px-2 py-0.5 text-[10px] font-black text-white">{unread}</span>}
@@ -1487,55 +1473,6 @@ function MemberCard({
           <X className="h-4 w-4" />
         </button>
       )}
-    </div>
-  );
-}
-
-function GuardianCard({
-  link,
-  remote,
-  onAllow,
-  onRevoke,
-  onLeave,
-}: {
-  link: GuardianLink;
-  remote: boolean;
-  onAllow: () => void;
-  onRevoke: () => void;
-  onLeave: () => void;
-}) {
-  const status = link.share === 'allowed'
-    ? remote
-      ? '이 폰의 내 위치를 다른 폰으로 보내는 중'
-      : link.syncToken
-        ? '이 폰의 내 위치를 보내는 중'
-        : '동기화 키 없음 · 이 브라우저에서만'
-    : link.share === 'revoked'
-      ? '위치 공유 꺼짐'
-      : '참여함 · 내 위치는 아직 안 보냄';
-  return (
-    <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-3 py-2">
-      <div className="flex items-center gap-3">
-        <span className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-200 text-xs font-black text-slate-600">공유</span>
-        <span className="min-w-0 flex-1">
-          <span className="block font-bold">{link.label}</span>
-          <span className="block text-xs text-slate-500">{status} · 코드 {link.code}</span>
-        </span>
-      </div>
-      <div className="mt-2 flex gap-2">
-        {link.share === 'allowed' ? (
-          <button type="button" onClick={onRevoke} className="flex-1 rounded-full bg-white py-2 text-[11px] font-bold text-slate-600">
-            공유 끄기
-          </button>
-        ) : (
-          <button type="button" onClick={onAllow} className="flex-1 rounded-full bg-[#0084FF] py-2 text-[11px] font-bold text-white">
-            위치 공유 허용
-          </button>
-        )}
-        <button type="button" onClick={onLeave} className="rounded-full bg-white px-3 py-2 text-[11px] font-bold text-slate-500">
-          연결 끊기
-        </button>
-      </div>
     </div>
   );
 }
@@ -1934,16 +1871,6 @@ function RoundButton({ children, onClick, label }: { children: React.ReactNode; 
   return (
     <button type="button" onClick={onClick} aria-label={label} className="flex h-11 w-11 items-center justify-center rounded-full bg-white shadow-md">
       {children}
-    </button>
-  );
-}
-
-function NavButton({ active, label, icon, onClick, badge }: { active: boolean; label: string; icon: React.ReactNode; onClick: () => void; badge?: boolean }) {
-  return (
-    <button type="button" onClick={onClick} className={`relative flex flex-col items-center gap-1 py-2 ${active ? 'text-[#0084FF]' : ''}`}>
-      {icon}
-      {label}
-      {badge && <span className="absolute right-[34%] top-1 h-2 w-2 rounded-full bg-[#ff8a34]" />}
     </button>
   );
 }
