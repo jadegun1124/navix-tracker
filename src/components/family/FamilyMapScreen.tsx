@@ -4,10 +4,11 @@ import { looksLikePhone, localProfile } from '../../lib/localProfile.mjs';
 import { buildInviteLink, formatClock, hasLocation, haversineMeters, shouldAlertLeave } from '../../lib/geo';
 import { ALWAYS_GUIDE_DISMISSED_KEY, CHAT_NOTIFY_ASKED_KEY, KEEP_PERMISSION_ASKED_KEY, KEEP_START_ASKED_KEY, keepEntryPrompt, markSessionFlag, readSessionFlag } from '../../lib/systemSettings.mjs';
 import { familyMapShowsTrail } from '../../lib/mapTrail.mjs';
-import { collapseDuplicateJourneys, displayCoordinate, historyDayKeys, historyDayLabel, liveMotionLabel, liveTrailPoints, previewOpenJourney, seoulDayEndMs, seoulDayKey, visibleTrail } from '../../lib/tracking.mjs';
+import { shouldDeleteCreatedRoom } from '../../lib/familyRoom.mjs';
+import { collapseDuplicateJourneys, displayCoordinate, historyDayKeys, historyDayLabel, liveMotionLabel, liveTrailPoints, MOTION_STILL_HOLD_MS, previewOpenJourney, seoulDayEndMs, seoulDayKey, visibleTrail } from '../../lib/tracking.mjs';
 import { ackFamilyAlert, isFamilyAlertAcked, publishFamilyAlert, readFamilyAlert, subscribeFamilyAlerts, type FamilyAlert } from '../../services/familyAlert';
 import { readSharedPlaces, subscribeSharedPlaces } from '../../services/familyShare';
-import { currentSyncPhase, familySyncConfigured, familySyncUrl, fetchMyDirectThreads, registerRoomPush, splitSyncToken, startAdminRemoteSync, startSyncMonitor, subscribeSyncPhase, syncTokenFor, type SyncPhase } from '../../services/familySync';
+import { abandonFamilySync, currentSyncPhase, deleteFamilyRoomRemote, familySyncConfigured, familySyncUrl, fetchMyDirectThreads, registerRoomPush, revokeFamilyPlace, splitSyncToken, startAdminRemoteSync, startSyncMonitor, subscribeSyncPhase, syncTokenFor, type SyncPhase } from '../../services/familySync';
 import { consumePendingChat, listenChatOpen, overlayPermissionGranted, umapLocation, umapLocationNative } from '../../services/umapLocation';
 import { sounds } from '../../utils/audio';
 import { DEFAULT_CENTER, type GuardianLink, type HomeZone, type Member, type TrackPoint } from '../../types/family';
@@ -41,8 +42,8 @@ export function FamilyMapScreen() {
   const [draftHome, setDraftHome] = useState<HomeZone | null>(null);
   const [placingHome, setPlacingHome] = useState(false);
   const mapRef = useRef<StreetMapHandle>(null);
-  const [sheet, setSheet] = useState<'invite' | 'accept' | 'today' | null>(state.pendingInvite ? 'accept' : null);
-  const [confirm, setConfirm] = useState<{ kind: 'remove' | 'leave'; id: string; name: string } | null>(null);
+  const [sheet, setSheet] = useState<'invite' | 'accept' | 'add' | 'today' | null>(state.pendingInvite ? 'accept' : null);
+  const [confirm, setConfirm] = useState<{ kind: 'remove' | 'leave' | 'delete-room'; id: string; name: string } | null>(null);
   const [incoming, setIncoming] = useState<FamilyAlert | null>(null);
   const [sirenOn, setSirenOn] = useState(false);
   const [selectedId, setSelectedId] = useState('self');
@@ -115,18 +116,25 @@ export function FamilyMapScreen() {
 
   useEffect(() => {
     if (state.permissions.motion !== 'granted') return;
-    let still = 0;
+    let stillSince = 0;
     let lastMoving: boolean | null = null;
     const onMotion = (event: DeviceMotionEvent) => {
       const acc = event.accelerationIncludingGravity;
       if (!acc || acc.x == null || acc.y == null || acc.z == null) return;
       const magnitude = Math.sqrt(acc.x ** 2 + acc.y ** 2 + acc.z ** 2);
       const active = Math.abs(magnitude - 9.8) > 3;
-      still = active ? 0 : still + 1;
-      const moving = active || still < 6;
-      if (lastMoving === moving) return;
-      lastMoving = moving;
-      familyRef.current.setMotion(moving);
+      const at = Date.now();
+      if (active) {
+        stillSince = 0;
+        if (lastMoving === true) return;
+        lastMoving = true;
+        familyRef.current.setMotion(true);
+        return;
+      }
+      if (lastMoving === true) lastMoving = null;
+      if (stillSince === 0) stillSince = at;
+      if (at - stillSince < MOTION_STILL_HOLD_MS) return;
+      familyRef.current.setMotion(false);
     };
     window.addEventListener('devicemotion', onMotion);
     return () => window.removeEventListener('devicemotion', onMotion);
@@ -387,6 +395,36 @@ export function FamilyMapScreen() {
         publishFamilyAlert({ kind: 'sos', code: state.inviteCode, from: name, body: `${name} 님이 SOS를 눌렀습니다.` }, token);
       });
     }
+  };
+
+  const eraseFamilyRoom = () => {
+    const current = familyRef.current.state;
+    const profile = current.profile;
+    const name = (profile?.name || '가족').trim().slice(0, 20) || '가족';
+    const memberId = profile?.profileKey ? profile.id : '';
+    const guardians = current.guardians.filter((link) => link.syncToken);
+    const room = { code: current.inviteCode, writeKey: current.syncWriteKey, readKey: current.syncReadKey };
+    void (async () => {
+      await abandonFamilySync();
+      for (const link of guardians) {
+        await revokeFamilyPlace({
+          code: link.code,
+          token: link.syncToken as string,
+          name,
+          memberId,
+          profileKey: profile?.profileKey,
+        });
+      }
+      await umapLocation.stop().catch(() => undefined);
+      await umapLocation.ackStopped().catch(() => undefined);
+      const removed = shouldDeleteCreatedRoom(null, 'delete')
+        ? await deleteFamilyRoomRemote(room.code, room.writeKey, room.readKey)
+        : 'off';
+      const serverNote = removed === 'failed'
+        ? '서버의 가족 방은 지우지 못했습니다. 이 폰에서는 나갔고, 그 방 동기화는 멈췄습니다.'
+        : null;
+      familyRef.current.clearFamilyRoom(serverNote);
+    })();
   };
 
   const managed = false;
@@ -788,11 +826,11 @@ export function FamilyMapScreen() {
           )}
           <button
             type="button"
-            onClick={() => setSheet('invite')}
-            className="absolute bottom-3 right-3 flex items-center gap-1 rounded-full bg-[#0084FF] px-3 py-2 text-xs font-bold text-white shadow-lg"
+            aria-label="가족 추가"
+            onClick={() => setSheet('add')}
+            className="absolute bottom-3 right-3 z-30 flex h-12 w-12 items-center justify-center rounded-full bg-[#0084FF] text-white shadow-lg"
           >
-            <UserPlus className="h-4 w-4" />
-            가족 초대
+            <Plus className="h-6 w-6" />
           </button>
           </>
           )}
@@ -997,6 +1035,27 @@ export function FamilyMapScreen() {
             )}
           </Sheet>
         )}
+        {sheet === 'add' && (
+          <Sheet title="가족" onClose={() => setSheet(null)}>
+            <p className="text-sm leading-6 text-slate-500">초대하거나, 받은 초대를 수락합니다. 수락만으로는 위치가 나가지 않습니다.</p>
+            <button
+              type="button"
+              onClick={() => setSheet('invite')}
+              className="mt-4 w-full rounded-2xl bg-slate-50 px-4 py-4 text-left"
+            >
+              <span className="block text-sm font-black text-slate-900">초대하기</span>
+              <span className="mt-1 block text-xs leading-5 text-slate-500">코드와 QR로 가족을 초대합니다</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setSheet('accept')}
+              className="mt-2 w-full rounded-2xl bg-slate-50 px-4 py-4 text-left"
+            >
+              <span className="block text-sm font-black text-slate-900">초대 수락</span>
+              <span className="mt-1 block text-xs leading-5 text-slate-500">받은 코드나 QR로 들어갑니다</span>
+            </button>
+          </Sheet>
+        )}
         {sheet === 'invite' && (
           <AdminInviteSheet
             code={state.inviteCode}
@@ -1086,6 +1145,11 @@ export function FamilyMapScreen() {
             onAcceptInvite={() => {
               setMenuOpen(false);
               setSheet('accept');
+            }}
+            onLeaveFamily={() => {
+              setMenuOpen(false);
+              setAdminSettings(false);
+              setConfirm({ kind: 'delete-room', id: 'room', name: '가족 방' });
             }}
             onToggleShare={() => family.setShareSelf(!state.shareSelfWithFamily)}
           />
@@ -1222,19 +1286,32 @@ export function FamilyMapScreen() {
               >
                 로그아웃
               </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setAdminSettings(false);
+                  setConfirm({ kind: 'delete-room', id: 'room', name: '가족 방' });
+                }}
+                className="w-full rounded-full py-3 text-sm font-bold text-red-600"
+              >
+                가족 방 지우기
+              </button>
             </div>
           </Sheet>
         )}
         {confirm && (
           <ConfirmSheet
-            title={confirm.kind === 'remove' ? '가족에서 지울까요?' : '연결을 끊을까요?'}
+            title={confirm.kind === 'remove' ? '가족에서 지울까요?' : confirm.kind === 'delete-room' ? '가족 방을 지울까요?' : '연결을 끊을까요?'}
             body={confirm.kind === 'remove'
-              ? `${confirm.name} 님을 이 기기의 목록과 지도에서 지웁니다. 상대 폰의 공유 허용은 그 폰에서 꺼야 합니다.`
-              : `${confirm.name} 님과의 초대와 위치 공유를 이 폰에서 지웁니다.`}
-            confirmLabel={confirm.kind === 'remove' ? '지우기' : '연결 끊기'}
+              ? `${confirm.name} 님을 이 기기의 목록과 지도에서 지웁니다. 같은 방이 다시 받아도 이 폰에는 돌아오지 않습니다. 상대 폰의 공유 허용은 그 폰에서 꺼야 합니다.`
+              : confirm.kind === 'delete-room'
+                ? '이 폰의 가족 목록, 초대, 위치 공유를 지우고 그 방 동기화를 멈춥니다. 내가 만든 가족 방은 서버에서도 지웁니다. 초대로 들어간 방은 이 폰에서만 나가고, 상대의 방은 그대로 둡니다.'
+                : `${confirm.name} 님과의 초대와 위치 공유를 이 폰에서 지웁니다.`}
+            confirmLabel={confirm.kind === 'remove' ? '지우기' : confirm.kind === 'delete-room' ? '가족 방 지우기' : '연결 끊기'}
             onClose={() => setConfirm(null)}
             onConfirm={() => {
               if (confirm.kind === 'remove') family.removeMember(confirm.id);
+              else if (confirm.kind === 'delete-room') eraseFamilyRoom();
               else family.leaveGuardian(confirm.id);
               setConfirm(null);
             }}
@@ -1438,6 +1515,7 @@ function AdminMenu({
   onSettings,
   onAlwaysGuide,
   onAcceptInvite,
+  onLeaveFamily,
   onToggleShare,
 }: {
   name: string;
@@ -1453,6 +1531,7 @@ function AdminMenu({
   onSettings: () => void;
   onAlwaysGuide: () => void;
   onAcceptInvite: () => void;
+  onLeaveFamily: () => void;
   onToggleShare: () => void;
 }) {
   return (
@@ -1495,6 +1574,7 @@ function AdminMenu({
         </div>
         <div className="mt-4 overflow-hidden rounded-2xl bg-white shadow-sm">
           <MenuRow icon={<Settings className="h-4 w-4" />} label="설정" hint="위치 권한 · 위치 공유" onClick={onSettings} />
+          <MenuRow icon={<X className="h-4 w-4" />} label="가족 방 지우기" hint="이 폰에서 나가고 동기화를 멈춥니다" onClick={onLeaveFamily} />
         </div>
       </div>
     </div>

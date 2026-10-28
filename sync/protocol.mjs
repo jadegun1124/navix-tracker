@@ -103,7 +103,7 @@ function json(data, status = 200) {
 export function withCors(response) {
   const headers = new Headers(response.headers);
   headers.set('access-control-allow-origin', '*');
-  headers.set('access-control-allow-methods', 'GET, PUT, POST, OPTIONS');
+  headers.set('access-control-allow-methods', 'GET, PUT, POST, DELETE, OPTIONS');
   headers.set('access-control-allow-headers', 'content-type, x-umap-sync-key, x-umap-read-key, x-umap-profile-key');
   headers.set('access-control-max-age', '86400');
   headers.set('cache-control', 'no-store');
@@ -655,6 +655,14 @@ export async function parseOperation(request) {
     return { kind: 'get', token: id, since: Number.isFinite(since) ? since : 0 };
   }
 
+  if (request.method === 'DELETE' && action === '') {
+    const readKey = request.headers.get('x-umap-read-key') || '';
+    if (!isKeyPart(readKey)) return json({ error: 'read-key' }, 403);
+    const actual = await sha256Base64Url(readKey);
+    if (!safeEqual(actual, token.readKeyHash)) return json({ error: 'read-key' }, 403);
+    return { kind: 'delete', token: id };
+  }
+
   if (request.method === 'PUT' && action === '/place') {
     const body = await readJson(request);
     if (body.error) return body.error;
@@ -775,6 +783,11 @@ export async function handleSyncRequest(store, request) {
     await store.write(op.token, removeSubscriptions(room, op.endpoints || []));
     return json({ ok: true });
   }
+  if (op.kind === 'delete') {
+    if (typeof store.delete === 'function') await store.delete(op.token);
+    else await store.write(op.token, emptyRoom());
+    return json({ ok: true });
+  }
   return json({ error: 'method' }, 405);
 }
 
@@ -786,6 +799,9 @@ export function createMemoryStore() {
     },
     async write(token, room) {
       rooms.set(token, room);
+    },
+    async delete(token) {
+      rooms.delete(token);
     },
   };
 }

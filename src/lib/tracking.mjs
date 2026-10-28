@@ -92,6 +92,14 @@ export const TRAIL_RIDE_MIN_STEP_M = 8;
 export const TRAIL_RIDE_STAY_STEP_M = 18;
 /** Family card keeps 「지금」 this long after the last ride vertex. Same 45s as the walk GPS hold. */
 export const RIDE_STATUS_FRESH_MS = 45_000;
+/**
+ * Do not flip the family card to 「머무름」 until this long after the last
+ * walk or ride step. Longer than the 45s ride-fresh window so a brief GPS
+ * gap or a noisy accelerometer does not oscillate the label during travel.
+ */
+export const STAY_LABEL_DWELL_MS = 90_000;
+/** Accelerometer must stay quiet this long before the phone is treated as still. Matches the native moving hold. */
+export const MOTION_STILL_HOLD_MS = 45_000;
 /** A vertex this far off the shortcut, on a thin triangle, is courtyard multipath. */
 const TRAIL_SPUR_DEVIATION_M = 16;
 const TRAIL_SPUR_MIN_LEG_M = 16;
@@ -334,24 +342,68 @@ export function fixShowsRide(points, point) {
   return isRideStep(drawnAnchor(Array.isArray(points) ? points : []), point);
 }
 
-/** The newest drawn segment is a fresh bike-or-faster step. */
-export function recentRide(points, now) {
-  if (!Array.isArray(points) || !Number.isFinite(now)) return false;
+function drawnPoints(points) {
   const drawn = [];
+  if (!Array.isArray(points)) return drawn;
   for (const point of points) {
     if (point && !point.stayEnd && Number.isFinite(point.lat) && Number.isFinite(point.at)) drawn.push(point);
   }
+  return drawn;
+}
+
+/** The newest drawn segment is a fresh bike-or-faster step. */
+export function recentRide(points, now) {
+  if (!Number.isFinite(now)) return false;
+  const drawn = drawnPoints(points);
   if (drawn.length < 2) return false;
   const end = drawn[drawn.length - 1];
   if (now - end.at > RIDE_STATUS_FRESH_MS || now < end.at) return false;
   return isRideStep(drawn[drawn.length - 2], end);
 }
 
-/** Family row: 「머무름」 only when the phone is still and the last fix is not a ride. */
+/**
+ * A step that is still travel: a ride at or above ~7 km/h, or a walk.
+ * Peer fixes often have no speed reading. 25m in 8s is about 3 m/s, so the
+ * walk band extends through a brisk step and a slow vehicle publish.
+ * Courtyard drift under 0.75 m/s is not travel.
+ */
+function travelStep(last, point) {
+  if (isRideStep(last, point)) return true;
+  const pace = stepPace(last, point);
+  if (!pace || pace.speed > FIX_MAX_JUMP_MPS) return false;
+  if (pace.moved < TRAIL_WALK_VERTEX_M || pace.dt < 800) return false;
+  if (pace.speed >= 0.75 && pace.speed <= 12) return true;
+  return speedShowsMoving(point) && pace.speed >= 0.75;
+}
+
+/** Timestamp of the newest walk or ride step. A later non-travel vertex does not move it. */
+export function lastTravelAt(points) {
+  const drawn = drawnPoints(points);
+  for (let index = drawn.length - 1; index >= 1; index -= 1) {
+    if (travelStep(drawn[index - 1], drawn[index])) return drawn[index].at;
+  }
+  const end = drawn[drawn.length - 1];
+  if (end && speedShowsMoving(end)) return end.at;
+  return null;
+}
+
+/**
+ * Family row. 「지금」 while a walk or a ride (≥ ~7 km/h) is still inside
+ * STAY_LABEL_DWELL_MS, and while the accelerometer has just gone active
+ * before the first travel vertex. 「머무름」 only after that dwell.
+ * moving === false does not flip the label during that window.
+ * Peers leave moving null; the same trail dwell decides their card.
+ */
 export function liveMotionLabel({ located, moving, points, now }) {
-  if (!located) return '';
-  if (moving !== false) return '지금';
-  if (recentRide(points, now)) return '지금';
+  if (!located || !Number.isFinite(now)) return '';
+  const movedAt = lastTravelAt(points);
+  if (movedAt != null && now >= movedAt && now - movedAt < STAY_LABEL_DWELL_MS) return '지금';
+  if (moving === true && movedAt == null) return '지금';
+  if (moving === false) return '머무름';
+  const drawn = drawnPoints(points);
+  const end = drawn[drawn.length - 1];
+  if (!end) return '지금';
+  if (now >= end.at && now - end.at < STAY_LABEL_DWELL_MS) return '지금';
   return '머무름';
 }
 
