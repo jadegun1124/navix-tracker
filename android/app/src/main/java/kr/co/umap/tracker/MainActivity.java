@@ -1,6 +1,9 @@
 package kr.co.umap.tracker;
 
 import android.content.Intent;
+import android.content.pm.PackageInfo;
+import android.content.pm.PackageManager;
+import android.os.Build;
 import android.os.Bundle;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebView;
@@ -76,6 +79,27 @@ public class MainActivity extends BridgeActivity {
         @JavascriptInterface
         public void exitApp() {
             activity.runOnUiThread(activity::finish);
+        }
+
+        @JavascriptInterface
+        public String appVersion() {
+            try {
+                PackageManager manager = activity.getPackageManager();
+                PackageInfo info = manager.getPackageInfo(activity.getPackageName(), 0);
+                String name = info.versionName == null ? "" : info.versionName.trim();
+                if (name.isEmpty()) return "";
+                long code = Build.VERSION.SDK_INT >= Build.VERSION_CODES.P
+                    ? info.getLongVersionCode()
+                    : legacyVersionCode(info);
+                return name + " " + code;
+            } catch (Exception ignored) {
+                return "";
+            }
+        }
+
+        @SuppressWarnings("deprecation")
+        private static int legacyVersionCode(PackageInfo info) {
+            return info.versionCode;
         }
     }
 }
