@@ -63,6 +63,17 @@ test('location keep does not post an ongoing shade card', () => {
   assert.match(manifest, /USE_EXACT_ALARM/);
 });
 
+test('gps is requested every 3s while moving and slows down while still', () => {
+  const location = readFileSync(new URL('../../android/app/src/main/java/kr/co/umap/tracker/LocationKeepService.java', import.meta.url), 'utf8');
+  assert.match(location, /GPS_MOVING_MS = 3_000L/);
+  assert.match(location, /GPS_STILL_MS = 30_000L/);
+  assert.match(location, /GPS_STILL_LONG_MS = 60_000L/);
+  assert.match(location, /GPS_STILL_LONGER_MS = 120_000L/);
+  assert.match(location, /GPS_PROVIDER, gpsMs, 0f/);
+  assert.equal(location.includes('5_000L, 0f'), false);
+  assert.equal(location.includes('isStayJitter'), false);
+});
+
 test('browser permission buttons stay inside the browser prompt', () => {
   assert.equal(notificationAction(false), 'web-notification');
   assert.equal(alwaysAllowAction(false), 'browser-geolocation');

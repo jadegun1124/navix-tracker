@@ -98,5 +98,6 @@ export function acceptFix(
 export function classifyMode(speedKmh: number, distanceM: number, durationMs: number): TravelMode;
 export function estimateSteps(distanceM: number): number;
 export function formatDurationMs(durationMs: number): string;
+export function formatFixAge(at: number, now?: number): string;
 export function formatDistanceM(meters: number): string;
 export function buildDayRecord(points: TrailSample[] | null | undefined, now: number): { stops: DayStop[]; segments: DaySegment[] };

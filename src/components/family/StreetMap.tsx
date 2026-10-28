@@ -165,14 +165,17 @@ export const StreetMap = forwardRef<StreetMapHandle, {
     if (trail.length >= 2) {
       const latlngs = trail.map((point) => [point.lat, point.lng] as [number, number]);
       const split = Math.max(1, latlngs.length - 3);
-      L.polyline(latlngs, { color: '#ffffff', weight: 9, opacity: 0.9 }).addTo(group);
+      const stroke = { smoothFactor: 0, lineCap: 'round' as const, lineJoin: 'round' as const };
+      L.polyline(latlngs, { ...stroke, color: '#ffffff', weight: 9, opacity: 0.9 }).addTo(group);
       L.polyline(latlngs.slice(0, split), {
+        ...stroke,
         color: trailColor,
         weight: 4,
         opacity: 0.95,
         dashArray: '6 8',
       }).addTo(group);
       L.polyline(latlngs.slice(split - 1), {
+        ...stroke,
         color: trailColor,
         weight: 6,
         opacity: 1,

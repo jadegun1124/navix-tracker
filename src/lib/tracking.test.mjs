@@ -19,6 +19,7 @@ import {
   settleTrailPoint,
   tracksWithinHistory,
   trailDecision,
+  formatFixAge,
   visibleTrail,
 } from './tracking.mjs';
 
@@ -78,7 +79,7 @@ test('a still fix with ±12m accuracy does not draw a multipath triangle', () =>
   const origin = { lat: 37.5, lng: 127, at: t, accuracyM: 12, speedMps: 0, staying: true };
   const spike = offset(origin, 32, 28, t + 15_000);
   const back = offset(origin, 6, -22, t + 30_000);
-  const drawn = visibleTrail([origin, spike, back, offset(origin, 70, 0, t + 45_000)]);
+  const drawn = visibleTrail([origin, spike, back]);
   assert.equal(drawn.length, 1);
   assert.equal(trailDecision(origin, offset(origin, 70, 0, t + 12_000)), 'snap');
   assert.equal(drawn[0].lat, origin.lat);
@@ -88,6 +89,9 @@ test('a still fix with ±12m accuracy does not draw a multipath triangle', () =>
   assert.equal(settled.lat, origin.lat);
   assert.equal(settled.lng, origin.lng);
   assert.equal(visibleTrail(settled.points).length, 1);
+  const walked = visibleTrail([origin, spike, back, offset(origin, 70, 0, t + 45_000)]);
+  assert.equal(walked.length, 2);
+  assert.ok((walked[1].lat - origin.lat) * 111_320 > 60);
 });
 
 test('a still phone ignores one fast leap and keeps a sustained walk', () => {
@@ -201,10 +205,11 @@ test('admin, managed, and remote trails drop courtyard spikes and keep a block c
   for (const point of driven) assert.ok(Math.abs(northOf(point)) < 12);
 });
 
-test('a move inside the accuracy radius is not a new vertex, and a poor fix is dropped', () => {
+test('a short step inside the walking gate is not a vertex, and a poor fix is dropped', () => {
   const t = 1_700_000_000_000;
   const origin = { lat: 37.5, lng: 127, at: t, accuracyM: 12, speedMps: 1.2, staying: false };
-  assert.equal(trailDecision(origin, { ...offset(origin, 15, 0, t + 10_000), speedMps: 1.2, staying: false }), 'snap');
+  assert.equal(trailDecision(origin, { ...offset(origin, 6, 0, t + 10_000), speedMps: 1.2, staying: false }), 'snap');
+  assert.equal(trailDecision(origin, { ...offset(origin, 15, 0, t + 10_000), speedMps: 1.2, staying: false }), 'keep');
   assert.equal(trailDecision(origin, { ...offset(origin, 70, 0, t + 10_000), accuracyM: 55, speedMps: 1.4, staying: false }), 'drop');
   const stayed = settleTrailPoint([origin], { ...origin, at: t + 4 * 60 * 1000 }, t + 4 * 60 * 1000);
   assert.equal(visibleTrail(stayed.points).length, 1);
@@ -242,6 +247,72 @@ test('a single teleport is rejected and a later real move is not', () => {
     { precise: true, now },
   );
   assert.equal(moved.ok, true);
+});
+
+test('a block walk keeps midpoints, stay jitter does not grow, a thin spur drops, and 1km moves the pin', () => {
+  const t = 1_700_000_000_000;
+  const origin = { lat: 37.6362, lng: 127.0675, at: t, accuracyM: 12, speedMps: 0, staying: true };
+  const eastOf = (point) => (point.lng - origin.lng) * (111_320 * Math.cos((origin.lat * Math.PI) / 180));
+  const northOf = (point) => (point.lat - origin.lat) * 111_320;
+  const step = (north, east, at, speed = 0, staying = true) => ({
+    ...offset(origin, north, east, at),
+    accuracyM: 12,
+    speedMps: speed,
+    staying,
+  });
+
+  let recorded = [step(0, 0, t)];
+  for (let index = 1; index <= 40; index += 1) {
+    const north = index <= 20 ? index * 4.2 : 20 * 4.2;
+    const east = index <= 20 ? 0 : (index - 20) * 4.2;
+    const point = step(north, east, t + index * 3_000);
+    recorded = settleTrailPoint(recorded, point, point.at).points;
+  }
+  const drawn = visibleTrail(recorded);
+  assert.ok(drawn.length >= 4, `walk midpoints kept, got ${drawn.length}`);
+  assert.ok(drawn.some((point) => northOf(point) > 60 && eastOf(point) < 20));
+  assert.ok(eastOf(drawn[drawn.length - 1]) > 60);
+  assert.ok(northOf(drawn[drawn.length - 1]) > 60);
+  assert.ok(drawn.length < recorded.length);
+
+  const paced = [];
+  for (let index = 0; index <= 6; index += 1) paced.push(step(index * 18, 0, t + index * 14_000, 1.3, false));
+  for (let index = 1; index <= 6; index += 1) paced.push(step(6 * 18, index * 18, t + (6 + index) * 14_000, 1.3, false));
+  const pacedDrawn = visibleTrail(paced);
+  assert.ok(pacedDrawn.length >= 4);
+  assert.ok(pacedDrawn.some((point) => northOf(point) > 70 && eastOf(point) < 25));
+
+  const jitter = [step(0, 0, t)];
+  for (let index = 1; index <= 10; index += 1) {
+    jitter.push(step(index % 2 === 0 ? 4 : -3, (index % 3) - 1, t + index * 5_000));
+  }
+  assert.equal(visibleTrail(jitter).length, 1);
+  let stayed = [jitter[0]];
+  for (const point of jitter.slice(1)) stayed = settleTrailPoint(stayed, point, point.at).points;
+  assert.equal(visibleTrail(stayed).length, 1);
+
+  const tip = step(48, 6, t + 12_000, 1.2, false);
+  const back = step(2, 4, t + 24_000, 1.2, false);
+  const onward = [origin, tip, back];
+  for (let index = 1; index <= 5; index += 1) onward.push(step(2, 4 + index * 20, t + 24_000 + index * 12_000, 1.3, false));
+  for (const point of visibleTrail(onward)) assert.ok(northOf(point) < 22, `spur remained at north ${northOf(point)}`);
+
+  const far = step(1000, 40, t + 20_000, 0, true);
+  const moved = settleTrailPoint([origin], far, far.at);
+  assert.equal(moved.decision, 'keep');
+  assert.equal(moved.lat, far.lat);
+  assert.equal(moved.lng, far.lng);
+  assert.ok(visibleTrail(moved.points).length >= 2);
+});
+
+test('fix age says when the pin last updated', () => {
+  const now = 1_800_000_000_000;
+  assert.equal(formatFixAge(now - 10_000, now), '방금 업데이트');
+  assert.equal(formatFixAge(now - 44_000, now), '방금 업데이트');
+  assert.equal(formatFixAge(now - 45_000, now), '1분 전 업데이트');
+  assert.equal(formatFixAge(now - 3 * 60_000, now), '3분 전 업데이트');
+  assert.equal(formatFixAge(now - 3 * 60_000 - 20_000, now), '3분 전 업데이트');
+  assert.equal(formatFixAge(now - 2 * 60 * 60_000, now), '2시간 전 업데이트');
 });
 
 test('mode thresholds and step estimate', () => {

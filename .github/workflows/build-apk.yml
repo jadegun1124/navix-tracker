@@ -90,34 +90,35 @@ jobs:
         run: |
           mkdir -p output
           find android/ -name "*.apk" -ls
-          find android/ -name "*.apk" -exec cp {} output/umap-v1.9.0-tracker.apk \;
+          find android/ -name "*.apk" -exec cp {} output/umap-v1.10.0-tracker.apk \;
           echo "Output directory contents:"
           ls -lh output/
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: umap-v1.9.0-tracker-apk
-          path: output/umap-v1.9.0-tracker.apk
+          name: umap-v1.10.0-tracker-apk
+          path: output/umap-v1.10.0-tracker.apk
           retention-days: 30
 
       - name: Create or Update GitHub Release with APK
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.9.0
-          name: 'Umap Android APK v1.9.0'
+          tag_name: v1.10.0
+          name: 'Umap Android APK v1.10.0'
           make_latest: true
           body: |
-            ### Umap 안드로이드 앱 1.9.0
+            ### Umap 안드로이드 앱 1.10.0
             - 회사 홈 (GitHub Pages): https://jadegun1124.github.io/umap/
             - 이 파일: GitHub Releases APK. Google Play에는 없습니다.
-            - 다운로드: https://github.com/jadegun1124/umap/releases/download/v1.9.0/umap-v1.9.0-tracker.apk
+            - 다운로드: https://github.com/jadegun1124/umap/releases/download/v1.10.0/umap-v1.10.0-tracker.apk
             - 표시 이름: Umap
             - 패키지: `kr.co.umap.tracker`
-            - versionName: 1.9.0
-            - versionCode: 10
-            - 실시간 핀과 가족에게 보내는 위치는 머무름 보정에 묶이지 않습니다. 체류 반경을 벗어난 GPS는 버스·지하철·속도 0 점프여도 핀이 따라갑니다. 아파트 안 짧은 지그재그는 경로 선에서만 걸러집니다.
-            - 이동 경로의 삼각형 스파이크를 줄입니다. 관리자와 피관리자 자신의 선, 다른 폰에서 이어 받은 선이 같은 필터를 탑니다. 머무름 중 흔들림은 그대로 잇지 않고, 골목 모서리는 남깁니다. 유료 도로 스냅은 쓰지 않습니다.
+            - versionName: 1.10.0
+            - versionCode: 11
+            - 걷는 경로는 중간 점을 남겨 골목을 따라 굽습니다. 머무름 중 작은 흔들림과 갔다가 바로 돌아오는 얇은 스파이크는 선에 잇지 않습니다. 실시간 핀은 체류 반경 밖이면 그 위치로 이동합니다. 유료 도로 스냅은 쓰지 않습니다.
+            - 위치 유지를 켠 동안 GPS는 이동 중 약 3초, 머무름이 이어지면 30초, 1분, 더 오래 멈추면 2분입니다. 다시 걸으면 3초로 돌아옵니다.
+            - 가족 카드에 마지막 위치를 「방금 업데이트」 또는 「3분 전 업데이트」로 보여 줍니다.
             - 위치 공유 중에도 알림 목록에 Umap 상시 카드가 나오지 않습니다. 1.6.0의 빈 포그라운드 서비스 알림을 뺐습니다.
             - 앱을 열면 예전 채널 `umap_location`, `umap_location_quiet`, `umap_alert_watch` 를 지웁니다.
             - 가족 위치와 배터리는 초대 동기화 키로 위치 서버에 올라가고, 관리자 지도가 그 서버에서 받아 표시합니다. 예시 좌표는 없습니다.
@@ -129,7 +130,7 @@ jobs:
             - 머무름 중 정확도 반경 안의 위치 흔들림은 이동 경로에 잇지 않습니다.
             - iOS 앱은 App Store / TestFlight에 없습니다.
             - 마이크, 문자, 주변 소리, 원격 경보음은 요청하지 않습니다.
-            - 이전 파일: https://github.com/jadegun1124/umap/releases/tag/v1.8.0
-          files: output/umap-v1.9.0-tracker.apk
+            - 이전 파일: https://github.com/jadegun1124/umap/releases/tag/v1.9.0
+          files: output/umap-v1.10.0-tracker.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
