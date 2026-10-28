@@ -36,6 +36,7 @@ export interface AlwaysLocationResult {
   location: 'always' | 'while-using' | 'denied' | 'unavailable';
   native: boolean;
   screen: AlwaysSettingsScreen;
+  overlay: boolean;
 }
 
 export interface BatteryOptimizationResult {
@@ -50,7 +51,10 @@ export interface NativeBattery {
 
 interface UmapLocationPlugin {
   openSettings(): Promise<{ opened: boolean }>;
-  openAlwaysLocation(): Promise<AlwaysLocationResult>;
+  openAlwaysLocation(options?: { overlay?: boolean }): Promise<AlwaysLocationResult>;
+  locationAccess(): Promise<{ location: 'always' | 'while-using' | 'denied' | 'unavailable' }>;
+  overlayPermission(): Promise<{ granted: boolean }>;
+  openOverlaySettings(): Promise<{ opened: boolean; granted: boolean }>;
   requestForeground(): Promise<{ location: 'while-using' | 'denied' | 'unavailable' }>;
   requestNotifications(): Promise<NativePromptResult>;
   requestCamera(): Promise<NativePromptResult>;
@@ -74,7 +78,16 @@ const web: UmapLocationPlugin = {
     return { opened: false };
   },
   async openAlwaysLocation() {
-    return { opened: false, location: 'unavailable', native: false, screen: 'none' };
+    return { opened: false, location: 'unavailable', native: false, screen: 'none', overlay: false };
+  },
+  async locationAccess() {
+    return { location: 'unavailable' };
+  },
+  async overlayPermission() {
+    return { granted: false };
+  },
+  async openOverlaySettings() {
+    return { opened: false, granted: false };
   },
   async requestForeground() {
     return { location: 'unavailable' };
@@ -141,10 +154,10 @@ export async function openAppSettings(): Promise<boolean> {
   }
 }
 
-export async function openAlwaysLocation(): Promise<AlwaysLocationResult> {
-  if (!umapLocationNative()) return { opened: false, location: 'unavailable', native: false, screen: 'none' };
+export async function openAlwaysLocation(options?: { overlay?: boolean }): Promise<AlwaysLocationResult> {
+  if (!umapLocationNative()) return { opened: false, location: 'unavailable', native: false, screen: 'none', overlay: false };
   try {
-    const result = await plugin.openAlwaysLocation();
+    const result = await plugin.openAlwaysLocation({ overlay: options?.overlay === true });
     const location = result.location === 'always' || result.location === 'while-using' || result.location === 'denied' ? result.location : 'unavailable';
     const opened = result.opened === true;
     const screen = opened && (result.screen === 'app-permissions' || result.screen === 'app-details' || result.screen === 'location-radio')
@@ -152,9 +165,39 @@ export async function openAlwaysLocation(): Promise<AlwaysLocationResult> {
       : opened
         ? 'location-radio'
         : 'none';
-    return { opened, location, native: true, screen };
+    return { opened, location, native: true, screen, overlay: result.overlay === true };
   } catch {
-    return { opened: false, location: 'unavailable', native: true, screen: 'none' };
+    return { opened: false, location: 'unavailable', native: true, screen: 'none', overlay: false };
+  }
+}
+
+export async function readLocationAccess(): Promise<'always' | 'while-using' | 'denied' | 'unavailable'> {
+  if (!umapLocationNative()) return 'unavailable';
+  try {
+    const result = await plugin.locationAccess();
+    return result.location === 'always' || result.location === 'while-using' || result.location === 'denied' ? result.location : 'unavailable';
+  } catch {
+    return 'unavailable';
+  }
+}
+
+export async function overlayPermissionGranted(): Promise<boolean> {
+  if (!umapLocationNative()) return false;
+  try {
+    const result = await plugin.overlayPermission();
+    return result.granted === true;
+  } catch {
+    return false;
+  }
+}
+
+export async function openOverlaySettings(): Promise<{ opened: boolean; granted: boolean }> {
+  if (!umapLocationNative()) return { opened: false, granted: false };
+  try {
+    const result = await plugin.openOverlaySettings();
+    return { opened: result.opened === true, granted: result.granted === true };
+  } catch {
+    return { opened: false, granted: false };
   }
 }
 

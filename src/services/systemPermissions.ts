@@ -55,29 +55,31 @@ export async function askWhileUsing(precise: boolean): Promise<{ location: 'whil
   return { location: 'unavailable', note: '이 브라우저에서 위치를 받지 못했습니다.' };
 }
 
-export async function askAlwaysLocation(precise: boolean): Promise<{ location: 'always' | 'while-using' | 'denied' | 'unavailable'; note: string | null }> {
+export async function askAlwaysLocation(precise: boolean, options?: { overlay?: boolean }): Promise<{ location: 'always' | 'while-using' | 'denied' | 'unavailable'; note: string | null; overlay: boolean }> {
   if (alwaysAllowAction(umapLocationNative()) === 'location-settings') {
-    const result = await openAlwaysLocation();
+    const result = await openAlwaysLocation({ overlay: options?.overlay === true });
     const location = result.location === 'always' || result.location === 'denied' || result.location === 'while-using' ? result.location : 'unavailable';
+    const overlay = result.overlay === true;
     if (!result.opened) {
-      if (location === 'always') return { location: 'always', note: '위치 권한이 항상 허용입니다.' };
-      return { location: 'unavailable', note: '설정 화면을 열지 못했습니다. 설정 > 앱 > Umap > 권한에서 위치를 누른 뒤 항상 허용을 고르세요.' };
+      if (location === 'always') return { location: 'always', note: '위치 권한이 항상 허용입니다.', overlay };
+      return { location: 'unavailable', note: '설정 화면을 열지 못했습니다. 설정 > 앱 > Umap > 권한에서 위치를 누른 뒤 항상 허용을 고르세요.', overlay };
     }
     if (result.screen === 'app-permissions') {
-      return { location, note: '앱 권한 목록을 열었습니다. 위치를 누른 뒤 항상 허용을 직접 고르세요.' };
+      return { location, note: '앱 권한 목록을 열었습니다. 위치를 누른 뒤 항상 허용을 직접 고르세요.', overlay };
     }
     if (result.screen === 'app-details') {
-      return { location, note: '앱 정보를 열었습니다. 권한에서 위치를 누른 뒤 항상 허용을 직접 고르세요.' };
+      return { location, note: '앱 정보를 열었습니다. 권한에서 위치를 누른 뒤 항상 허용을 직접 고르세요.', overlay };
     }
-    if (location === 'always') return { location: 'always', note: '위치 권한이 항상 허용입니다.' };
-    if (location === 'denied') return { location: 'denied', note: '설정에서 위치 접근을 항상 허용으로 바꿀 수 있습니다. 앱이 그 스위치를 대신 바꾸지는 않습니다.' };
-    return { location: 'while-using', note: '설정에서 위치를 항상 허용으로 고른 뒤 앱으로 돌아오면 됩니다. 앱이 그 스위치를 대신 바꾸지는 않습니다.' };
+    if (location === 'always') return { location: 'always', note: '위치 권한이 항상 허용입니다.', overlay };
+    if (location === 'denied') return { location: 'denied', note: '설정에서 위치 접근을 항상 허용으로 바꿀 수 있습니다. 앱이 그 스위치를 대신 바꾸지는 않습니다.', overlay };
+    return { location: 'while-using', note: '설정에서 위치를 항상 허용으로 고른 뒤 앱으로 돌아오면 됩니다. 앱이 그 스위치를 대신 바꾸지는 않습니다.', overlay };
   }
   const result = await browserLocation(precise);
   const location = result === 'denied' ? 'denied' : result === 'granted' ? 'while-using' : 'unavailable';
   return {
     location,
     note: '브라우저에는 항상 허용 설정이 없습니다. 위치 허용 창만 띄우며, 항상 허용은 안드로이드 앱의 위치 권한 화면에서 고릅니다.',
+    overlay: false,
   };
 }
 

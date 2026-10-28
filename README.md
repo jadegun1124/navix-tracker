@@ -10,12 +10,12 @@
 | :--- | :--- | :--- |
 | 회사 홈 | GitHub Pages | https://jadegun1124.github.io/umap/ |
 | 앱 화면 미리보기 | 같은 Pages의 `?app=1` | https://jadegun1124.github.io/umap/?app=1 |
-| 안드로이드 앱 | GitHub Releases APK v1.19.0 | https://github.com/jadegun1124/umap/releases/download/v1.19.0/umap-v1.19.0-tracker.apk |
-| 릴리스 페이지 | GitHub Releases | https://github.com/jadegun1124/umap/releases/tag/v1.19.0 |
+| 안드로이드 앱 | GitHub Releases APK v1.20.0 | https://github.com/jadegun1124/umap/releases/download/v1.20.0/umap-v1.20.0-tracker.apk |
+| 릴리스 페이지 | GitHub Releases | https://github.com/jadegun1124/umap/releases/tag/v1.20.0 |
 
 Google Play, App Store, TestFlight에는 올리지 않았습니다. iOS는 아이콘 에셋만 있고 설치 파일은 없습니다.
 
-`main`에 푸시하면 GitHub Actions가 회사 홈을 Pages에 배포하고, 같은 커밋으로 디버그 APK를 만들어 GitHub Release `v1.19.0`의 `umap-v1.19.0-tracker.apk`를 갱신합니다. 이전 빌드는 `v1.18.0`, `v1.17.0`, `v1.16.0`, `v1.15.0`, `v1.14.0`, `v1.13.0`, `v1.12.0`, `v1.11.0`, `v1.10.0`, `v1.9.0`, `v1.8.0`, `v1.7.0`, `v1.6.0`, `v1.5.0`, `v1.4.0`, `v1.3.0`, `v1.2.0`, `v1.1.0`, `v1.0.0`에 남아 있습니다.
+`main`에 푸시하면 GitHub Actions가 회사 홈을 Pages에 배포하고, 같은 커밋으로 디버그 APK를 만들어 GitHub Release `v1.20.0`의 `umap-v1.20.0-tracker.apk`를 갱신합니다. 이전 빌드는 `v1.19.0`, `v1.18.0`, `v1.17.0`, `v1.16.0`, `v1.15.0`, `v1.14.0`, `v1.13.0`, `v1.12.0`, `v1.11.0`, `v1.10.0`, `v1.9.0`, `v1.8.0`, `v1.7.0`, `v1.6.0`, `v1.5.0`, `v1.4.0`, `v1.3.0`, `v1.2.0`, `v1.1.0`, `v1.0.0`에 남아 있습니다.
 
 ## 화면
 
@@ -93,17 +93,27 @@ npm run dev
 
 ## 안드로이드 APK
 
-받는 곳: https://github.com/jadegun1124/umap/releases/download/v1.19.0/umap-v1.19.0-tracker.apk
+받는 곳: https://github.com/jadegun1124/umap/releases/download/v1.20.0/umap-v1.20.0-tracker.apk
 
-`main` 푸시마다 `Build Android APK (Umap)` 워크플로가 웹을 빌드하고 `dist` 를 안드로이드 에셋으로 복사한 뒤 `assembleDebug` 로 APK를 만듭니다. 결과 파일은 GitHub Release `v1.19.0`에 올립니다. 앱 `versionName`은 `1.19.0`, `versionCode`는 20입니다. Play 스토어 트랙은 없습니다.
+`main` 푸시마다 `Build Android APK (Umap)` 워크플로가 웹을 빌드하고 `dist` 를 안드로이드 에셋으로 복사한 뒤 `assembleDebug` 로 APK를 만듭니다. 결과 파일은 GitHub Release `v1.20.0`에 올립니다. 앱 `versionName`은 `1.20.0`, `versionCode`는 21입니다. Play 스토어 트랙은 없습니다.
 
 1.16.0까지 그 빌드는 러너마다 새로 만든 디버그 키로 서명했습니다. 패키지가 `kr.co.umap.tracker`여도 인증서가 다르면 안드로이드는 덮어쓰기를 거절해서, 지우고 다시 깔아야 했습니다. 1.17.0부터 debug와 release는 저장소의 `android/app/umap-sideload.keystore`(별칭 `umap-sideload`)로 서명합니다. 비밀번호는 `android/app/build.gradle`에 있습니다. 인증서 SHA-256은 `4A:15:08:0F:72:C3:87:D1:E8:50:A8:DE:5A:89:34:9A:B4:1A:48:0D:C5:97:71:AB:22:9C:85:44:C8:61:7A:6C`입니다. 이 키는 가족 폰에 직접 설치하는 사이드로드 전용이고, Play 앱 서명 키가 아닙니다.
 
 업데이트는 새 APK를 받아 기존 앱 위에 설치합니다. 지우지 않으면 이 폰의 데이터가 남습니다. 예전 디버그 키로 깔린 1.16.0 이하는 서명이 달라 한 번은 지운 뒤 1.17.0 이상을 설치해야 합니다. 그 다음 빌드부터는 지우지 않고 이어서 업데이트됩니다.
 
+## Google 로그인
+
+가족 지도의 이름은 계속 이 기기의 표시 이름입니다. Google은 같은 계정이 그 이름을 잇도록 확인하는 용도입니다. 버튼만 누르고 통과하지 않습니다. ID 토큰 서명이 Google 인증서와 맞고, 웹에서는 Google userinfo가 `sub`를 돌려줄 때만 로그인됩니다. 클라이언트 ID가 없으면 설정 순서를 한국어로 보여주고 시작하지 않습니다.
+
+1. Google Cloud에서 OAuth 웹 클라이언트를 만듭니다. 승인된 자바스크립트 원본은 `https://localhost`와 `http://localhost:5173`입니다.
+2. Android OAuth 클라이언트 패키지는 `kr.co.umap.tracker`입니다. SHA-1은 `android/app/umap-sideload.keystore`(별칭 `umap-sideload`)의 `00:57:37:35:22:70:B8:4C:7F:B6:01:61:29:BD:A9:A3:CD:09:35:0C`입니다. SHA-256은 위 사이드로드 인증서와 같습니다.
+3. 웹 클라이언트 ID를 `VITE_GOOGLE_WEB_CLIENT_ID`에 넣습니다. 이 값은 공개 클라이언트 ID이고 시크릿이 아닙니다. 저장소에 커밋하지 않습니다. Pages와 APK 빌드는 Actions secret `VITE_GOOGLE_WEB_CLIENT_ID`를 읽습니다.
+
+Google subject는 구성원 ID가 되지 않습니다. 같은 계정으로 다시 들어오면 이 기기에 저장한 `local-` ID와 표시 이름을 다시 씁니다.
+
 ## 데이터
 
-가족, 모드, 우리 집 반경, 권한, 위치 공유 허용은 이 탭의 `sessionStorage`와 모드별 `localStorage`(`umap_family_v1:admin`, `umap_family_v1:managed`)에 있습니다. 관리자 지도는 내 위치와, 위치 공유를 허용한 아이의 핀만 보여 줍니다. 피관리자 지도는 내 위치만 보여 주고, 관리자 카드는 공유 스위치일 뿐 위치 핀이 아닙니다.
+가족, 모드, 우리 집 반경, 권한, 위치 공유 허용은 이 탭의 `sessionStorage`와 모드별 `localStorage`(`umap_family_v1:admin`, `umap_family_v1:managed`)에 있습니다. 관리자만 가족을 초대하고 지웁니다. 피관리자는 초대를 수락하고 자기 위치 공유만 고릅니다. 이 기기에 이미 있는 구성원은 역할을 바꿔도 목록과 지도에 남고, 같은 방 키로 동기화가 이어집니다. 이 기기가 올린 위치는 「관리자」라는 다른 사람이 되지 않습니다.
 
 같은 브라우저에서 피관리자가 공유를 허용하면 그 좌표가 `umap_family_places_v1`로 관리자 탭의 아이 핀에 붙습니다. 다른 폰은 초대 링크의 동기화 키로 가족 위치 서버에 최신 위치와 배터리를 올리고, 관리자 폰이 그 서버에서 받아 지도와 목록에 표시합니다. 예시 좌표나 하드코딩된 팝업이 아닙니다. 서버가 없거나 끊기면 같은 브라우저 공유만 남고, 화면에 그 사실을 한국어로 알립니다. 집 이탈 사이렌은 관리자 화면에만, SOS 사이렌은 피관리자 폰과 관리자 화면에 울립니다. 서버가 연결되어 있으면 다른 폰의 관리자 화면에도 전달되고, 알림을 허용한 관리자는 앱이 꺼져 있어도 Web Push 또는 알림 대기로 SOS를 받습니다. 개인 대화도 받는 사람의 알림 목록에 보낸 이름과 짧은 내용으로 옵니다. 브라우저가 Push를 구독할 수 있으면 Web Push이고, 이 앱의 WebView처럼 Push가 없으면 알림 대기가 대화를 읽어 올립니다. 문자는 쓰지 않습니다. 전화번호로 위치를 찾지 않습니다.
 

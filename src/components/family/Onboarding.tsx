@@ -1,10 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Bell, BatteryCharging, ChevronLeft, Footprints, MapPin, Shield, UserRound, Users } from 'lucide-react';
 import { localProfile } from '../../lib/localProfile.mjs';
+import { signInWithGoogle } from '../../services/googleSignIn';
 import { KEEP_PERMISSION_ASKED_KEY, markSessionFlag } from '../../lib/systemSettings.mjs';
 import { askAlwaysLocation, askBattery, askMotion, askNotifications, askWhileUsing } from '../../services/systemPermissions';
-import { umapLocationNative } from '../../services/umapLocation';
+import { overlayPermissionGranted, umapLocationNative } from '../../services/umapLocation';
 import { AlwaysAllowGuide } from './AlwaysAllowGuide';
+import { AlwaysAllowSetup } from './AlwaysAllowSetup';
 import { REQUIRED_TERMS, type AppMode, type PermissionState, type Profile } from '../../types/family';
 import { useFamily } from './session';
 
@@ -128,6 +130,7 @@ function ModeChoice({
 function Login({ onSubmit }: { onSubmit: (profile: Profile) => void }) {
   const [name, setName] = useState('');
   const [message, setMessage] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   const trimmed = name.trim();
 
   return (
@@ -135,8 +138,28 @@ function Login({ onSubmit }: { onSubmit: (profile: Profile) => void }) {
       <img src={iconSrc} alt="" className="h-16 w-16 rounded-2xl shadow-md" />
       <h1 className="mt-6 text-[28px] font-black leading-tight">이 폰에서 쓸 이름</h1>
       <p className="mt-3 text-sm leading-6 text-slate-600">
-        가족 지도에 보이는 이름입니다. 이 기기에 저장되고, 초대로 연결되면 가족 폰에도 보입니다. 전화번호나 Google 계정은 쓰지 않습니다.
+        가족 지도에 보이는 이름입니다. Google로 로그인하면 같은 계정이 이 기기의 표시 이름을 이어서 씁니다. 전화번호는 쓰지 않습니다.
       </p>
+      <button
+        type="button"
+        disabled={busy}
+        onClick={() => {
+          setBusy(true);
+          setMessage(null);
+          void signInWithGoogle().then((result) => {
+            setBusy(false);
+            if (!result.ok || !result.profile) {
+              setMessage(result.message || 'Google 로그인을 마치지 못했습니다. 이 상태로 시작하지 않습니다.');
+              return;
+            }
+            onSubmit(result.profile);
+          });
+        }}
+        className="mt-6 w-full rounded-full border border-slate-200 bg-white py-3.5 text-sm font-bold text-slate-800 disabled:opacity-40"
+      >
+        {busy ? 'Google 확인 중' : 'Google로 계속'}
+      </button>
+      {message && <p className="mt-3 whitespace-pre-line text-sm leading-6 text-slate-600">{message}</p>}
       <form
         className="mt-8"
         onSubmit={(event) => {
@@ -164,13 +187,12 @@ function Login({ onSubmit }: { onSubmit: (profile: Profile) => void }) {
           autoComplete="nickname"
           className="mt-1 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 outline-none focus:border-[#0084FF]"
         />
-        {message && <p className="mt-3 text-sm leading-6 text-slate-600">{message}</p>}
         <button
           type="submit"
           disabled={trimmed.length < 1}
           className="mt-4 w-full rounded-full bg-[#0084FF] py-3.5 text-sm font-bold text-white disabled:opacity-40"
         >
-          시작
+          이름으로 시작
         </button>
       </form>
     </div>
@@ -245,7 +267,7 @@ const TERM_COPY: { id: string; title: string; required: boolean; body: string }[
     id: 'privacy',
     title: '개인정보 수집·이용 동의',
     required: true,
-    body: '이 기기에 저장한 표시 이름, 선택한 위치 권한, 가족 이름, 이동 경로를 이 기기에 둡니다. 전화번호는 받지 않고, Google 계정으로 로그인하지 않습니다.',
+    body: '이 기기에 저장한 표시 이름, 선택한 위치 권한, 가족 이름, 이동 경로를 이 기기에 둡니다. 전화번호는 받지 않습니다. Google로 로그인하면 계정 연결에만 쓰고, 가족 지도에는 표시 이름이 보입니다.',
   },
   {
     id: 'guardian',
@@ -263,7 +285,7 @@ const TERM_COPY: { id: string; title: string; required: boolean; body: string }[
     id: 'overseas',
     title: '개인정보 국외 이전 동의',
     required: false,
-    body: '계정 정보를 Google로 보내지 않습니다. 지도 타일은 국토교통부 VWorld에서 불러옵니다.',
+    body: 'Google로 로그인하면 계정 확인에 Google을 사용합니다. 지도 타일은 국토교통부 VWorld에서 불러옵니다.',
   },
 ];
 
@@ -347,6 +369,8 @@ function Permissions({
   const [busy, setBusy] = useState(false);
   const [askedAlways, setAskedAlways] = useState(false);
   const [alwaysGuide, setAlwaysGuide] = useState(false);
+  const [alwaysSetup, setAlwaysSetup] = useState(false);
+  const [guideThenMotion, setGuideThenMotion] = useState(false);
   const [note, setNote] = useState<string | null>(null);
 
   const finish = (next: PermissionState, wantsBackground = false) => {
@@ -465,19 +489,7 @@ function Permissions({
               label="항상 허용"
               onClick={() => {
                 setAskedAlways(true);
-                setBusy(true);
-                void askAlwaysLocation(draft.accuracy === 'precise').then((result) => {
-                  setBusy(false);
-                  if (result.location === 'unavailable') {
-                    setNote(result.note);
-                    return;
-                  }
-                  setNote(result.note);
-                  const locationMode = result.location === 'always' ? 'always' as const : result.location === 'while-using' ? 'while-using' as const : 'denied' as const;
-                  const next = { ...draft, locationMode };
-                  setDraft(next);
-                  setStep('motion');
-                });
+                setAlwaysSetup(true);
               }}
             />
             <TextButton
@@ -498,12 +510,41 @@ function Permissions({
         </div>
       )}
 
+      {alwaysSetup && (
+        <AlwaysAllowSetup
+          native={umapLocationNative()}
+          precise={draft.accuracy === 'precise'}
+          onClose={() => setAlwaysSetup(false)}
+          onDone={(result) => {
+            setAlwaysSetup(false);
+            setNote(result.note);
+            if (result.location === 'unavailable' && !result.fallback) return;
+            const locationMode = result.location === 'always' ? 'always' as const : result.location === 'while-using' ? 'while-using' as const : 'denied' as const;
+            if (result.location === 'always' || result.location === 'while-using' || result.location === 'denied') {
+              setDraft({ ...draft, locationMode });
+            }
+            if (result.fallback && result.location !== 'always') {
+              setGuideThenMotion(true);
+              setAlwaysGuide(true);
+              return;
+            }
+            setStep('motion');
+          }}
+        />
+      )}
+
       {alwaysGuide && (
         <AlwaysAllowGuide
           native={umapLocationNative()}
           busy={busy}
           note={note}
-          onClose={() => setAlwaysGuide(false)}
+          onClose={() => {
+            setAlwaysGuide(false);
+            if (guideThenMotion) {
+              setGuideThenMotion(false);
+              setStep('motion');
+            }
+          }}
           onBattery={() => {
             setBusy(true);
             void askBattery().then((result) => {
@@ -513,7 +554,10 @@ function Permissions({
           }}
           onOpenSettings={() => {
             setBusy(true);
-            void askAlwaysLocation(draft.accuracy === 'precise').then((result) => {
+            void (async () => {
+              const overlay = umapLocationNative() ? await overlayPermissionGranted() : false;
+              return askAlwaysLocation(draft.accuracy === 'precise', { overlay });
+            })().then((result) => {
               setBusy(false);
               setAlwaysGuide(false);
               if (result.location === 'unavailable') {

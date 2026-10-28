@@ -7,10 +7,13 @@ import { collapseDuplicateJourneys, displayCoordinate, historyDayKeys, historyDa
 import { ackFamilyAlert, isFamilyAlertAcked, publishFamilyAlert, readFamilyAlert, subscribeFamilyAlerts, type FamilyAlert } from '../../services/familyAlert';
 import { readSharedPlaces, subscribeSharedPlaces } from '../../services/familyShare';
 import { currentSyncPhase, familySyncConfigured, familySyncUrl, fetchMyDirectThreads, registerRoomPush, splitSyncToken, startAdminRemoteSync, startSyncMonitor, subscribeSyncPhase, syncTokenFor, type SyncPhase } from '../../services/familySync';
-import { consumePendingChat, listenChatOpen, umapLocation, umapLocationNative } from '../../services/umapLocation';
+import { consumePendingChat, listenChatOpen, overlayPermissionGranted, umapLocation, umapLocationNative } from '../../services/umapLocation';
 import { sounds } from '../../utils/audio';
 import { DEFAULT_CENTER, type GuardianLink, type HomeZone, type Member } from '../../types/family';
 import { AlwaysAllowGuide, AlwaysAllowMapHint } from './AlwaysAllowGuide';
+import { AlwaysAllowSetup } from './AlwaysAllowSetup';
+import { memberPlaceLabel } from '../../lib/memberPlace.mjs';
+import { TEST_ROLE_HINT, mapMembers, rosterMembers, testRoleLabel } from '../../lib/testRole.mjs';
 import { AlwaysAllowNotice } from './AlwaysAllowNotice';
 import { InviteQrImage, InviteQrScan } from './InviteQr';
 import { StreetMap, type StreetMapHandle } from './StreetMap';
@@ -69,6 +72,7 @@ export function FamilyMapScreen() {
   const [dm, setDm] = useState<DirectChatTarget | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [alwaysGuide, setAlwaysGuide] = useState(false);
+  const [alwaysSetup, setAlwaysSetup] = useState(false);
   const [guideBusy, setGuideBusy] = useState(false);
   const [guideHintHidden, setGuideHintHidden] = useState(() => readSessionFlag(ALWAYS_GUIDE_DISMISSED_KEY));
   const [profileOpen, setProfileOpen] = useState(false);
@@ -96,14 +100,15 @@ export function FamilyMapScreen() {
     familyRef.current.closeJourneys(now);
   }, [now]);
 
+  const watchFamilyRoom = state.mode === 'admin' || state.members.some((member) => member.role === 'child');
   useEffect(() => {
-    if (state.mode !== 'admin') return;
+    if (!watchFamilyRoom) return;
     const apply = (place: Parameters<typeof familyRef.current.applySharedPlace>[0]) => {
       familyRef.current.applySharedPlace(place);
     };
     for (const place of readSharedPlaces()) apply(place);
     return subscribeSharedPlaces(apply);
-  }, [state.mode]);
+  }, [watchFamilyRoom]);
 
   useEffect(() => {
     if (state.permissions.motion !== 'granted') return;
@@ -172,7 +177,7 @@ export function FamilyMapScreen() {
   }, [self, state.guardians, state.mode, state.profile?.name]);
 
   useEffect(() => {
-    if (state.mode !== 'admin') return;
+    if (!watchFamilyRoom) return;
     const seen = new Set<string>();
     const handle = (alert: FamilyAlert) => {
       if (alert.code !== state.inviteCode || seen.has(alert.id) || isFamilyAlertAcked(alert.id)) return;
@@ -211,7 +216,7 @@ export function FamilyMapScreen() {
       stopRemote();
       navigator.serviceWorker?.removeEventListener('message', onPush);
     };
-  }, [notifyOk, state.inviteCode, state.mode, state.syncReadKey, state.syncWriteKey]);
+  }, [notifyOk, state.inviteCode, watchFamilyRoom, state.syncReadKey, state.syncWriteKey]);
 
   const dmRoomKey = state.mode === 'admin'
     ? `admin:${state.inviteCode}:${state.syncWriteKey}`
@@ -383,12 +388,7 @@ export function FamilyMapScreen() {
     ?? state.members.find((member) => member.id === selectedId)
     ?? state.members.find((member) => member.id === 'self');
   const liveDay = seoulDayKey(now);
-  const visibleMembers = state.members.filter((member) => {
-    if (member.id === 'self') return true;
-    if (member.role === 'admin-share') return state.mode === 'managed' && hasLocation(member);
-    if (member.role === 'guardian') return false;
-    return state.mode === 'admin' && member.share === 'allowed' && hasLocation(member);
-  }).map((member) => {
+  const visibleMembers = mapMembers(state.members, state.profile?.id, state.inviteCode).map((member) => {
     if (!hasLocation(member)) return member;
     const todayPoints = liveTrailPoints(
       (state.tracks[member.id] ?? []).filter((point) => seoulDayKey(point.at) === liveDay),
@@ -553,20 +553,41 @@ export function FamilyMapScreen() {
     setDm(null);
     if (hasLocation(member)) mapRef.current?.panTo(member.lat, member.lng);
   };
+  const applyLocationResult = (result: { location: string; note: string | null }) => {
+    setSettingsNote(result.note);
+    if (result.location === 'always' || result.location === 'while-using' || result.location === 'denied') {
+      family.finishPermissions({ ...state.permissions, locationMode: result.location, completed: true });
+    }
+  };
   const openLocationSettings = () => {
+    setMenuOpen(false);
+    setAlwaysSetup(true);
+  };
+  const openGuideSettings = () => {
     setGuideBusy(true);
-    void askAlwaysLocation(state.permissions.accuracy === 'precise').then((result) => {
+    void (async () => {
+      const overlay = tracking.native ? await overlayPermissionGranted() : false;
+      return askAlwaysLocation(state.permissions.accuracy === 'precise', { overlay });
+    })().then((result) => {
       setGuideBusy(false);
-      setSettingsNote(result.note);
-      if (result.location === 'always' || result.location === 'while-using' || result.location === 'denied') {
-        family.finishPermissions({ ...state.permissions, locationMode: result.location, completed: true });
-      }
+      setAlwaysGuide(false);
+      applyLocationResult(result);
     });
+  };
+  const switchTestRole = () => {
+    family.testSwitchMode();
+    setProfileOpen(false);
+    setManagedSettings(false);
+    setAdminSettings(false);
   };
   const openBatterySettings = () => {
     void askBattery().then((result) => setSettingsNote(result.note));
   };
   useEffect(() => consumeAndroidBack(() => {
+    if (alwaysSetup) {
+      setAlwaysSetup(false);
+      return true;
+    }
     if (alwaysGuide) {
       setAlwaysGuide(false);
       return true;
@@ -626,10 +647,8 @@ export function FamilyMapScreen() {
       return true;
     }
     return false;
-  }), [adminSettings, alertsOpen, alwaysGuide, confirm, dayPicker, detailId, dm, keepPrompt, managedSettings, menuOpen, placingHome, profileOpen, recordId, sheet]);
-  const people = state.mode === 'managed'
-    ? state.members.filter((member) => member.id === 'self' || member.role === 'admin-share')
-    : state.members.filter((member) => member.role !== 'guardian' && member.role !== 'admin-share');
+  }), [adminSettings, alertsOpen, alwaysGuide, alwaysSetup, confirm, dayPicker, detailId, dm, keepPrompt, managedSettings, menuOpen, placingHome, profileOpen, recordId, sheet]);
+  const people = rosterMembers(state.members, state.profile?.id, state.inviteCode);
   const extraChats = guardianThreads(state).filter((thread) => chatTick >= 0 || thread.peer);
 
   return (
@@ -688,7 +707,7 @@ export function FamilyMapScreen() {
 
           {state.permissions.locationMode !== 'always' && !guideHintHidden && !placingHome && (
             <AlwaysAllowMapHint
-              onOpen={() => setAlwaysGuide(true)}
+              onOpen={() => setAlwaysSetup(true)}
               onDismiss={() => {
                 markSessionFlag(ALWAYS_GUIDE_DISMISSED_KEY);
                 setGuideHintHidden(true);
@@ -1057,7 +1076,9 @@ export function FamilyMapScreen() {
               setSheet('accept');
             }}
             onSettings={() => setManagedSettings(true)}
-            onAlwaysGuide={() => setAlwaysGuide(true)}
+            onAlwaysGuide={openLocationSettings}
+            onTestRole={switchTestRole}
+            testRole={testRoleLabel(state.mode)}
             onToggleShare={(link) => family.setGuardianShare(link.code, link.share === 'allowed' ? 'revoked' : 'allowed')}
           />
         ) : (
@@ -1080,7 +1101,9 @@ export function FamilyMapScreen() {
               setAlertsOpen(true);
             }}
             onSettings={() => setAdminSettings(true)}
-            onAlwaysGuide={() => setAlwaysGuide(true)}
+            onAlwaysGuide={openLocationSettings}
+            onTestRole={switchTestRole}
+            testRole={testRoleLabel(state.mode)}
             onToggleShare={() => family.setShareSelf(!state.shareSelfWithFamily)}
           />
         ))}
@@ -1171,7 +1194,7 @@ export function FamilyMapScreen() {
                 native={tracking.native}
                 note={settingsNote}
                 onOpenSettings={openLocationSettings}
-                onShowGuide={() => setAlwaysGuide(true)}
+                onShowGuide={openLocationSettings}
                 onBattery={openBatterySettings}
                 onStart={() => {
                   void (async () => {
@@ -1242,9 +1265,21 @@ export function FamilyMapScreen() {
             native={tracking.native}
             busy={guideBusy}
             note={settingsNote}
-            onOpenSettings={openLocationSettings}
+            onOpenSettings={openGuideSettings}
             onBattery={openBatterySettings}
             onClose={() => setAlwaysGuide(false)}
+          />
+        )}
+        {alwaysSetup && (
+          <AlwaysAllowSetup
+            precise={state.permissions.accuracy === 'precise'}
+            native={tracking.native}
+            onClose={() => setAlwaysSetup(false)}
+            onDone={(result) => {
+              setAlwaysSetup(false);
+              applyLocationResult(result);
+              if (result.fallback && result.location !== 'always') setAlwaysGuide(true);
+            }}
           />
         )}
       </div>
@@ -1338,6 +1373,8 @@ function ManagedMenu({
   onInvite,
   onSettings,
   onAlwaysGuide,
+  onTestRole,
+  testRole,
   onToggleShare,
 }: {
   name: string;
@@ -1352,6 +1389,8 @@ function ManagedMenu({
   onInvite: () => void;
   onSettings: () => void;
   onAlwaysGuide: () => void;
+  onTestRole: () => void;
+  testRole: string;
   onToggleShare: (link: GuardianLink) => void;
 }) {
   return (
@@ -1403,6 +1442,7 @@ function ManagedMenu({
         )}
         <div className="mt-4 overflow-hidden rounded-2xl bg-white shadow-sm">
           <MenuRow icon={<Settings className="h-4 w-4" />} label="설정" hint="위치 권한" onClick={onSettings} />
+          {testRole && <MenuRow icon={<UserPlus className="h-4 w-4" />} label={testRole} hint={TEST_ROLE_HINT} onClick={onTestRole} />}
         </div>
       </div>
     </div>
@@ -1422,6 +1462,8 @@ function AdminMenu({
   onAlerts,
   onSettings,
   onAlwaysGuide,
+  onTestRole,
+  testRole,
   onToggleShare,
 }: {
   name: string;
@@ -1436,6 +1478,8 @@ function AdminMenu({
   onAlerts: () => void;
   onSettings: () => void;
   onAlwaysGuide: () => void;
+  onTestRole: () => void;
+  testRole: string;
   onToggleShare: () => void;
 }) {
   return (
@@ -1477,6 +1521,7 @@ function AdminMenu({
         </div>
         <div className="mt-4 overflow-hidden rounded-2xl bg-white shadow-sm">
           <MenuRow icon={<Settings className="h-4 w-4" />} label="설정" hint="위치 권한 · 모드" onClick={onSettings} />
+          {testRole && <MenuRow icon={<UserPlus className="h-4 w-4" />} label={testRole} hint={TEST_ROLE_HINT} onClick={onTestRole} />}
         </div>
       </div>
     </div>
@@ -1576,10 +1621,13 @@ function guardianThreads(state: {
 }
 
 function personArea(member: Member, home: HomeZone | null) {
-  if (member.place) return member.place;
-  if (home && hasLocation(member) && haversineMeters(member, home) <= home.radiusM) return home.label || '우리 집';
-  if (!hasLocation(member)) return '위치 기다리는 중';
-  return '근처';
+  const atHome = !!(home && hasLocation(member) && haversineMeters(member, home) <= home.radiusM);
+  return memberPlaceLabel({
+    place: member.place,
+    located: hasLocation(member),
+    atHome,
+    homeLabel: home?.label,
+  });
 }
 
 function personLive(member: Member) {
@@ -1615,7 +1663,7 @@ function MemberCard({
       <button type="button" onClick={onSelect} className="min-w-0 flex-1 text-left">
         <span className="block truncate font-bold">{member.name}</span>
         <span className="block truncate text-xs text-slate-500">
-          {personArea(member, home)}{live ? ` · ${live}` : ''}
+          {[personArea(member, home), live].filter(Boolean).join(' · ')}
         </span>
       </button>
       {unread > 0 && <span className="shrink-0 rounded-full bg-[#ff8a34] px-2 py-0.5 text-[10px] font-black text-white">{unread}</span>}

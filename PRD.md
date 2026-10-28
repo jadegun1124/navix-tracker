@@ -8,7 +8,7 @@
 
 제품 표시 이름은 Umap. 저장소는 `jadegun1124/umap`.
 
-회사 홈은 GitHub Pages `https://jadegun1124.github.io/umap/`. 안드로이드 설치 파일은 GitHub Releases `https://github.com/jadegun1124/umap/releases/download/v1.19.0/umap-v1.19.0-tracker.apk`. Play 스토어와 App Store 배포는 없다.
+회사 홈은 GitHub Pages `https://jadegun1124.github.io/umap/`. 안드로이드 설치 파일은 GitHub Releases `https://github.com/jadegun1124/umap/releases/download/v1.20.0/umap-v1.20.0-tracker.apk`. Play 스토어와 App Store 배포는 없다.
 
 ## 웹
 
@@ -32,6 +32,8 @@
 
 ## 지도와 로그인
 
-표시 이름과 프로필 사진은 이 기기에서 정하고, 같은 초대로 연결된 가족 폰의 지도와 목록에 보인다. Google 계정은 쓰지 않는다.
+표시 이름과 프로필 사진은 이 기기에서 정하고, 같은 초대로 연결된 가족 폰의 지도와 목록에 보인다. Google 로그인은 확인된 계정이 이 기기의 표시 이름을 잇는 용도다. 웹 클라이언트 ID가 없으면 로그인으로 넘어가지 않는다. Google subject는 구성원 ID가 아니다.
+
+관리자와 피관리자는 그대로 다른 역할이다. 관리자만 가족을 초대하고 지운다. 피관리자는 초대를 수락하고 자신의 위치 공유만 고른다. 시험용 역할 전환은 같은 구성원 ID와 같은 방 키를 유지하고, 이 기기가 올린 위치를 「관리자」라는 다른 사람으로 만들지 않는다.
 
 가족 지도의 바탕은 국토교통부 VWorld 2D Base 한 장이다. 키는 `VITE_VWORLD_API_KEY`로만 넣는다. 로컬은 `.env`, Pages와 APK는 빌드 중에 Actions secret `VITE_VWORLD_API_KEY`(비어 있으면 `VWORLD_API_KEY`)를 Vite에 넘긴다. 키가 없으면 한국어로 키가 없다고만 알린다. 키가 있는데 타일이 실패하면 현재 주소를 인증키 도메인에 등록하라는 안내를 보여 주고, 타일이 오면 그 안내를 지운다. 다른 지도로 바꾸지 않는다. 등록할 주소는 `https://jadegun1124.github.io`, 앱 `https://localhost`, 로컬 `http://localhost:5173`이다. 이동 경로는 이 기기의 세션에만 저장하고, 선택한 구성원의 궤적을 지도에 선으로 그린다. 샘플 구성원과 예시 좌표는 없다.

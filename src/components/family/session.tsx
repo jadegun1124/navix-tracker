@@ -1,6 +1,8 @@
 import React, { createContext, useContext, useEffect, useReducer } from 'react';
 import { hasLocation, haversineMeters } from '../../lib/geo';
 import { deviceProfileKey, localProfile } from '../../lib/localProfile.mjs';
+import { carryPlace, cleanPlace } from '../../lib/memberPlace.mjs';
+import { applyRole, isSelfEchoPlace, testRoleFlip } from '../../lib/testRole.mjs';
 import { resolveManagedTarget } from '../../lib/managedPlace.mjs';
 import { familyPinId, isMemberId, moveKeyed } from '../../lib/sharedIdentity.mjs';
 import { HISTORY_DAYS, JOURNEY_POINT_CAP, TRAIL_POINT_CAP, isWithinHistory, journeysWithinHistory, labelJourneyPlace, mergeJourneyLists, seoulDayKey, settleTrailPoint, splitClosedJourneys, tracksWithinHistory, trimJourneyList, visitsWithinHistory, type JourneyRecord } from '../../lib/tracking.mjs';
@@ -524,6 +526,7 @@ type Action =
   | { type: 'splash-done' }
   | { type: 'login'; profile: Profile }
   | { type: 'choose-mode'; mode: AppMode }
+  | { type: 'test-switch-mode' }
   | { type: 'reopen-mode' }
   | { type: 'close-mode' }
   | { type: 'skip-survey' }
@@ -559,6 +562,7 @@ type Action =
   | { type: 'set-photo'; photo: string | null }
   | { type: 'set-display-name'; name: string }
   | { type: 'set-self-place'; place: string | null }
+  | { type: 'set-member-place'; id: string; place: string | null }
   | { type: 'close-journeys'; now: number }
   | { type: 'set-motion'; moving: boolean }
   | { type: 'notice'; notice: FamilyNotice }
@@ -593,7 +597,10 @@ function reducer(state: Session, action: Action): Session {
       });
     }
     case 'choose-mode':
+      if (state.mode && state.mode !== action.mode) return applyRole(state, action.mode);
       return { ...state, mode: action.mode, stage: state.permissions.completed ? 'map' : 'survey' };
+    case 'test-switch-mode':
+      return testRoleFlip(state);
     case 'reopen-mode':
       return { ...state, stage: 'mode' };
     case 'close-mode':
@@ -766,6 +773,9 @@ function reducer(state: Session, action: Action): Session {
         settled.points === state.tracks.self ? state.tracks : { ...state.tracks, self: settled.points },
         at,
       );
+      const nextLat = settled.lat ?? action.lat;
+      const nextLng = settled.lng ?? action.lng;
+      const keptPlace = carryPlace(self, nextLat, nextLng);
       return archiveJourneys({
         ...state,
         visits: visitsWithinHistory(state.visits, at),
@@ -773,10 +783,11 @@ function reducer(state: Session, action: Action): Session {
           member.id === 'self'
             ? {
                 ...member,
-                lat: settled.lat ?? action.lat,
-                lng: settled.lng ?? action.lng,
+                lat: nextLat,
+                lng: nextLng,
                 accuracyM: Math.max(1, Math.round(action.accuracyM)),
                 updatedAt: at,
+                ...(keptPlace ? { place: keptPlace } : { place: undefined }),
               }
             : member,
         ),
@@ -807,12 +818,11 @@ function reducer(state: Session, action: Action): Session {
       if (state.backgroundKeepAlive === action.on) return state;
       return { ...state, backgroundKeepAlive: action.on };
     case 'apply-shared-place': {
-      if (state.mode !== 'admin') return state;
       const place = action.place;
       if (place.audience === 'family') return state;
       const target = resolveManagedTarget(state.members, place);
       const liveFix = place.sharing && place.lat != null && place.lng != null && Number.isFinite(place.lat) && Number.isFinite(place.lng);
-      if (target.create && !liveFix) return state;
+      if (target.create && (state.mode !== 'admin' || !liveFix)) return state;
       const members = target.create ? [...state.members, target.create] : state.members;
       const member = members.find((item) => item.id === target.id);
       if (!member) return state;
@@ -873,6 +883,7 @@ function reducer(state: Session, action: Action): Session {
         : keptTracks;
       const lat = settled.decision === 'drop' && hasLocation(member) ? member.lat : (settled.lat ?? place.lat);
       const lng = settled.decision === 'drop' && hasLocation(member) ? member.lng : (settled.lng ?? place.lng);
+      const keptPlace = carryPlace(member, lat, lng);
       return archiveJourneys({
         ...state,
         visits: visitsWithinHistory(state.visits, now),
@@ -887,6 +898,7 @@ function reducer(state: Session, action: Action): Session {
                 battery,
                 charging,
                 updatedAt: place.at,
+                ...(keptPlace ? { place: keptPlace } : { place: undefined }),
               }, place)
             : item,
         ),
@@ -894,12 +906,13 @@ function reducer(state: Session, action: Action): Session {
       }, now);
     }
     case 'set-room-family-places': {
-      if (state.mode !== 'managed') return state;
+      const joinedRoom = state.guardians.some((link) => link.code === action.code);
+      if (state.mode !== 'managed' && !joinedRoom) return state;
       const prefix = `family:${action.code}:`;
       const now = Date.now();
       const today = seoulDayKey(now);
       const profiles = action.profiles ?? [];
-      const incoming = action.places.filter((place) => place.audience === 'family' && place.sharing && place.lat != null && place.lng != null && Number.isFinite(place.lat) && Number.isFinite(place.lng));
+      const incoming = action.places.filter((place) => place.audience === 'family' && place.sharing && place.lat != null && place.lng != null && Number.isFinite(place.lat) && Number.isFinite(place.lng) && !isSelfEchoPlace(place, state.profile?.id, state.inviteCode));
       const current = state.members.filter((member) => member.id.startsWith(prefix));
       const described = incoming.map((place) => describeFamilyPlace(action.code, place, profiles, current));
       const unchanged = current.length === described.length && described.every((item) => {
@@ -928,6 +941,7 @@ function reducer(state: Session, action: Action): Session {
           visits = moveKeyed(visits, previous.id, item.id);
           journeys = moveKeyed(journeys, previous.id, item.id);
         }
+        const keptPlace = previous ? carryPlace(previous, place.lat, place.lng) : '';
         members = [...members, {
           id: item.id,
           name: item.name,
@@ -942,6 +956,7 @@ function reducer(state: Session, action: Action): Session {
           share: 'allowed',
           ...(item.memberId ? { publisherId: item.memberId } : {}),
           ...(item.photo ? { photo: item.photo } : {}),
+          ...(keptPlace ? { place: keptPlace } : {}),
         }];
         if (isWithinHistory(place.at, now)) {
           const settled = settleTrailPoint(tracks[item.id], { lat: place.lat, lng: place.lng, at: place.at, accuracyM: place.accuracyM }, now);
@@ -1066,14 +1081,16 @@ function reducer(state: Session, action: Action): Session {
         )),
       };
     }
-    case 'set-self-place': {
-      const place = typeof action.place === 'string' ? action.place.trim().slice(0, 40) : '';
-      const self = state.members.find((member) => member.id === 'self');
-      if (!self || (self.place || '') === place) return state;
+    case 'set-self-place':
+      return reducer(state, { type: 'set-member-place', id: 'self', place: action.place });
+    case 'set-member-place': {
+      const place = cleanPlace(action.place);
+      const current = state.members.find((member) => member.id === action.id);
+      if (!current || cleanPlace(current.place) === place) return state;
       return {
         ...state,
         members: state.members.map((member) => (
-          member.id === 'self' ? { ...member, ...(place ? { place } : { place: undefined }) } : member
+          member.id === action.id ? { ...member, ...(place ? { place } : { place: undefined }) } : member
         )),
       };
     }
@@ -1098,6 +1115,7 @@ interface FamilyApi {
   splashDone: () => void;
   login: (profile: Profile) => void;
   chooseMode: (mode: AppMode) => void;
+  testSwitchMode: () => void;
   reopenMode: () => void;
   closeMode: () => void;
   skipSurvey: () => void;
@@ -1134,6 +1152,7 @@ interface FamilyApi {
   setPhoto: (photo: string | null) => void;
   setDisplayName: (name: string) => void;
   setSelfPlace: (place: string | null) => void;
+  setMemberPlace: (id: string, place: string | null) => void;
   setMotion: (moving: boolean) => void;
   pushNotice: (title: string, body: string) => void;
   logout: () => void;
@@ -1173,6 +1192,7 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
     splashDone: () => dispatch({ type: 'splash-done' }),
     login: (profile) => dispatch({ type: 'login', profile }),
     chooseMode: (mode) => dispatch({ type: 'choose-mode', mode }),
+    testSwitchMode: () => dispatch({ type: 'test-switch-mode' }),
     reopenMode: () => dispatch({ type: 'reopen-mode' }),
     closeMode: () => dispatch({ type: 'close-mode' }),
     skipSurvey: () => dispatch({ type: 'skip-survey' }),
@@ -1209,6 +1229,7 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
     setPhoto: (photo) => dispatch({ type: 'set-photo', photo }),
     setDisplayName: (name) => dispatch({ type: 'set-display-name', name }),
     setSelfPlace: (place) => dispatch({ type: 'set-self-place', place }),
+    setMemberPlace: (id, place) => dispatch({ type: 'set-member-place', id, place }),
     setMotion: (moving) => dispatch({ type: 'set-motion', moving }),
     pushNotice: (title, body) => dispatch({ type: 'notice', notice: notice(title, body) }),
     logout: () => dispatch({ type: 'logout' }),
