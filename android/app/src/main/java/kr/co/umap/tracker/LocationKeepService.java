@@ -41,12 +41,15 @@ import org.json.JSONObject;
  * Thresholds match src/lib/tracking.mjs: drop fixes older than 30s, precise
  * accuracy above 80m, later fixes worse than 40m, jumps faster than 350 m/s.
  * Coordinates are the real fix. The live pin's stay bubble is applied in JS.
- * While the phone is moving, GPS is requested about every 5s. A 1.2 m/s
- * walk moves about 6m in that interval. The JS walk gate is 4m, so the fix
- * stays a vertex, and display simplify (1.8m) does not pull the bend into
- * one chord. 3s sampled faster than the vertex spacing and cost more
- * battery. After a stay is clear, the request still stretches to 30s,
- * then 60s, then 2min.
+ * Keep-alive is not a continuous 2.5s GNSS stream. GPS is requested every
+ * 2.5s only after a walk or ride is clear (about 12m at walking pace, or a
+ * reported speed with real displacement). A short light does not drop that
+ * rate: the stream stays dense until the phone has barely moved for 45s.
+ * A confirmed stay is 2 minutes, then 5 minutes after 7 minutes still — the
+ * same moment a journey card is archived. The first request, and every fresh
+ * process, starts at 2 minutes. Family HTTP is separate: at most every 8s or
+ * 25m while moving, and every 2 minutes while still. The local trail still
+ * receives every accepted fix.
  */
 public class LocationKeepService {
     public static final String ACTION_FIX = "kr.co.umap.tracker.LOCATION_FIX";
@@ -66,18 +69,28 @@ public class LocationKeepService {
     private static Location stableFix;
     private static Location lastPublished;
     private static long lastPublishedAt;
-    /** Walking trail samples. LocationManager treats this as the fastest interval. */
-    private static final long GPS_MOVING_MS = 5_000L;
-    /** First stay interval, then longer while the phone is clearly still. */
-    private static final long GPS_STILL_MS = 30_000L;
-    private static final long GPS_STILL_LONG_MS = 60_000L;
-    private static final long GPS_STILL_LONGER_MS = 120_000L;
-    private static final long STILL_LONG_AFTER_MS = 3 * 60_000L;
-    private static final long STILL_LONGER_AFTER_MS = 15 * 60_000L;
-    /** Drop a second provider's burst. 5s GPS fixes are not inside this window. */
-    private static final long SAMPLE_GAP_MS = 4_000L;
-    private static long requestedGpsMs = GPS_MOVING_MS;
+    /** Dense trail samples. Only while a walk or ride is already clear. */
+    private static final long GPS_MOVING_MS = 2_500L;
+    /** Confirmed stay, and the interval keep-alive uses before a walk is clear. */
+    private static final long GPS_STILL_MS = 120_000L;
+    /** After 7 minutes still, matching JOURNEY_STAY_MS. */
+    private static final long GPS_STILL_LONG_MS = 300_000L;
+    private static final long STILL_LONG_AFTER_MS = 7 * 60_000L;
+    /** Hold 2.5s through a short light. A real stop is most of a minute. */
+    private static final long MOVING_HOLD_MS = 45_000L;
+    private static final float WALK_DISPLACE_M = 12f;
+    private static final long WALK_DISPLACE_MS = 4_000L;
+    /** Drop a second provider's burst. 2.5s GPS fixes sit outside this window. */
+    private static final long SAMPLE_GAP_MS = 1_200L;
+    /** Family server. Local emit() is not throttled by these. */
+    private static final long PUBLISH_MOVING_MS = 8_000L;
+    private static final long PUBLISH_STILL_MS = 120_000L;
+    private static final float PUBLISH_MOVING_M = 25f;
+    private static long requestedGpsMs = GPS_STILL_MS;
     private static long stillSinceMs = 0;
+    private static boolean movingStream = false;
+    private static boolean updatesRegistered = false;
+    private static String registeredConfig = "";
     private static long lastSampleAt = 0;
     private static Location motionAnchor;
     private static Location lastSample;
@@ -103,6 +116,13 @@ public class LocationKeepService {
     public static boolean start(Context context, String configJson) {
         attach(context);
         OngoingNotificationCleanup.clear(context);
+        String incoming;
+        try {
+            incoming = new JSONObject(configJson).toString();
+        } catch (Exception error) {
+            lastError = "config";
+            return false;
+        }
         if (!writeConfig(context, configJson)) {
             lastError = "config";
             return false;
@@ -121,8 +141,14 @@ public class LocationKeepService {
         lastError = null;
         prefs(context).edit().putBoolean("registered", true).commit();
         synchronized (LOCK) {
-            if (anySharing(config)) registerUpdates(context, config);
-            else removeUpdates(context);
+            if (!anySharing(config)) {
+                removeUpdates(context);
+            } else if (updatesRegistered && incoming.equals(registeredConfig)) {
+                // 화면이 다시 보여도 같은 위치 유지 설정이면 GNSS를 다시 열지 않는다.
+            } else {
+                registerUpdates(context, config);
+                registeredConfig = incoming;
+            }
         }
         if (!anySharing(config)) IO.execute(() -> publish(context, null));
         return true;
@@ -249,24 +275,31 @@ public class LocationKeepService {
         }
         boolean precise = config.optBoolean("precise", true);
         long gpsMs = requestedGpsMs < GPS_MOVING_MS ? GPS_MOVING_MS : requestedGpsMs;
+        boolean gpsOn = false;
         try {
             if (precise && locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
                 locationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, gpsMs, 0f, pending);
+                gpsOn = true;
             }
         } catch (Exception ignored) {
             /* GPS 하드웨어가 없거나 권한이 없는 경우 */
         }
-        long networkMs = gpsMs >= GPS_STILL_MS ? gpsMs : (precise ? 15_000L : 20_000L);
-        try {
-            if (locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
-                locationManager.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, networkMs, 0f, pending);
+        if (!gpsOn) {
+            long networkMs = Math.max(gpsMs, GPS_STILL_MS);
+            try {
+                if (locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
+                    locationManager.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, networkMs, 0f, pending);
+                }
+            } catch (Exception ignored) {
+                /* 네트워크 위치가 없는 기기 */
             }
-        } catch (Exception ignored) {
-            /* 네트워크 위치가 없는 기기 */
         }
+        updatesRegistered = true;
     }
 
     private static void removeUpdates(Context context) {
+        updatesRegistered = false;
+        registeredConfig = "";
         LocationManager locationManager = (LocationManager) context.getSystemService(Context.LOCATION_SERVICE);
         if (locationManager == null) return;
         try {
@@ -326,8 +359,9 @@ public class LocationKeepService {
         stableFix = null;
         lastPublished = null;
         lastPublishedAt = 0L;
-        requestedGpsMs = GPS_MOVING_MS;
+        requestedGpsMs = GPS_STILL_MS;
         stillSinceMs = 0L;
+        movingStream = false;
         lastSampleAt = 0L;
         motionAnchor = null;
         lastSample = null;
@@ -413,8 +447,9 @@ public class LocationKeepService {
         if (lastPublishedAt > 0) {
             long since = now - lastPublishedAt;
             float moved = lastPublished == null ? 9999f : lastPublished.distanceTo(location);
-            long publishGap = moving ? SAMPLE_GAP_MS : requestedGpsMs;
-            if (since + 1_000L < publishGap && moved < (moving ? 4f : 30f)) {
+            long publishGap = moving ? PUBLISH_MOVING_MS : PUBLISH_STILL_MS;
+            float publishMove = moving ? PUBLISH_MOVING_M : stayGate(lastPublished, location);
+            if (since + 1_000L < publishGap && moved < publishMove) {
                 rememberFilter(context);
                 return null;
             }
@@ -436,39 +471,49 @@ public class LocationKeepService {
         return Math.max(50f, Math.max(anchorAccuracy, nextAccuracy) * 2f);
     }
 
-    /** True while the phone should stay on the 5s GPS stream. */
+    /**
+     * True only while the 2.5s stream should stay on.
+     * Ambiguous fixes, a lone speed, and a 2s jump stay on the slow interval.
+     */
     private static boolean noteMovement(Location fix, long fixAt) {
         float speed = fix.hasSpeed() ? fix.getSpeed() : -1f;
-        float fromAnchor = motionAnchor == null ? 9999f : motionAnchor.distanceTo(fix);
-        if (speed >= 0.8f && (motionAnchor == null || speed >= 1.1f || fromAnchor >= 8f)) {
-            motionAnchor = new Location(fix);
-            motionAnchor.setTime(fixAt);
-            stillSinceMs = 0L;
-            return true;
-        }
         if (motionAnchor == null) {
             motionAnchor = new Location(fix);
             motionAnchor.setTime(fixAt);
-            stillSinceMs = 0L;
-            return true;
+            stillSinceMs = fixAt;
+            movingStream = false;
+            return false;
         }
         long anchorAt = motionAnchor.getTime() > 0 ? motionAnchor.getTime() : fixAt;
         long dt = fixAt - anchorAt;
         if (dt < 0) dt = 0;
         float moved = motionAnchor.distanceTo(fix);
-        if (moved >= 10f && dt >= 3_000L) {
-            float implied = moved / Math.max(0.001f, dt / 1000f);
-            if (implied >= 0.7f && implied <= 40f) {
+        float implied = dt > 0 ? moved / (dt / 1000f) : 0f;
+        boolean pacedWalk = dt >= WALK_DISPLACE_MS && dt <= 20_000L && moved >= WALK_DISPLACE_M && implied >= 0.75f && implied <= 12f;
+        boolean pacedTrip = dt > 20_000L && moved >= WALK_DISPLACE_M && implied >= 0.75f && implied <= 45f;
+        boolean reported = speed >= 0.8f && moved >= 8f && dt >= WALK_DISPLACE_MS && dt <= 20_000L;
+        if (pacedWalk || pacedTrip || reported) {
+            motionAnchor = new Location(fix);
+            motionAnchor.setTime(fixAt);
+            stillSinceMs = 0L;
+            movingStream = true;
+            return true;
+        }
+        if (!movingStream) {
+            if (stillSinceMs == 0L) stillSinceMs = anchorAt;
+            if (dt >= MOVING_HOLD_MS && moved < WALK_DISPLACE_M) {
                 motionAnchor = new Location(fix);
                 motionAnchor.setTime(fixAt);
-                stillSinceMs = 0L;
-                return true;
             }
+            return false;
         }
-        boolean littleDrift = moved < 12f && dt >= 20_000L;
-        boolean settled = moved <= stayGate(motionAnchor, fix) && dt >= 30_000L && (dt == 0 || moved / (dt / 1000f) < 0.7f);
+        boolean littleDrift = moved < WALK_DISPLACE_M && dt >= MOVING_HOLD_MS;
+        boolean settled = moved <= stayGate(motionAnchor, fix) && dt >= MOVING_HOLD_MS && (speed < 0f || speed < 0.7f);
         if (littleDrift || settled) {
             if (stillSinceMs == 0L) stillSinceMs = anchorAt;
+            movingStream = false;
+            motionAnchor = new Location(fix);
+            motionAnchor.setTime(fixAt);
             return false;
         }
         return true;
@@ -477,7 +522,6 @@ public class LocationKeepService {
     private static long gpsInterval(boolean moving, long now) {
         if (moving) return GPS_MOVING_MS;
         long stillFor = stillSinceMs > 0L ? Math.max(0L, now - stillSinceMs) : 0L;
-        if (stillFor >= STILL_LONGER_AFTER_MS) return GPS_STILL_LONGER_MS;
         if (stillFor >= STILL_LONG_AFTER_MS) return GPS_STILL_LONG_MS;
         return GPS_STILL_MS;
     }

@@ -7,6 +7,8 @@ import {
   classifyMode,
   estimateSteps,
   formatDurationMs,
+  formatJourneyDistance,
+  formatJourneyWhen,
   historyDayKeys,
   isWithinHistory,
   needsDailyWipe,
@@ -23,6 +25,12 @@ import {
   visibleTrail,
   trailDrawParts,
   trailSegmentDashed,
+  JOURNEY_STAY_MS,
+  splitClosedJourneys,
+  liveTrailPoints,
+  previewOpenJourney,
+  journeysWithinHistory,
+  labelJourneyPlace,
 } from './tracking.mjs';
 
 test('seoul day rolls at midnight KST, not UTC', () => {
@@ -210,8 +218,9 @@ test('admin, managed, and remote trails drop courtyard spikes and keep a block c
 test('a short step inside the walking gate is not a vertex, and a poor fix is dropped', () => {
   const t = 1_700_000_000_000;
   const origin = { lat: 37.5, lng: 127, at: t, accuracyM: 12, speedMps: 1.2, staying: false };
-  assert.equal(trailDecision(origin, { ...offset(origin, 3, 0, t + 5_000), speedMps: 1.2, staying: false }), 'snap');
-  assert.equal(trailDecision(origin, { ...offset(origin, 6, 0, t + 5_000), speedMps: 1.2, staying: false, accuracyM: 19 }), 'keep');
+  assert.equal(trailDecision(origin, { ...offset(origin, 1.6, 0, t + 2_500), speedMps: 1.2, staying: false }), 'snap');
+  assert.equal(trailDecision(origin, { ...offset(origin, 3, 0, t + 2_500), speedMps: 1.2, staying: false, accuracyM: 19 }), 'keep');
+  assert.equal(trailDecision(origin, { ...offset(origin, 3, 0, t + 2_500), speedMps: 0, staying: false, accuracyM: 12 }), 'keep');
   assert.equal(trailDecision(origin, { ...offset(origin, 15, 0, t + 10_000), speedMps: 1.2, staying: false }), 'keep');
   assert.equal(trailDecision(origin, { ...offset(origin, 70, 0, t + 10_000), accuracyM: 55, speedMps: 1.4, staying: false }), 'drop');
   const stayed = settleTrailPoint([origin], { ...origin, at: t + 4 * 60 * 1000 }, t + 4 * 60 * 1000);
@@ -422,4 +431,128 @@ test('stop-to-stop segment records walk time and estimated steps', () => {
   assert.equal(record.segments[0].durationMs, 20 * 60 * 1000);
   assert.ok(record.segments[0].steps > 2000);
   assert.equal(record.segments[0].open, false);
+});
+
+function staySamples(point, from, until, stepMs = 60_000) {
+  const points = [];
+  for (let at = from; at <= until; at += stepMs) {
+    points.push({ ...point, at, accuracyM: 12, speedMps: 0, staying: true });
+  }
+  return points;
+}
+
+test('a 2.5s walk keeps a curve and a 7 minute stay archives it', () => {
+  const t = Date.UTC(2026, 9, 27, 23, 34);
+  const origin = { lat: 37.55, lng: 127.07, at: t, accuracyM: 12, speedMps: 1.2, staying: false };
+  const radius = 28;
+  const steps = 16;
+  const curve = [];
+  for (let index = 0; index <= steps; index += 1) {
+    const theta = (Math.PI / 2) * (index / steps);
+    curve.push({
+      ...offset(origin, radius * Math.sin(theta), radius * (1 - Math.cos(theta)), t + index * 2_500),
+      accuracyM: 12,
+      speedMps: 1.2,
+      staying: false,
+    });
+  }
+  const drawn = visibleTrail(curve);
+  assert.ok(drawn.length >= 5, `dense bend vertices ${drawn.length}`);
+  const parts = trailDrawParts(curve);
+  assert.equal(parts.some((part) => part.dashed), false);
+  assert.ok(parts.some((part) => !part.dashed && part.points.length > drawn.length));
+
+  const depart = t;
+  const walk = [];
+  for (let index = 0; index <= 24; index += 1) {
+    walk.push({
+      ...offset(origin, index * 10, 0, depart + index * 12_000),
+      accuracyM: 12,
+      speedMps: 1.3,
+      staying: false,
+    });
+  }
+  const arrive = walk[walk.length - 1].at;
+  const early = [...walk, ...staySamples(walk[walk.length - 1], arrive, arrive + 4 * 60 * 1000, 60_000)];
+  const tooSoon = splitClosedJourneys(early, arrive + 4 * 60 * 1000);
+  assert.equal(tooSoon.journeys.length, 0);
+  assert.equal(liveTrailPoints(early, arrive + 4 * 60 * 1000).length, early.length);
+
+  const closed = [...walk, ...staySamples(walk[walk.length - 1], arrive, arrive + JOURNEY_STAY_MS, 60_000)];
+  const split = splitClosedJourneys(closed, arrive + JOURNEY_STAY_MS);
+  assert.equal(split.journeys.length, 1);
+  assert.ok(split.journeys[0].distanceM >= 200);
+  assert.ok(split.journeys[0].distanceM < 400);
+  assert.equal(split.journeys[0].endedAt, arrive);
+  assert.equal(formatJourneyWhen(split.journeys[0].startedAt, split.journeys[0].endedAt), '08:34–08:38');
+  assert.equal(formatJourneyDistance(13_600), '13.6km');
+  const live = liveTrailPoints(closed, arrive + JOURNEY_STAY_MS);
+  assert.ok(live.length < closed.length);
+  assert.ok(live.every((point) => Math.abs((point.lat - walk[walk.length - 1].lat) * 111_320) < 30));
+  assert.equal(previewOpenJourney(live, arrive + JOURNEY_STAY_MS), null);
+
+  const again = splitClosedJourneys([...closed, ...staySamples(walk[walk.length - 1], arrive + 60_000, arrive + JOURNEY_STAY_MS, 60_000)], arrive + JOURNEY_STAY_MS + 30_000);
+  assert.equal(again.journeys.length, 1);
+  assert.equal(again.journeys[0].id, split.journeys[0].id);
+
+  const stale = staySamples(origin, t, t + 3 * 60 * 1000, 3 * 60 * 1000);
+  assert.equal(splitClosedJourneys(stale, t + JOURNEY_STAY_MS).journeys.length, 0);
+
+  const fresh = staySamples(origin, t, t + 6 * 60 * 1000, 3 * 60 * 1000);
+  const wall = splitClosedJourneys([...walk, ...fresh.map((point) => ({ ...point, at: point.at - t + arrive }))], arrive + JOURNEY_STAY_MS);
+  assert.equal(wall.journeys.length, 1);
+});
+
+test('a short hop after a stay does not become a journey card', () => {
+  const t = Date.UTC(2026, 9, 27, 23, 0);
+  const origin = { lat: 37.5, lng: 127, at: t, accuracyM: 10, speedMps: 0, staying: true };
+  const home = staySamples(origin, t, t + 8 * 60 * 1000, 60_000);
+  const hop = offset(origin, 70, 0, t + 10 * 60 * 1000);
+  const away = { ...hop, accuracyM: 10, speedMps: 1.2, staying: false };
+  const backStay = staySamples(away, away.at, away.at + JOURNEY_STAY_MS, 60_000);
+  const split = splitClosedJourneys([...home, away, ...backStay], backStay[backStay.length - 1].at);
+  assert.equal(split.journeys.length, 0);
+  assert.ok(split.remaining.every((point) => Math.abs((point.lat - away.lat) * 111_320) < 20));
+  const labeled = labelJourneyPlace({ lat: origin.lat, lng: origin.lng, label: null }, [{ lat: origin.lat, lng: origin.lng, label: '우리 집', radiusM: 80 }]);
+  assert.equal(labeled.label, '우리 집');
+});
+
+test('a new walk after archive stays on the live line and old journeys expire', () => {
+  const t = Date.UTC(2026, 9, 27, 23, 10);
+  const origin = { lat: 37.5, lng: 127, at: t, accuracyM: 10 };
+  const walk = [];
+  for (let index = 0; index <= 20; index += 1) {
+    walk.push({ ...offset(origin, 0, index * 12, t + index * 15_000), accuracyM: 10, speedMps: 1.4, staying: false });
+  }
+  const arrive = walk[walk.length - 1].at;
+  const parked = staySamples(walk[walk.length - 1], arrive, arrive + JOURNEY_STAY_MS, 60_000);
+  const next = [];
+  for (let index = 1; index <= 12; index += 1) {
+    next.push({
+      ...offset(walk[walk.length - 1], 0, index * 15, parked[parked.length - 1].at + index * 12_000),
+      accuracyM: 10,
+      speedMps: 1.4,
+      staying: false,
+    });
+  }
+  const now = next[next.length - 1].at;
+  const split = splitClosedJourneys([...walk, ...parked, ...next], now);
+  assert.equal(split.journeys.length, 1);
+  assert.ok(split.journeys[0].distanceM >= 200);
+  assert.ok(split.remaining.some((point) => point.at === next[next.length - 1].at));
+  assert.equal(split.remaining.some((point) => point.at === walk[0].at), false);
+  const open = previewOpenJourney([...walk, ...parked, ...next], now);
+  assert.ok(open);
+  assert.equal(open.open, true);
+  assert.ok(open.distanceM >= 100);
+  assert.ok(open.startedAt > arrive);
+
+  const kept = journeysWithinHistory({
+    self: [
+      split.journeys[0],
+      { ...split.journeys[0], id: 'old', endedAt: Date.UTC(2026, 7, 1, 0, 0), startedAt: Date.UTC(2026, 7, 1, 0, 0) },
+    ],
+  }, now);
+  assert.equal(kept.self.length, 1);
+  assert.equal(kept.self[0].id, split.journeys[0].id);
 });

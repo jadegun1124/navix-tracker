@@ -50,6 +50,21 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
   const self = state.members.find((member) => member.id === 'self');
   const precise = state.permissions.accuracy === 'precise';
   const trackingOn = state.permissions.locationMode === 'while-using' || state.permissions.locationMode === 'always';
+  const nativeKeeps = umapLocationNative() && state.backgroundKeepAlive && state.permissions.locationMode === 'always';
+  const [appVisible, setAppVisible] = useState(() => document.visibilityState !== 'hidden');
+  useEffect(() => {
+    const onVis = () => setAppVisible(document.visibilityState !== 'hidden');
+    const onResume = () => setAppVisible(true);
+    document.addEventListener('visibilitychange', onVis);
+    document.addEventListener('resume', onResume);
+    return () => {
+      document.removeEventListener('visibilitychange', onVis);
+      document.removeEventListener('resume', onResume);
+    };
+  }, []);
+  const selfPublishKey = nativeKeeps
+    ? 'native'
+    : `${self?.lat ?? ''}:${self?.lng ?? ''}:${self?.updatedAt ?? ''}:${self?.battery ?? ''}:${self?.charging ?? ''}`;
 
   useEffect(() => {
     const tick = () => familyRef.current.rollDay(Date.now());
@@ -111,6 +126,7 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
 
   useEffect(() => {
     if (!trackingOn) return;
+    if (nativeKeeps && !appVisible) return;
     const apply = (fix: AcceptedFix) => {
       familyRef.current.updateSelf(fix.lat, fix.lng, fix.accuracy, fix.speedMps);
       if (!centered.current) {
@@ -124,7 +140,7 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
       onFix: apply,
       onWaiting: (reason) => setWaiting(reason ? WAITING_KO[reason] ?? null : null),
     });
-  }, [precise, trackingOn]);
+  }, [appVisible, nativeKeeps, precise, trackingOn]);
 
   useEffect(() => {
     if (!trackingOn || !umapLocationNative()) return;
@@ -173,7 +189,7 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
         charging: sharing ? (self?.charging ?? null) : null,
       }, remote);
     }
-  }, [self, state.guardians, state.mode, state.profile?.name]);
+  }, [selfPublishKey, state.guardians, state.mode, state.profile?.name]);
 
   useEffect(() => {
     if (state.mode !== 'admin') return;
@@ -211,7 +227,7 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
     return () => {
       cancel = true;
     };
-  }, [self, state.inviteCode, state.mode, state.profile?.name, state.shareSelfWithFamily, state.syncReadKey, state.syncWriteKey]);
+  }, [selfPublishKey, state.inviteCode, state.mode, state.profile?.name, state.shareSelfWithFamily, state.syncReadKey, state.syncWriteKey]);
 
   const keepKey = [
     state.mode,
@@ -347,6 +363,35 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
       cancel = true;
     };
   }, [state.visits]);
+
+  useEffect(() => {
+    if (!vworldApiKey()) return;
+    let pending: { memberId: string; id: string; which: 'start' | 'end'; lat: number; lng: number } | null = null;
+    for (const [memberId, list] of Object.entries(state.journeys ?? {})) {
+      for (const journey of list) {
+        for (const which of ['start', 'end'] as const) {
+          const place = journey[which];
+          const key = `${memberId}:${journey.id}:${which}`;
+          if (!place?.label && !triedGeocode.current.has(key)) {
+            pending = { memberId, id: journey.id, which, lat: place.lat, lng: place.lng };
+            break;
+          }
+        }
+        if (pending) break;
+      }
+      if (pending) break;
+    }
+    if (!pending) return;
+    const next = pending;
+    triedGeocode.current.add(`${next.memberId}:${next.id}:${next.which}`);
+    let cancel = false;
+    void reverseGeocode(next.lat, next.lng).then((label) => {
+      if (!cancel && label) familyRef.current.setJourneyLabel(next.memberId, next.id, next.which, label);
+    });
+    return () => {
+      cancel = true;
+    };
+  }, [state.journeys]);
 
   return { waiting, familyShareNote, native: umapLocationNative(), openSettings: openAlwaysLocation };
 }

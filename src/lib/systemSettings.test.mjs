@@ -63,14 +63,25 @@ test('location keep does not post an ongoing shade card', () => {
   assert.match(manifest, /USE_EXACT_ALARM/);
 });
 
-test('gps is requested every 5s while moving and slows down while still', () => {
+test('gps is 2.5s only while moving and backs off to 2 then 5 minutes while still', () => {
   const location = readFileSync(new URL('../../android/app/src/main/java/kr/co/umap/tracker/LocationKeepService.java', import.meta.url), 'utf8');
-  assert.match(location, /GPS_MOVING_MS = 5_000L/);
-  assert.match(location, /SAMPLE_GAP_MS = 4_000L/);
-  assert.match(location, /GPS_STILL_MS = 30_000L/);
-  assert.match(location, /GPS_STILL_LONG_MS = 60_000L/);
-  assert.match(location, /GPS_STILL_LONGER_MS = 120_000L/);
+  assert.match(location, /GPS_MOVING_MS = 2_500L/);
+  assert.match(location, /SAMPLE_GAP_MS = 1_200L/);
+  assert.match(location, /GPS_STILL_MS = 120_000L/);
+  assert.match(location, /GPS_STILL_LONG_MS = 300_000L/);
+  assert.match(location, /STILL_LONG_AFTER_MS = 7 \* 60_000L/);
+  assert.match(location, /MOVING_HOLD_MS = 45_000L/);
+  assert.match(location, /PUBLISH_MOVING_MS = 8_000L/);
+  assert.match(location, /PUBLISH_STILL_MS = 120_000L/);
+  assert.match(location, /PUBLISH_MOVING_M = 25f/);
+  assert.match(location, /requestedGpsMs = GPS_STILL_MS/);
+  assert.match(location, /updatesRegistered && incoming\.equals\(registeredConfig\)/);
+  assert.match(location, /movingStream = false/);
   assert.match(location, /GPS_PROVIDER, gpsMs, 0f/);
+  assert.equal(location.includes('GPS_STILL_MS = 30_000L'), false);
+  assert.equal(location.includes('GPS_STILL_LONGER'), false);
+  assert.equal(location.includes('15_000L'), false);
+  assert.equal(location.includes('GPS_MOVING_MS = 5_000L'), false);
   assert.equal(location.includes('GPS_MOVING_MS = 3_000L'), false);
   assert.equal(location.includes('5_000L, 0f'), false);
   assert.equal(location.includes('isStayJitter'), false);
