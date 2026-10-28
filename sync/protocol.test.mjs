@@ -507,33 +507,70 @@ test('SOS push subscription is kept for the admin reader and hidden from the roo
   assert.equal(room.pushes[0].endpoint, subscription.endpoint);
 });
 
-test('family chat is readable by the admin and by the family token', async () => {
+test('direct messages stay on the pair and off the family view', async () => {
   const store = createMemoryStore();
   const code = '48291';
   const writeKey = randomKey();
   const readKey = randomKey();
   const token = await syncTokenFor(writeKey, readKey);
-  const message = { id: 'chatmsg01', name: '하나', text: '집 근처예요', at: Date.now() };
+  const message = { id: 'chatmsg01', from: '엄마', to: '하나', text: '집 근처예요', at: Date.now() };
   const posted = await call(store, 'POST', `/v1/rooms/${code}/chat`, { token, body: message });
   assert.equal(posted.status, 200);
+  assert.equal(posted.body.messages.length, 1);
+  assert.equal(posted.body.messages[0].text, '집 근처예요');
+
+  const other = { id: 'chatmsg03', from: '엄마', to: '둘', text: '둘만 봐요', at: Date.now() };
+  const postedOther = await call(store, 'POST', `/v1/rooms/${code}/chat`, { token, body: other });
+  assert.equal(postedOther.status, 200);
 
   const reader = await call(store, 'GET', `/v1/rooms/${code}`, { token, readKey });
-  assert.equal(reader.body.messages.length, 1);
-  assert.equal(reader.body.messages[0].text, '집 근처예요');
+  assert.equal(reader.body.messages, undefined);
+  assert.equal(JSON.stringify(reader.body).includes('집 근처예요'), false);
+  assert.equal(JSON.stringify(reader.body).includes('둘만 봐요'), false);
   assert.equal(JSON.stringify(reader.body).includes('writeKey'), false);
 
   const family = await call(store, 'GET', `/v1/rooms/${code}/family`, { token });
-  assert.equal(family.body.messages[0].name, '하나');
-  const listed = await call(store, 'GET', `/v1/rooms/${code}/chat`, { token });
-  assert.equal(listed.body.messages.length, 1);
+  assert.equal(family.body.messages, undefined);
+  assert.equal(JSON.stringify(family.body).includes('집 근처예요'), false);
+
+  const open = await call(store, 'GET', `/v1/rooms/${code}/chat`, { token });
+  assert.equal(open.status, 400);
+
+  const pair = await call(store, 'GET', `/v1/rooms/${code}/chat?me=${encodeURIComponent('하나')}&with=${encodeURIComponent('엄마')}`, { token });
+  assert.equal(pair.status, 200);
+  assert.equal(pair.body.messages.length, 1);
+  assert.equal(pair.body.messages[0].from, '엄마');
+  assert.equal(JSON.stringify(pair.body).includes('둘만 봐요'), false);
+
+  const sibling = await call(store, 'GET', `/v1/rooms/${code}/chat?me=${encodeURIComponent('둘')}&with=${encodeURIComponent('엄마')}`, { token });
+  assert.equal(sibling.body.messages.length, 1);
+  assert.equal(sibling.body.messages[0].text, '둘만 봐요');
+  assert.equal(JSON.stringify(sibling.body).includes('집 근처예요'), false);
+
+  const mine = await call(store, 'GET', `/v1/rooms/${code}/chat?me=${encodeURIComponent('엄마')}`, { token });
+  assert.equal(mine.body.threads.length, 2);
+  assert.deepEqual(mine.body.threads.map((thread) => thread.peer).sort(), ['둘', '하나']);
+
+  const stranger = await call(store, 'GET', `/v1/rooms/${code}/chat?me=${encodeURIComponent('셋')}`, { token });
+  assert.equal(stranger.body.threads.length, 0);
 
   const phone = await call(store, 'POST', `/v1/rooms/${code}/chat`, {
     token,
-    body: { id: 'chatmsg02', name: '하나', text: '01012345678', at: Date.now() },
+    body: { id: 'chatmsg02', from: '엄마', to: '하나', text: '01012345678', at: Date.now() },
   });
   assert.equal(phone.status, 400);
+  const selfNote = await call(store, 'POST', `/v1/rooms/${code}/chat`, {
+    token,
+    body: { id: 'chatmsg04', from: '엄마', to: '엄마', text: '나에게', at: Date.now() },
+  });
+  assert.equal(selfNote.status, 400);
+  const legacy = await call(store, 'POST', `/v1/rooms/${code}/chat`, {
+    token,
+    body: { id: 'chatmsg05', name: '하나', text: '예전 전체 대화', at: Date.now() },
+  });
+  assert.equal(legacy.status, 400);
   const again = await call(store, 'POST', `/v1/rooms/${code}/chat`, { token, body: message });
   assert.equal(again.status, 200);
-  const once = await call(store, 'GET', `/v1/rooms/${code}/chat`, { token });
+  const once = await call(store, 'GET', `/v1/rooms/${code}/chat?me=${encodeURIComponent('엄마')}&with=${encodeURIComponent('하나')}`, { token });
   assert.equal(once.body.messages.length, 1);
 });

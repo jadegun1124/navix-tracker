@@ -15,11 +15,20 @@ const FUTURE_SKEW_MS = 5 * 60 * 1000;
 const EARLIEST_AT = Date.UTC(2024, 0, 1);
 
 const MAX_MESSAGES = 40;
+const MAX_THREADS = 24;
 const CHAT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const CHAT_ID = /^[A-Za-z0-9_-]{8,80}$/;
 
 export function emptyRoom() {
-  return { places: {}, alerts: [], pushes: [], messages: [] };
+  return { places: {}, alerts: [], pushes: [], threads: {} };
+}
+
+/** Same pair on both phones. Keep identical to src/services/familyChat.ts chatThreadKey. */
+export function chatThreadKey(left, right) {
+  const a = typeof left === 'string' ? left.trim().slice(0, 20) : '';
+  const b = typeof right === 'string' ? right.trim().slice(0, 20) : '';
+  if (!a || !b || a === b) return '';
+  return a < b ? `${a}\0${b}` : `${b}\0${a}`;
 }
 
 export function isKeyPart(value) {
@@ -258,37 +267,73 @@ function looksLikePhone(value) {
   return digits.length / compact.length >= 0.8;
 }
 
+function cleanChatName(value) {
+  if (typeof value !== 'string') return '';
+  const name = value.trim().slice(0, 20);
+  if (!name || looksLikePhone(name)) return '';
+  return name;
+}
+
 function cleanChat(input, now) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return { error: json({ error: 'chat' }, 400) };
   if (typeof input.id !== 'string' || !CHAT_ID.test(input.id)) return { error: json({ error: 'chat' }, 400) };
-  if (typeof input.name !== 'string' || typeof input.text !== 'string') return { error: json({ error: 'chat' }, 400) };
-  const name = input.name.trim().slice(0, 20);
+  const from = cleanChatName(input.from);
+  const to = cleanChatName(input.to);
+  if (!from || !to || from === to) return { error: json({ error: 'chat' }, 400) };
+  if (typeof input.text !== 'string') return { error: json({ error: 'chat' }, 400) };
   const text = input.text.trim().slice(0, 200);
-  if (!name || !text || looksLikePhone(name) || looksLikePhone(text)) return { error: json({ error: 'chat' }, 400) };
+  if (!text || looksLikePhone(text)) return { error: json({ error: 'chat' }, 400) };
   if (!cleanStamp(input.at, now)) return { error: json({ error: 'at' }, 400) };
-  return { message: { id: input.id, name, text, at: input.at } };
+  return { message: { id: input.id, from, to, text, at: input.at } };
 }
 
-function roomMessages(room) {
-  return Array.isArray(room.messages) ? room.messages : [];
+function roomThreads(room) {
+  const threads = room && room.threads;
+  if (!threads || typeof threads !== 'object' || Array.isArray(threads)) return {};
+  return threads;
 }
 
-export function applyChat(room, message, now) {
-  const messages = roomMessages(room);
-  if (messages.some((item) => item.id === message.id)) return { room, ignored: true };
-  const next = [...messages, message].filter((item) => now - item.at < CHAT_TTL_MS).slice(-MAX_MESSAGES);
-  return { room: { ...room, messages: next }, ignored: false };
+function publicMessage(message) {
+  return { id: message.id, from: message.from, to: message.to, text: message.text, at: message.at };
 }
 
-export function viewChat(room) {
-  return {
-    messages: roomMessages(room).map((message) => ({
-      id: message.id,
-      name: message.name,
-      text: message.text,
-      at: message.at,
-    })),
-  };
+export function applyDirectMessage(room, message, now) {
+  const key = chatThreadKey(message.from, message.to);
+  if (!key) return { room, ignored: true };
+  const threads = { ...roomThreads(room) };
+  for (const list of Object.values(threads)) {
+    if (Array.isArray(list) && list.some((item) => item.id === message.id)) return { room, ignored: true };
+  }
+  const current = Array.isArray(threads[key]) ? threads[key] : [];
+  threads[key] = [...current, message].filter((item) => now - item.at < CHAT_TTL_MS).slice(-MAX_MESSAGES);
+  const lastAt = (list) => (Array.isArray(list) && list.length ? list[list.length - 1].at || 0 : 0);
+  const keys = Object.keys(threads).sort((left, right) => lastAt(threads[left]) - lastAt(threads[right]));
+  while (keys.length > MAX_THREADS) delete threads[keys.shift()];
+  const next = { ...room, threads };
+  delete next.messages;
+  return { room: next, ignored: false };
+}
+
+export function viewDirectMessages(room, me, peer) {
+  const key = chatThreadKey(me, peer);
+  if (!key) return null;
+  const list = roomThreads(room)[key];
+  return { messages: (Array.isArray(list) ? list : []).map(publicMessage) };
+}
+
+export function viewMyThreads(room, me) {
+  const name = cleanChatName(me);
+  if (!name) return null;
+  const threads = [];
+  for (const [key, list] of Object.entries(roomThreads(room))) {
+    const parts = key.split('\0');
+    if (parts.length !== 2 || (parts[0] !== name && parts[1] !== name) || !Array.isArray(list)) continue;
+    threads.push({
+      peer: parts[0] === name ? parts[1] : parts[0],
+      messages: list.map(publicMessage),
+    });
+  }
+  return { threads };
 }
 
 function roomPushes(room) {
@@ -312,7 +357,6 @@ export function viewRoom(room, since) {
   return {
     places: Object.values(room.places),
     alerts: room.alerts.filter((alert) => alert.at > cursor),
-    messages: viewChat(room).messages,
   };
 }
 
@@ -342,7 +386,6 @@ function cleanSubscription(input) {
 export function viewFamilyPlaces(room) {
   return {
     places: Object.values(room.places).filter((place) => place.audience === 'family' && place.sharing && place.lat != null && place.lng != null),
-    messages: viewChat(room).messages,
   };
 }
 
@@ -369,7 +412,12 @@ export async function parseOperation(request) {
   }
 
   if (request.method === 'GET' && action === '/chat') {
-    return { kind: 'chat-get', token: id };
+    const me = cleanChatName(url.searchParams.get('me') || '');
+    const peer = (url.searchParams.get('with') || '').trim();
+    if (!me) return json({ error: 'chat' }, 400);
+    if (peer && !cleanChatName(peer)) return json({ error: 'chat' }, 400);
+    if (peer && cleanChatName(peer) === me) return json({ error: 'chat' }, 400);
+    return { kind: 'chat-get', token: id, me, peer: peer ? cleanChatName(peer) : '' };
   }
 
   if (request.method === 'GET' && action === '') {
@@ -444,11 +492,15 @@ export async function handleSyncRequest(store, request) {
   const room = (await store.read(op.token)) || emptyRoom();
   if (op.kind === 'get') return json(viewRoom(room, op.since));
   if (op.kind === 'family') return json(viewFamilyPlaces(room));
-  if (op.kind === 'chat-get') return json(viewChat(room));
+  if (op.kind === 'chat-get') {
+    const view = op.peer ? viewDirectMessages(room, op.me, op.peer) : viewMyThreads(room, op.me);
+    if (!view) return json({ error: 'chat' }, 400);
+    return json(view);
+  }
   if (op.kind === 'chat') {
-    const next = applyChat(room, op.message, Date.now());
+    const next = applyDirectMessage(room, op.message, Date.now());
     if (!next.ignored) await store.write(op.token, next.room);
-    return json({ ok: true });
+    return json(viewDirectMessages(next.room, op.message.from, op.message.to) || { messages: [] });
   }
   if (op.kind === 'place') {
     const next = applyPlace(room, op.place);

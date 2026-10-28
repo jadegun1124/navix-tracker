@@ -94,7 +94,7 @@ function ModeChoice({
         {chosen ? '지도로' : '뒤로'}
       </button>
       <h1 className="text-2xl font-black">어떻게 쓸까요?</h1>
-      <p className="mt-2 text-sm leading-6 text-slate-500">이 폰의 역할입니다. 나중에 메뉴에서 바꿀 수 있습니다.</p>
+      <p className="mt-2 text-sm leading-6 text-slate-500">이 폰의 역할입니다. 관리자 모드는 메뉴에서 다시 고를 수 있습니다.</p>
       <div className="mt-6 space-y-3">
         <button type="button" onClick={() => onChoose('admin')} className="w-full rounded-3xl bg-white p-4 text-left shadow-sm">
           <span className="flex items-center gap-3">

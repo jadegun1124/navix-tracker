@@ -7,7 +7,6 @@ export function AlwaysAllowNotice({
   onOpenSettings,
   onBattery,
   onStart,
-  onStop,
   note,
 }: {
   locationMode: PermissionState['locationMode'];
@@ -16,7 +15,6 @@ export function AlwaysAllowNotice({
   onOpenSettings: () => void;
   onBattery: () => void;
   onStart: () => void;
-  onStop: () => void;
   note?: string | null;
 }) {
   const live = locationMode === 'always' && keepAlive;
@@ -25,11 +23,7 @@ export function AlwaysAllowNotice({
       <div className="flex items-center justify-between gap-2">
         <p className="text-xs font-bold text-slate-700">{live ? '위치 유지 켜짐' : '위치 유지'}</p>
         <div className="flex flex-wrap justify-end gap-2">
-          {live ? (
-            <button type="button" onClick={onStop} className="rounded-full bg-white px-3 py-1.5 text-[11px] font-bold text-slate-600">
-              끄기
-            </button>
-          ) : (
+          {!live && (
             <button type="button" onClick={onOpenSettings} className="rounded-full bg-white px-3 py-1.5 text-[11px] font-bold text-slate-700">
               {native ? '항상 허용' : '위치 허용'}
             </button>

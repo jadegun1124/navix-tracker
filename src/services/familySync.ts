@@ -146,7 +146,7 @@ export async function publishChatRemote(
     const response = await request(`/v1/rooms/${code}/chat`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-umap-sync-key': syncToken },
-      body: JSON.stringify({ id: message.id, name: message.name, text: message.text, at: message.at }),
+      body: JSON.stringify({ id: message.id, from: message.from, to: message.to, text: message.text, at: message.at }),
     });
     classify(response);
     if (response.ok) return 'ok';
@@ -157,10 +157,16 @@ export async function publishChatRemote(
   }
 }
 
-export async function fetchChat(code: string, syncToken: string | null | undefined): Promise<FamilyChatMessage[] | null> {
-  if (!syncToken || !splitSyncToken(syncToken) || !familySyncUrl() || !/^\d{4,6}$/.test(code)) return null;
+export async function fetchDirectChat(
+  code: string,
+  syncToken: string | null | undefined,
+  me: string,
+  peer: string,
+): Promise<FamilyChatMessage[] | null> {
+  if (!syncToken || !splitSyncToken(syncToken) || !familySyncUrl() || !/^\d{4,6}$/.test(code) || !me.trim() || !peer.trim()) return null;
+  const query = new URLSearchParams({ me: me.trim().slice(0, 20), with: peer.trim().slice(0, 20) });
   try {
-    const response = await request(`/v1/rooms/${code}/chat`, {
+    const response = await request(`/v1/rooms/${code}/chat?${query}`, {
       method: 'GET',
       headers: { 'x-umap-sync-key': syncToken },
     });
@@ -168,6 +174,36 @@ export async function fetchChat(code: string, syncToken: string | null | undefin
     classify(response);
     if (!response.ok) return null;
     return readChatMessages(await response.json());
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchMyDirectThreads(
+  code: string,
+  syncToken: string | null | undefined,
+  me: string,
+): Promise<{ peer: string; messages: FamilyChatMessage[] }[] | null> {
+  if (!syncToken || !splitSyncToken(syncToken) || !familySyncUrl() || !/^\d{4,6}$/.test(code) || !me.trim()) return null;
+  const query = new URLSearchParams({ me: me.trim().slice(0, 20) });
+  try {
+    const response = await request(`/v1/rooms/${code}/chat?${query}`, {
+      method: 'GET',
+      headers: { 'x-umap-sync-key': syncToken },
+    });
+    if (response.status === 404) return null;
+    classify(response);
+    if (!response.ok) return null;
+    const body: unknown = await response.json();
+    if (!body || typeof body !== 'object' || !Array.isArray((body as { threads?: unknown }).threads)) return [];
+    const threads: { peer: string; messages: FamilyChatMessage[] }[] = [];
+    for (const item of (body as { threads: unknown[] }).threads) {
+      if (!item || typeof item !== 'object') continue;
+      const peer = typeof (item as { peer?: unknown }).peer === 'string' ? (item as { peer: string }).peer : '';
+      const messages = readChatMessages(item);
+      if (peer && messages.length) threads.push({ peer, messages });
+    }
+    return threads;
   } catch {
     return null;
   }
@@ -280,7 +316,6 @@ export function startAdminRemoteSync(
   handlers: {
     onPlace: (place: SharedPlace) => void;
     onAlert: (alert: FamilyAlert) => void;
-    onMessages?: (messages: FamilyChatMessage[]) => void;
   },
 ): () => void {
   if (!link || !familySyncUrl() || !isKeyPart(link.writeKey) || !isKeyPart(link.readKey) || !/^\d{4,6}$/.test(link.code)) return () => {};
@@ -320,8 +355,6 @@ export function startAdminRemoteSync(
           handlers.onAlert(alert);
           if (alert.at > since) since = alert.at;
         }
-        const messages = readChatMessages(body);
-        if (messages.length > 0) handlers.onMessages?.(messages);
       } else {
         delay = 8000;
       }
@@ -376,7 +409,7 @@ export async function familyEndpointAvailable(code: string, token: string): Prom
 
 export function startManagedFamilySync(
   links: { code: string; token: string }[],
-  onRoom: (code: string, places: SharedPlace[], messages: FamilyChatMessage[]) => void,
+  onRoom: (code: string, places: SharedPlace[]) => void,
 ): () => void {
   const usable = links.filter((link) => splitSyncToken(link.token) && /^\d{4,6}$/.test(link.code));
   if (!familySyncUrl() || usable.length === 0) return () => {};
@@ -402,7 +435,7 @@ export function startManagedFamilySync(
         const body: unknown = await response.json();
         const raw = body && typeof body === 'object' && Array.isArray((body as { places?: unknown[] }).places) ? (body as { places: unknown[] }).places : [];
         const places = raw.filter((place): place is SharedPlace => isSharedPlace(place) && place.audience === 'family' && place.sharing);
-        onRoom(link.code, places, readChatMessages(body));
+        onRoom(link.code, places);
       }
     } catch {
       if (!stopped && familySyncUrl()) setPhase('down');
