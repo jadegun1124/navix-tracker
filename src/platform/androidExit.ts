@@ -10,7 +10,7 @@ let showToast: (text: string) => void = () => {};
 declare global {
   interface Window {
     __umapAndroidBack?: () => boolean;
-    UmapAndroid?: { exitApp: () => void };
+    UmapAndroid?: { exitApp: () => void; appVersion?: () => string };
   }
 }
 

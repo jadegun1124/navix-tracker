@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Bell, ChevronLeft, ChevronRight, Copy, Home, LocateFixed, MapPin, Menu, Plus, Route, Settings, UserPlus, X } from 'lucide-react';
+import { currentAppVersionLabel } from '../../lib/appRelease.mjs';
 import { looksLikePhone, localProfile } from '../../lib/localProfile.mjs';
 import { buildInviteLink, formatClock, hasLocation, haversineMeters, shouldAlertLeave } from '../../lib/geo';
 import { ALWAYS_GUIDE_DISMISSED_KEY, CHAT_NOTIFY_ASKED_KEY, KEEP_PERMISSION_ASKED_KEY, KEEP_START_ASKED_KEY, keepEntryPrompt, markSessionFlag, readSessionFlag } from '../../lib/systemSettings.mjs';
@@ -1169,6 +1170,7 @@ export function FamilyMapScreen() {
         {managed && managedSettings && (
           <Sheet title="설정" onClose={() => setManagedSettings(false)}>
             <p className="text-sm leading-6 text-slate-500">위치는 초대를 수락하고 공유를 허용한 뒤에만 나갑니다. 위치 유지를 켠 뒤에는 이 화면에서 끄지 않습니다.</p>
+            <AppVersionLine />
             <button
               type="button"
               onClick={openLocationSettings}
@@ -1226,6 +1228,7 @@ export function FamilyMapScreen() {
         {!managed && adminSettings && (
           <Sheet title="설정" onClose={() => setAdminSettings(false)}>
             <p className="text-sm leading-6 text-slate-500">가족은 같은 방에서 위치를 나눕니다. 위치 유지를 켠 뒤에는 이 화면에서 끄지 않습니다.</p>
+            <AppVersionLine />
             <button
               type="button"
               onClick={() => family.setShareSelf(!state.shareSelfWithFamily)}
@@ -2113,6 +2116,10 @@ function RoundButton({ children, onClick, label }: { children: React.ReactNode; 
       {children}
     </button>
   );
+}
+
+function AppVersionLine() {
+  return <p className="mt-2 text-xs font-semibold text-slate-500">{currentAppVersionLabel()}</p>;
 }
 
 function Line({ k, v }: { k: string; v: string }) {
