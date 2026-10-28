@@ -417,7 +417,7 @@ function withoutDemo(session: Session): Session {
       const charging = renamed.charging === true ? true : renamed.charging === false ? false : null;
       const battery = typeof renamed.battery === 'number' && renamed.battery >= 0 && renamed.battery <= 100 ? Math.round(renamed.battery) : null;
       const photo = cleanPhoto(renamed.photo) || (renamed.id === 'self' ? cleanPhoto(profile?.photo) : undefined);
-      const place = typeof renamed.place === 'string' ? renamed.place.trim().slice(0, 40) : '';
+      const place = cleanPlace(renamed.place);
       const publisherId = isMemberId(renamed.publisherId) ? renamed.publisherId : '';
       const next = {
         ...renamed,

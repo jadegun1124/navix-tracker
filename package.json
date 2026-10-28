@@ -8,7 +8,7 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
-    "test": "node --test sync/protocol.test.mjs sync/webpush.test.mjs src/lib/tracking.test.mjs src/lib/localProfile.test.mjs src/lib/systemSettings.test.mjs src/lib/alwaysAllowGuide.test.mjs src/lib/cameraScan.test.mjs src/lib/managedPlace.test.mjs src/lib/placeAlias.test.mjs src/lib/sharedIdentity.test.mjs src/platform/androidBack.test.mjs src/lib/sideloadSigning.test.mjs src/lib/alwaysAllowFlow.test.mjs src/lib/peerFamily.test.mjs src/lib/memberPlace.test.mjs src/lib/googleAuth.test.mjs",
+    "test": "node --test sync/protocol.test.mjs sync/webpush.test.mjs src/lib/tracking.test.mjs src/lib/localProfile.test.mjs src/lib/systemSettings.test.mjs src/lib/alwaysAllowGuide.test.mjs src/lib/cameraScan.test.mjs src/lib/managedPlace.test.mjs src/lib/placeAlias.test.mjs src/lib/sharedIdentity.test.mjs src/platform/androidBack.test.mjs src/lib/sideloadSigning.test.mjs src/lib/alwaysAllowFlow.test.mjs src/lib/peerFamily.test.mjs src/lib/memberPlace.test.mjs src/lib/placeGeocode.test.mjs src/lib/googleAuth.test.mjs",
     "sync": "node sync/dev-server.mjs"
   },
   "dependencies": {
