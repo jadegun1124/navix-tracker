@@ -48,6 +48,7 @@ export const StreetMap = forwardRef<StreetMapHandle, {
   const nodeRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
   const layersRef = useRef<L.LayerGroup | null>(null);
+  const trailRef = useRef<L.LayerGroup | null>(null);
   const [ready, setReady] = useState(false);
   const [tileNote, setTileNote] = useState('');
   const key = vworldApiKey();
@@ -96,6 +97,7 @@ export const StreetMap = forwardRef<StreetMapHandle, {
       maxZoom: 19,
     });
     map.attributionControl.setPosition('bottomleft');
+    trailRef.current = L.layerGroup().addTo(map);
     layersRef.current = L.layerGroup().addTo(map);
     mapRef.current = map;
     let moveTick = 0;
@@ -124,6 +126,7 @@ export const StreetMap = forwardRef<StreetMapHandle, {
       map.remove();
       mapRef.current = null;
       layersRef.current = null;
+      trailRef.current = null;
     };
   }, []);
 
@@ -180,48 +183,6 @@ export const StreetMap = forwardRef<StreetMapHandle, {
       }).addTo(group);
     }
 
-    if (trail.length >= 2) {
-      const stroke = { smoothFactor: 0, lineCap: 'round' as const, lineJoin: 'round' as const };
-      const parts = trailDrawParts(trail);
-      for (const part of parts) {
-        if (part.points.length < 2) continue;
-        const latlngs = part.points.map((point) => [point.lat, point.lng] as [number, number]);
-        const dashed = part.dashed;
-        L.polyline(latlngs, {
-          ...stroke,
-          color: '#ffffff',
-          weight: dashed ? 7 : 9,
-          opacity: 0.9,
-          dashArray: dashed ? '6 8' : undefined,
-        }).addTo(group);
-        L.polyline(latlngs, {
-          ...stroke,
-          color: trailColor,
-          weight: dashed ? 4 : 6,
-          opacity: dashed ? 0.85 : 1,
-          dashArray: dashed ? '6 8' : undefined,
-        }).addTo(group);
-      }
-      const start = parts[0]?.points[0] ?? trail[0];
-      L.circleMarker([start.lat, start.lng], {
-        radius: 5,
-        color: trailColor,
-        weight: 2,
-        fillColor: trailColor,
-        fillOpacity: 1,
-      }).addTo(group);
-      const end = parts[parts.length - 1]?.points.at(-1) ?? trail[trail.length - 1];
-      if (end && (end.lat !== start.lat || end.lng !== start.lng)) {
-        L.circleMarker([end.lat, end.lng], {
-          radius: 6,
-          color: trailColor,
-          weight: 3,
-          fillColor: '#ffffff',
-          fillOpacity: 1,
-        }).addTo(group);
-      }
-    }
-
     if (playback) {
       const caption = escapeHtml(playback.label);
       L.marker([playback.lat, playback.lng], {
@@ -268,7 +229,53 @@ export const StreetMap = forwardRef<StreetMapHandle, {
       marker.on('click', () => onSelectRef.current(member.id));
       marker.addTo(group);
     }
-  }, [home, members, playback, ready, selectedId, trail, trailColor]);
+  }, [home, members, playback, ready, selectedId]);
+
+  useEffect(() => {
+    const trailGroup = trailRef.current;
+    if (!ready || !trailGroup) return;
+    trailGroup.clearLayers();
+    if (trail.length < 2) return;
+    const stroke = { smoothFactor: 0, lineCap: 'round' as const, lineJoin: 'round' as const };
+    const parts = trailDrawParts(trail);
+    for (const part of parts) {
+      if (part.points.length < 2) continue;
+      const latlngs = part.points.map((point) => [point.lat, point.lng] as [number, number]);
+      const dashed = part.dashed;
+      L.polyline(latlngs, {
+        ...stroke,
+        color: '#ffffff',
+        weight: dashed ? 7 : 9,
+        opacity: 0.9,
+        dashArray: dashed ? '6 8' : undefined,
+      }).addTo(trailGroup);
+      L.polyline(latlngs, {
+        ...stroke,
+        color: trailColor,
+        weight: dashed ? 4 : 6,
+        opacity: dashed ? 0.85 : 1,
+        dashArray: dashed ? '6 8' : undefined,
+      }).addTo(trailGroup);
+    }
+    const start = parts[0]?.points[0] ?? trail[0];
+    L.circleMarker([start.lat, start.lng], {
+      radius: 5,
+      color: trailColor,
+      weight: 2,
+      fillColor: trailColor,
+      fillOpacity: 1,
+    }).addTo(trailGroup);
+    const end = parts[parts.length - 1]?.points.at(-1) ?? trail[trail.length - 1];
+    if (end && (end.lat !== start.lat || end.lng !== start.lng)) {
+      L.circleMarker([end.lat, end.lng], {
+        radius: 6,
+        color: trailColor,
+        weight: 3,
+        fillColor: '#ffffff',
+        fillOpacity: 1,
+      }).addTo(trailGroup);
+    }
+  }, [ready, trail, trailColor]);
 
   const missingKey = !key;
 

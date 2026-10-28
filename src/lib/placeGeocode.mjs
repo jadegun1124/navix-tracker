@@ -3,7 +3,7 @@
 // key and a failed VWorld response. The card stores the shortened 시·동 line.
 // The literal place label 「근처」 is never returned.
 
-const NOMINATIM_UA = 'Umap/1.21.0 (family location; https://github.com/jadegun1124/umap)';
+const NOMINATIM_UA = 'Umap/1.22.0 (family location; https://github.com/jadegun1124/umap)';
 const CACHE_KEY = 'umap_geocode_cache_v1';
 const NOMINATIM_GAP_MS = 1100;
 let nominatimNotBefore = 0;
