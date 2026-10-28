@@ -2,8 +2,10 @@ export interface Profile {
   /** Device-local id. Not a Google subject and not a phone number. */
   id: string;
   name: string;
-  /** Square JPEG data URL stored on this device. */
+  /** Square JPEG data URL. Shown here immediately and synced as a thumbnail. */
   photo?: string;
+  /** Secret for this device's profile writes. Never sent to other phones. */
+  profileKey?: string;
 }
 
 export interface TrackPoint {
@@ -49,6 +51,8 @@ export interface Member {
   updatedAt: number;
   moving: boolean | null;
   photo?: string;
+  /** Publisher's stable member id. Display name can change without moving this row. */
+  publisherId?: string;
   place?: string | null;
   inviteCode?: string;
   share: ShareState;

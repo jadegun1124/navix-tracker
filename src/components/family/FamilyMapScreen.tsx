@@ -198,6 +198,7 @@ export function FamilyMapScreen() {
       { code: state.inviteCode, writeKey: state.syncWriteKey, readKey: state.syncReadKey },
       {
         onPlace: (place) => familyRef.current.applySharedPlace(place),
+        onProfiles: (profiles) => familyRef.current.applySharedProfiles(familyRef.current.state.inviteCode, profiles),
         onAlert: handle,
       },
     );
@@ -1165,7 +1166,7 @@ function ProfileSettingsSheet({
       <Sheet title="프로필 설정" onClose={onClose}>
         <div className="flex items-center gap-3">
           <PhotoPicker name={draft || name} photo={photo} onPhoto={onPhoto} />
-          <p className="text-sm leading-6 text-slate-500">사진과 이름은 이 기기에만 저장됩니다. 전화번호는 쓰지 않습니다.</p>
+          <p className="text-sm leading-6 text-slate-500">이름과 사진은 이 기기에 바로 저장됩니다. 가족 서버에 연결되면 같은 초대의 다른 폰 지도와 목록에도 보입니다. 다른 사람의 프로필은 바꿀 수 없습니다. 전화번호는 쓰지 않습니다.</p>
         </div>
         <label className="mt-4 block text-xs font-bold text-slate-400" htmlFor="profile-name">
           표시 이름
@@ -1358,11 +1359,13 @@ function AdminMenu({
 }
 
 function myChatName(state: { mode: string | null; profile: { name?: string } | null; guardians: GuardianLink[] }, code: string): string {
+  const own = chatName(state.profile?.name);
+  if (own) return own;
   if (state.mode === 'managed') {
     const link = state.guardians.find((item) => item.code === code && item.share !== 'revoked');
-    return chatName(link?.rosterName || state.profile?.name) || '나';
+    return chatName(link?.rosterName) || '나';
   }
-  return chatName(state.profile?.name) || '나';
+  return '나';
 }
 
 function directThreadFor(state: {
@@ -1406,9 +1409,10 @@ function guardianThreads(state: {
 }): DirectChatTarget[] {
   if (state.mode !== 'managed') return [];
   const shown = new Set(state.members.filter((member) => member.role === 'admin-share').map((member) => chatName(member.name)));
+  const shownCodes = new Set(state.members.filter((member) => member.role === 'admin-share' && member.id.startsWith('family:')).map((member) => member.id.split(':')[1] || ''));
   const threads: DirectChatTarget[] = [];
   for (const link of state.guardians) {
-    if (link.share === 'revoked') continue;
+    if (link.share === 'revoked' || shownCodes.has(link.code)) continue;
     const peer = chatName(link.adminName || link.label);
     const me = myChatName(state, link.code);
     if (!peer || peer === me || shown.has(peer)) continue;

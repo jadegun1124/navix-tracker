@@ -18,6 +18,8 @@ export interface KeepAliveTarget {
 export interface KeepAliveConfig {
   baseUrl: string;
   name: string;
+  memberId?: string;
+  profileKey?: string;
   precise: boolean;
   targets: KeepAliveTarget[];
 }

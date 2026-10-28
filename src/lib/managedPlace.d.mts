@@ -3,6 +3,8 @@ import type { Member } from '../types/family';
 export interface ManagedPlaceRef {
   code: string;
   name: string;
+  memberId?: string;
+  priorName?: string;
 }
 
 export interface ManagedTarget {

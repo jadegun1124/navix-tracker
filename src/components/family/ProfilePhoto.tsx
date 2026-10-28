@@ -10,17 +10,27 @@ export async function cropProfilePhoto(file: File): Promise<string | null> {
       next.onerror = () => reject(new Error('image'));
       next.src = url;
     });
-    const size = 96;
-    const canvas = document.createElement('canvas');
-    canvas.width = size;
-    canvas.height = size;
-    const ctx = canvas.getContext('2d');
-    if (!ctx || image.width < 1 || image.height < 1) return null;
+    if (image.width < 1 || image.height < 1) return null;
     const side = Math.min(image.width, image.height);
     const sx = (image.width - side) / 2;
     const sy = (image.height - side) / 2;
-    ctx.drawImage(image, sx, sy, side, side, 0, 0, size, size);
-    return canvas.toDataURL('image/jpeg', 0.72);
+    const attempts = [
+      { size: 96, quality: 0.72 },
+      { size: 96, quality: 0.5 },
+      { size: 64, quality: 0.5 },
+    ];
+    let best: string | null = null;
+    for (const attempt of attempts) {
+      const canvas = document.createElement('canvas');
+      canvas.width = attempt.size;
+      canvas.height = attempt.size;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return null;
+      ctx.drawImage(image, sx, sy, side, side, 0, 0, attempt.size, attempt.size);
+      best = canvas.toDataURL('image/jpeg', attempt.quality);
+      if (best.length <= 24_000) return best;
+    }
+    return best && best.length <= 24_000 ? best : null;
   } catch {
     return null;
   } finally {

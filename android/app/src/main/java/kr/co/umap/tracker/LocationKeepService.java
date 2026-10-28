@@ -550,6 +550,9 @@ public class LocationKeepService {
         String name = current.optString("name", "가족").trim();
         if (name.isEmpty()) name = "가족";
         if (name.length() > 80) name = name.substring(0, 80);
+        String memberId = current.optString("memberId", "");
+        String profileKey = current.optString("profileKey", "");
+        boolean identified = memberId.matches("local-[a-z0-9]{3,64}") && profileKey.matches("[A-Za-z0-9_\\-]{16,64}");
         long at = System.currentTimeMillis();
         int battery = batteryPct(context);
         boolean charging = chargingNow(context);
@@ -563,6 +566,7 @@ public class LocationKeepService {
                 JSONObject body = new JSONObject();
                 body.put("code", target.optString("code"));
                 body.put("name", name);
+                if (identified) body.put("memberId", memberId);
                 body.put("sharing", sharing);
                 body.put("at", at);
                 body.put("accuracyM", location == null ? 0 : Math.round(Math.max(0f, location.getAccuracy())));
@@ -576,7 +580,7 @@ public class LocationKeepService {
                     if (battery >= 0) body.put("batteryPct", battery);
                     body.put("charging", charging);
                 }
-                if (put(base, target.optString("token"), body)) {
+                if (put(base, target.optString("token"), body, identified ? profileKey : "")) {
                     target.put("revokeSent", !sharing);
                     changed = true;
                 }
@@ -587,7 +591,7 @@ public class LocationKeepService {
         if (changed) prefs(context).edit().putString("config", current.toString()).apply();
     }
 
-    private static boolean put(String base, String token, JSONObject body) {
+    private static boolean put(String base, String token, JSONObject body, String profileKey) {
         HttpURLConnection connection = null;
         try {
             URL url = new URL(base + "/v1/rooms/" + body.getString("code") + "/place");
@@ -598,6 +602,7 @@ public class LocationKeepService {
             connection.setRequestMethod("PUT");
             connection.setRequestProperty("content-type", "application/json; charset=utf-8");
             connection.setRequestProperty("x-umap-sync-key", token);
+            if (profileKey != null && !profileKey.isEmpty()) connection.setRequestProperty("x-umap-profile-key", profileKey);
             connection.setDoOutput(true);
             byte[] bytes = body.toString().getBytes(StandardCharsets.UTF_8);
             connection.setFixedLengthStreamingMode(bytes.length);

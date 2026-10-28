@@ -10,12 +10,12 @@
 | :--- | :--- | :--- |
 | 회사 홈 | GitHub Pages | https://jadegun1124.github.io/umap/ |
 | 앱 화면 미리보기 | 같은 Pages의 `?app=1` | https://jadegun1124.github.io/umap/?app=1 |
-| 안드로이드 앱 | GitHub Releases APK v1.15.0 | https://github.com/jadegun1124/umap/releases/download/v1.15.0/umap-v1.15.0-tracker.apk |
-| 릴리스 페이지 | GitHub Releases | https://github.com/jadegun1124/umap/releases/tag/v1.15.0 |
+| 안드로이드 앱 | GitHub Releases APK v1.16.0 | https://github.com/jadegun1124/umap/releases/download/v1.16.0/umap-v1.16.0-tracker.apk |
+| 릴리스 페이지 | GitHub Releases | https://github.com/jadegun1124/umap/releases/tag/v1.16.0 |
 
 Google Play, App Store, TestFlight에는 올리지 않았습니다. iOS는 아이콘 에셋만 있고 설치 파일은 없습니다.
 
-`main`에 푸시하면 GitHub Actions가 회사 홈을 Pages에 배포하고, 같은 커밋으로 디버그 APK를 만들어 GitHub Release `v1.15.0`의 `umap-v1.15.0-tracker.apk`를 갱신합니다. 이전 빌드는 `v1.14.0`, `v1.13.0`, `v1.12.0`, `v1.11.0`, `v1.10.0`, `v1.9.0`, `v1.8.0`, `v1.7.0`, `v1.6.0`, `v1.5.0`, `v1.4.0`, `v1.3.0`, `v1.2.0`, `v1.1.0`, `v1.0.0`에 남아 있습니다.
+`main`에 푸시하면 GitHub Actions가 회사 홈을 Pages에 배포하고, 같은 커밋으로 디버그 APK를 만들어 GitHub Release `v1.16.0`의 `umap-v1.16.0-tracker.apk`를 갱신합니다. 이전 빌드는 `v1.15.0`, `v1.14.0`, `v1.13.0`, `v1.12.0`, `v1.11.0`, `v1.10.0`, `v1.9.0`, `v1.8.0`, `v1.7.0`, `v1.6.0`, `v1.5.0`, `v1.4.0`, `v1.3.0`, `v1.2.0`, `v1.1.0`, `v1.0.0`에 남아 있습니다.
 
 ## 화면
 
@@ -57,7 +57,7 @@ VITE_VWORLD_API_KEY=
 VITE_FAMILY_SYNC_URL=
 ```
 
-- 이름: 가족 지도에 보일 표시 이름을 이 기기에만 저장합니다. Google 로그인과 전화번호 본인 확인은 없습니다.
+- 이름: 가족 지도에 보일 표시 이름과 프로필 사진을 이 기기에서 정합니다. 가족 서버에 연결되면 같은 초대의 다른 폰에도 보입니다. Google 로그인과 전화번호 본인 확인은 없습니다.
 - 지도: 국토교통부 [VWorld](https://www.vworld.kr/) 2D Base 한 종류입니다. 위성, CARTO, OpenStreetMap 전환은 없습니다.
   - `https://api.vworld.kr/req/wmts/1.0.0/{API_KEY}/Base/{z}/{y}/{x}.png`
   - 키는 `import.meta.env.VITE_VWORLD_API_KEY`만 읽습니다. 빌드 시점에 JS 안에 들어갑니다.
@@ -91,9 +91,9 @@ npm run dev
 
 ## 안드로이드 APK
 
-받는 곳: https://github.com/jadegun1124/umap/releases/download/v1.15.0/umap-v1.15.0-tracker.apk
+받는 곳: https://github.com/jadegun1124/umap/releases/download/v1.16.0/umap-v1.16.0-tracker.apk
 
-`main` 푸시마다 `Build Android APK (Umap)` 워크플로가 웹을 빌드하고 `dist` 를 안드로이드 에셋으로 복사한 뒤 `assembleDebug` 로 APK를 만듭니다. 결과 파일은 GitHub Release `v1.15.0`에 올립니다. 앱 `versionName`은 `1.15.0`, `versionCode`는 16입니다. Play 스토어 트랙은 없습니다.
+`main` 푸시마다 `Build Android APK (Umap)` 워크플로가 웹을 빌드하고 `dist` 를 안드로이드 에셋으로 복사한 뒤 `assembleDebug` 로 APK를 만듭니다. 결과 파일은 GitHub Release `v1.16.0`에 올립니다. 앱 `versionName`은 `1.16.0`, `versionCode`는 17입니다. Play 스토어 트랙은 없습니다.
 
 ## 데이터
 
@@ -112,7 +112,7 @@ npm run dev
 3. 위치 공유를 허용한 피관리자 폰이 최신 점 하나를 `PUT /v1/rooms/{코드}/place` 로 보냅니다. 걷는 동안에는 5초마다, 머무름이 이어지면 30초 이상으로 다시 보냅니다.
 4. 관리자 화면은 약 2.5초마다 읽기 키로 그 방을 읽습니다. 쓰기 키만 가진 폰은 좌표를 읽을 수 없습니다.
 5. 집 이탈과 SOS도 같은 방으로 갑니다. 다른 폰의 관리자 화면에서 사이렌이 울립니다.
-6. 서버에는 이름별 최신 좌표와 최근 알림만 있습니다. 이동 경로 전체는 각 기기에만 쌓입니다.
+6. 서버에는 구성원 id별 최신 좌표와 최근 알림, 그리고 이름·썸네일 프로필이 있습니다. id가 없는 예전 점은 이름별로 남아 있고, 그 폰이 id를 보내면 같은 이름의 점을 id 슬롯으로 옮깁니다. 이동 경로 전체는 각 기기에만 쌓입니다. 프로필 수정은 그 기기의 프로필 키로만 됩니다.
 
 같은 브라우저의 `localStorage`와 `BroadcastChannel`은 그대로 둡니다. 서버가 죽어도 그 경로로 같은 브라우저 안에서는 핀이 움직입니다.
 
@@ -135,6 +135,8 @@ cd sync
 npx wrangler@4 login
 npx wrangler@4 deploy
 ```
+
+프로필은 `PUT /v1/rooms/:code/profile` 입니다. 본문에는 구성원 id, 이름, 작은 JPEG 또는 WebP 썸네일이 들어가고, 헤더 `x-umap-profile-key` 가 그 id의 주인만 고치게 합니다. 위치 `PUT /place` 에는 사진을 넣지 않고, 구성원 id가 있으면 같은 키로 그 슬롯만 갱신합니다. 이름을 바꿔도 id 슬롯의 최신 좌표는 남습니다.
 
 개인 대화는 `POST /v1/rooms/:code/chat` 과 `GET /v1/rooms/:code/chat?me=&with=` 입니다. `me`만 있으면 그 이름이 참여한 대화만 돌아옵니다. 방 조회와 `GET /family`에는 글을 넣지 않습니다. 이 경로가 있는 Worker를 다시 올려야 다른 폰과 글이 오갑니다. 예전 Worker면 글은 이 기기에만 남고, 화면에 그 사실을 알립니다.
 

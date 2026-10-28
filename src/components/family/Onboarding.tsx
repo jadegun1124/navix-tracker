@@ -133,7 +133,7 @@ function Login({ onSubmit }: { onSubmit: (profile: Profile) => void }) {
       <img src={iconSrc} alt="" className="h-16 w-16 rounded-2xl shadow-md" />
       <h1 className="mt-6 text-[28px] font-black leading-tight">이 폰에서 쓸 이름</h1>
       <p className="mt-3 text-sm leading-6 text-slate-600">
-        가족 지도에 보이는 이름입니다. 이 기기에만 저장됩니다. 전화번호나 Google 계정은 쓰지 않습니다.
+        가족 지도에 보이는 이름입니다. 이 기기에 저장되고, 초대로 연결되면 가족 폰에도 보입니다. 전화번호나 Google 계정은 쓰지 않습니다.
       </p>
       <form
         className="mt-8"
