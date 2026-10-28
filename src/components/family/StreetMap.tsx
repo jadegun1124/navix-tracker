@@ -1,9 +1,10 @@
 import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import { hasLocation } from '../../lib/geo';
+import { trailDrawParts } from '../../lib/tracking.mjs';
 import { VWORLD_ATTRIBUTION, vworldApiKey, vworldBaseTileUrl } from '../../services/vworld';
 import type { HomeZone, Member, TrackPoint } from '../../types/family';
-import { hasLocation } from '../../lib/geo';
 
 export interface StreetMapHandle {
   panTo: (lat: number, lng: number) => void;
@@ -163,24 +164,28 @@ export const StreetMap = forwardRef<StreetMapHandle, {
     }
 
     if (trail.length >= 2) {
-      const latlngs = trail.map((point) => [point.lat, point.lng] as [number, number]);
-      const split = Math.max(1, latlngs.length - 3);
       const stroke = { smoothFactor: 0, lineCap: 'round' as const, lineJoin: 'round' as const };
-      L.polyline(latlngs, { ...stroke, color: '#ffffff', weight: 9, opacity: 0.9 }).addTo(group);
-      L.polyline(latlngs.slice(0, split), {
-        ...stroke,
-        color: trailColor,
-        weight: 4,
-        opacity: 0.95,
-        dashArray: '6 8',
-      }).addTo(group);
-      L.polyline(latlngs.slice(split - 1), {
-        ...stroke,
-        color: trailColor,
-        weight: 6,
-        opacity: 1,
-      }).addTo(group);
-      const start = trail[0];
+      const parts = trailDrawParts(trail);
+      for (const part of parts) {
+        if (part.points.length < 2) continue;
+        const latlngs = part.points.map((point) => [point.lat, point.lng] as [number, number]);
+        const dashed = part.dashed;
+        L.polyline(latlngs, {
+          ...stroke,
+          color: '#ffffff',
+          weight: dashed ? 7 : 9,
+          opacity: 0.9,
+          dashArray: dashed ? '6 8' : undefined,
+        }).addTo(group);
+        L.polyline(latlngs, {
+          ...stroke,
+          color: trailColor,
+          weight: dashed ? 4 : 6,
+          opacity: dashed ? 0.85 : 1,
+          dashArray: dashed ? '6 8' : undefined,
+        }).addTo(group);
+      }
+      const start = parts[0]?.points[0] ?? trail[0];
       L.circleMarker([start.lat, start.lng], {
         radius: 5,
         color: trailColor,

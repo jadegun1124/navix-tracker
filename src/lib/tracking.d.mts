@@ -71,6 +71,10 @@ export function trailMoveGate(last: TrailSample | null | undefined, point: Trail
 export function trailDecision(last: TrailSample | null | undefined, point: TrailSample | null | undefined): TrailDecision;
 export function shouldKeepTrailPoint(last: TrailSample | null | undefined, point: TrailSample): boolean;
 export function collapseStayTrail(points: TrailSample[] | null | undefined): TrailSample[];
+export const TRAIL_GAP_M: number;
+export const TRAIL_GAP_MS: number;
+export function trailSegmentDashed(start: TrailSample | null | undefined, end: TrailSample | null | undefined): boolean;
+export function trailDrawParts(points: TrailSample[] | null | undefined): { points: TrailSample[]; dashed: boolean }[];
 export function visibleTrail(points: TrailSample[] | null | undefined): TrailSample[];
 export function displayCoordinate<T extends TrailSample>(points: TrailSample[] | null | undefined, point: T): T;
 export function settleTrailPoint(

@@ -10,12 +10,12 @@
 | :--- | :--- | :--- |
 | 회사 홈 | GitHub Pages | https://jadegun1124.github.io/umap/ |
 | 앱 화면 미리보기 | 같은 Pages의 `?app=1` | https://jadegun1124.github.io/umap/?app=1 |
-| 안드로이드 앱 | GitHub Releases APK v1.10.0 | https://github.com/jadegun1124/umap/releases/download/v1.10.0/umap-v1.10.0-tracker.apk |
-| 릴리스 페이지 | GitHub Releases | https://github.com/jadegun1124/umap/releases/tag/v1.10.0 |
+| 안드로이드 앱 | GitHub Releases APK v1.11.0 | https://github.com/jadegun1124/umap/releases/download/v1.11.0/umap-v1.11.0-tracker.apk |
+| 릴리스 페이지 | GitHub Releases | https://github.com/jadegun1124/umap/releases/tag/v1.11.0 |
 
 Google Play, App Store, TestFlight에는 올리지 않았습니다. iOS는 아이콘 에셋만 있고 설치 파일은 없습니다.
 
-`main`에 푸시하면 GitHub Actions가 회사 홈을 Pages에 배포하고, 같은 커밋으로 디버그 APK를 만들어 GitHub Release `v1.10.0`의 `umap-v1.10.0-tracker.apk`를 갱신합니다. 이전 빌드는 `v1.9.0`, `v1.8.0`, `v1.7.0`, `v1.6.0`, `v1.5.0`, `v1.4.0`, `v1.3.0`, `v1.2.0`, `v1.1.0`, `v1.0.0`에 남아 있습니다.
+`main`에 푸시하면 GitHub Actions가 회사 홈을 Pages에 배포하고, 같은 커밋으로 디버그 APK를 만들어 GitHub Release `v1.11.0`의 `umap-v1.11.0-tracker.apk`를 갱신합니다. 이전 빌드는 `v1.10.0`, `v1.9.0`, `v1.8.0`, `v1.7.0`, `v1.6.0`, `v1.5.0`, `v1.4.0`, `v1.3.0`, `v1.2.0`, `v1.1.0`, `v1.0.0`에 남아 있습니다.
 
 ## 화면
 
@@ -63,7 +63,7 @@ VITE_FAMILY_SYNC_URL=
   - 키는 `import.meta.env.VITE_VWORLD_API_KEY`만 읽습니다. 빌드 시점에 JS 안에 들어갑니다.
   - 키가 없으면 "키가 이 빌드에 없습니다"만 보여 주고 타일을 요청하지 않습니다. 키가 있는데 타일이 실패하면, 그 페이지의 주소(origin)를 인증키 도메인에 넣으라는 안내가 나옵니다. 타일이 한 장이라도 오면 안내는 사라집니다.
   - 인증키 서비스 URL: `https://jadegun1124.github.io`, 앱 `https://localhost`, 로컬 개발 `http://localhost:5173`.
-- 이동 경로: 서울 날짜로 오늘부터 30일 전까지 이 기기에 남기고, 그보다 오래된 점은 지웁니다. 정지는 반경 50m·3분, 구간은 정지와 정지 사이의 이동 시간입니다. 걷는 동안에는 수 미터마다 점을 남겨 골목을 따라 굽고, 머무름 중의 작은 흔들림은 잇지 않습니다. 갔다가 바로 돌아오는 얇은 스파이크만 빼서, 관리자와 피관리자 자신의 선과 다른 폰에서 받은 선이 같은 기준으로 매끈해집니다. 실시간 핀은 체류 반경을 벗어나면 그 위치로 이동합니다. 위치 유지를 켠 폰은 이동 중 GPS를 약 3초마다 받고, 머무름이 이어지면 30초, 1분, 더 오래 멈추면 2분까지 간격을 늘립니다. 가족 카드에는 「방금 업데이트」 또는 「3분 전 업데이트」처럼 마지막 시각을 적습니다. 유료 도로 스냅은 쓰지 않습니다. 샘플 사람이나 예시 좌표는 없습니다.
+- 이동 경로: 서울 날짜로 오늘부터 30일 전까지 이 기기에 남기고, 그보다 오래된 점은 지웁니다. 정지는 반경 50m·3분, 구간은 정지와 정지 사이의 이동 시간입니다. 걷는 동안에는 약 4m마다 점을 남겨 골목을 따라 굽습니다. 화면에서 선을 펴는 거리는 1.8m라, 정확도가 ±15m여도 곡선이 한 줄로 붙지 않습니다. 32m보다 긴 현에는 실제로 걷던 중간 점을 다시 넣습니다. 머무름 중 정확도 약 2배 안의 흔들림과 갔다가 바로 돌아오는 얇은 스파이크는 잇지 않습니다. 관리자와 피관리자 자신의 선, 다른 폰에서 받은 선이 같은 기준입니다. 이어진 걸음은 실선이고, 48m 이상 비고 20초 이상 점이 없는 구간만 점선입니다. 그 빈 구간을 도로 모양으로 채우지 않습니다. 실시간 핀은 체류 반경을 벗어나면 그 위치로 이동합니다. 위치 유지를 켠 폰은 이동 중 GPS를 5초마다 받고, 머무름이 이어지면 30초, 1분, 더 오래 멈추면 2분까지 간격을 늘립니다. 가족 카드에는 「방금 업데이트」 또는 「3분 전 업데이트」처럼 마지막 시각을 적습니다. 유료 도로 스냅은 쓰지 않습니다. 샘플 사람이나 예시 좌표는 없습니다.
 
 `VITE_GOOGLE_MAPS_API_KEY`는 가족 지도에서 쓰지 않습니다.
 
@@ -91,9 +91,9 @@ npm run dev
 
 ## 안드로이드 APK
 
-받는 곳: https://github.com/jadegun1124/umap/releases/download/v1.10.0/umap-v1.10.0-tracker.apk
+받는 곳: https://github.com/jadegun1124/umap/releases/download/v1.11.0/umap-v1.11.0-tracker.apk
 
-`main` 푸시마다 `Build Android APK (Umap)` 워크플로가 웹을 빌드하고 `dist` 를 안드로이드 에셋으로 복사한 뒤 `assembleDebug` 로 APK를 만듭니다. 결과 파일은 GitHub Release `v1.10.0`에 올립니다. 앱 `versionName`은 `1.10.0`, `versionCode`는 11입니다. Play 스토어 트랙은 없습니다.
+`main` 푸시마다 `Build Android APK (Umap)` 워크플로가 웹을 빌드하고 `dist` 를 안드로이드 에셋으로 복사한 뒤 `assembleDebug` 로 APK를 만듭니다. 결과 파일은 GitHub Release `v1.11.0`에 올립니다. 앱 `versionName`은 `1.11.0`, `versionCode`는 12입니다. Play 스토어 트랙은 없습니다.
 
 ## 데이터
 
@@ -109,7 +109,7 @@ npm run dev
 
 1. 관리자 폰이 쓰기 키와 읽기 키를 만듭니다. 읽기 키는 그 폰의 세션에만 있습니다.
 2. 초대 링크에는 초대 코드, 쓰기 키, 읽기 키의 해시가 들어갑니다. 읽기 키 원문은 링크에 없습니다.
-3. 위치 공유를 허용한 피관리자 폰이 최신 점 하나를 `PUT /v1/rooms/{코드}/place` 로 보냅니다. 걷는 동안에는 약 3초마다, 머무름이 이어지면 30초 이상으로 다시 보냅니다.
+3. 위치 공유를 허용한 피관리자 폰이 최신 점 하나를 `PUT /v1/rooms/{코드}/place` 로 보냅니다. 걷는 동안에는 5초마다, 머무름이 이어지면 30초 이상으로 다시 보냅니다.
 4. 관리자 화면은 약 2.5초마다 읽기 키로 그 방을 읽습니다. 쓰기 키만 가진 폰은 좌표를 읽을 수 없습니다.
 5. 집 이탈과 SOS도 같은 방으로 갑니다. 다른 폰의 관리자 화면에서 사이렌이 울립니다.
 6. 서버에는 이름별 최신 좌표와 최근 알림만 있습니다. 이동 경로 전체는 각 기기에만 쌓입니다.

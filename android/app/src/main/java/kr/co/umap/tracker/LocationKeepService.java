@@ -41,9 +41,12 @@ import org.json.JSONObject;
  * Thresholds match src/lib/tracking.mjs: drop fixes older than 30s, precise
  * accuracy above 80m, later fixes worse than 40m, jumps faster than 350 m/s.
  * Coordinates are the real fix. The live pin's stay bubble is applied in JS.
- * While the phone is moving, GPS is requested about every 3s and those fixes
- * are published so a walked trail can follow the street. After a stay is
- * clear, the request stretches to 30s, then 60s, then 2min.
+ * While the phone is moving, GPS is requested about every 5s. A 1.2 m/s
+ * walk moves about 6m in that interval. The JS walk gate is 4m, so the fix
+ * stays a vertex, and display simplify (1.8m) does not pull the bend into
+ * one chord. 3s sampled faster than the vertex spacing and cost more
+ * battery. After a stay is clear, the request still stretches to 30s,
+ * then 60s, then 2min.
  */
 public class LocationKeepService {
     public static final String ACTION_FIX = "kr.co.umap.tracker.LOCATION_FIX";
@@ -64,15 +67,15 @@ public class LocationKeepService {
     private static Location lastPublished;
     private static long lastPublishedAt;
     /** Walking trail samples. LocationManager treats this as the fastest interval. */
-    private static final long GPS_MOVING_MS = 3_000L;
+    private static final long GPS_MOVING_MS = 5_000L;
     /** First stay interval, then longer while the phone is clearly still. */
     private static final long GPS_STILL_MS = 30_000L;
     private static final long GPS_STILL_LONG_MS = 60_000L;
     private static final long GPS_STILL_LONGER_MS = 120_000L;
     private static final long STILL_LONG_AFTER_MS = 3 * 60_000L;
     private static final long STILL_LONGER_AFTER_MS = 15 * 60_000L;
-    /** Drop a second provider's burst. 3s GPS fixes are not inside this window. */
-    private static final long SAMPLE_GAP_MS = 2_500L;
+    /** Drop a second provider's burst. 5s GPS fixes are not inside this window. */
+    private static final long SAMPLE_GAP_MS = 4_000L;
     private static long requestedGpsMs = GPS_MOVING_MS;
     private static long stillSinceMs = 0;
     private static long lastSampleAt = 0;
@@ -411,7 +414,7 @@ public class LocationKeepService {
             long since = now - lastPublishedAt;
             float moved = lastPublished == null ? 9999f : lastPublished.distanceTo(location);
             long publishGap = moving ? SAMPLE_GAP_MS : requestedGpsMs;
-            if (since + 1_000L < publishGap && moved < (moving ? 8f : 30f)) {
+            if (since + 1_000L < publishGap && moved < (moving ? 4f : 30f)) {
                 rememberFilter(context);
                 return null;
             }
@@ -433,7 +436,7 @@ public class LocationKeepService {
         return Math.max(50f, Math.max(anchorAccuracy, nextAccuracy) * 2f);
     }
 
-    /** True while the phone should stay on the 3s GPS stream. */
+    /** True while the phone should stay on the 5s GPS stream. */
     private static boolean noteMovement(Location fix, long fixAt) {
         float speed = fix.hasSpeed() ? fix.getSpeed() : -1f;
         float fromAnchor = motionAnchor == null ? 9999f : motionAnchor.distanceTo(fix);

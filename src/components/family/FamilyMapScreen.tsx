@@ -297,7 +297,7 @@ export function FamilyMapScreen() {
             zoom={16}
             members={visibleMembers}
             home={draftHome ?? (showZone ? state.home : null)}
-            trail={trail}
+            trail={showPath ? dayPoints : []}
             trailColor="#0084FF"
             selectedId={selected?.id}
             onSelect={(id) => {
