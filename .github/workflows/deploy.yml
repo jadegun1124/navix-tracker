@@ -39,6 +39,7 @@ jobs:
           VITE_VWORLD_API_KEY: ${{ secrets.VITE_VWORLD_API_KEY }}
           VWORLD_API_KEY: ${{ secrets.VWORLD_API_KEY }}
           VITE_FAMILY_SYNC_URL: ${{ secrets.VITE_FAMILY_SYNC_URL != '' && secrets.VITE_FAMILY_SYNC_URL || 'https://umap-family-sync.umap-jadegun.workers.dev' }}
+          VITE_GOOGLE_WEB_CLIENT_ID: ${{ secrets.VITE_GOOGLE_WEB_CLIENT_ID }}
         run: |
           if [ -z "${VITE_VWORLD_API_KEY}" ] && [ -n "${VWORLD_API_KEY}" ]; then
             export VITE_VWORLD_API_KEY="${VWORLD_API_KEY}"

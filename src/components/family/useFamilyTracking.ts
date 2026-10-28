@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { hasLocation, haversineMeters } from '../../lib/geo';
+import { isSelfEchoPlace } from '../../lib/peerFamily.mjs';
 import { placePriorName } from '../../lib/placeAlias.mjs';
 import { buildDayRecord } from '../../lib/tracking.mjs';
 import type { AcceptedFix } from '../../lib/tracking.mjs';
@@ -160,7 +161,7 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
   }, [trackingOn]);
 
   useEffect(() => {
-    if (state.mode !== 'managed') return;
+    if (state.guardians.length === 0) return;
     const name = (state.profile?.name || self?.name || '가족').trim().slice(0, 20) || '가족';
     const memberId = state.profile?.profileKey ? state.profile.id : undefined;
     const nextTokens: Record<string, string> = {};
@@ -195,6 +196,7 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
         name,
         ...(memberId ? { memberId } : {}),
         ...(priorName ? { priorName } : {}),
+        audience: 'family',
         lat: sharing && located ? located.lat : null,
         lng: sharing && located ? located.lng : null,
         accuracyM: located?.accuracyM ?? 0,
@@ -207,7 +209,7 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
   }, [selfPublishKey, state.guardians, state.mode, state.profile?.id, state.profile?.name, state.profile?.profileKey]);
 
   useEffect(() => {
-    if (state.mode !== 'admin') return;
+    if (!state.syncWriteKey || !state.syncReadKey) return;
     let cancel = false;
     const name = (state.profile?.name || self?.name || '가족').trim().slice(0, 20) || '가족';
     const memberId = state.profile?.profileKey ? state.profile.id : undefined;
@@ -222,7 +224,7 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
       const ready = await familyEndpointAvailable(state.inviteCode, token);
       if (cancel) return;
       if (!ready) {
-        setFamilyShareNote(share ? '가족 위치 서버를 갱신하기 전에는 피관리자 화면으로 내 위치를 보내지 않습니다. 이 폰 지도에는 내 위치가 그대로 보입니다.' : null);
+        setFamilyShareNote(share ? '가족 위치 서버를 갱신하기 전에는 다른 폰으로 내 위치를 보내지 않습니다. 이 폰 지도에는 내 위치가 그대로 보입니다.' : null);
         return;
       }
       setFamilyShareNote(null);
@@ -273,12 +275,10 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
         at: Date.now(),
       }, code, token, profile.profileKey);
     };
-    if (current.mode === 'managed') {
-      for (const link of current.guardians) {
-        if (link.syncToken) send(link.code, link.syncToken);
-      }
+    for (const link of current.guardians) {
+      if (link.syncToken) send(link.code, link.syncToken);
     }
-    if (current.mode === 'admin') {
+    if (current.syncWriteKey && current.syncReadKey) {
       void syncTokenFor(current.syncWriteKey, current.syncReadKey).then((token) => {
         if (!cancel) send(current.inviteCode, token);
       });
@@ -321,14 +321,12 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
         return;
       }
       const targets: KeepAliveTarget[] = [];
-      if (current.mode === 'managed') {
-        for (const link of current.guardians) {
-          if (!link.syncToken || !splitSyncToken(link.syncToken)) continue;
-          if (link.share !== 'allowed' && link.share !== 'revoked') continue;
-          targets.push({ token: link.syncToken, code: link.code, audience: 'admin', sharing: link.share === 'allowed' });
-        }
+      for (const link of current.guardians) {
+        if (!link.syncToken || !splitSyncToken(link.syncToken)) continue;
+        if (link.share !== 'allowed' && link.share !== 'revoked') continue;
+        targets.push({ token: link.syncToken, code: link.code, audience: 'family', sharing: link.share === 'allowed' });
       }
-      if (current.mode === 'admin' && (current.shareSelfWithFamily || nativeAdminShared.current)) {
+      if (current.shareSelfWithFamily || nativeAdminShared.current) {
         const token = await syncTokenFor(current.syncWriteKey, current.syncReadKey);
         if (splitSyncToken(token) && await familyEndpointAvailable(current.inviteCode, token)) {
           targets.push({ token, code: current.inviteCode, audience: 'family', sharing: current.shareSelfWithFamily });
@@ -365,25 +363,42 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
     };
   }, [keepKey]);
 
-  const familyLinkKey = state.mode === 'managed' ? state.guardians.map((link) => `${link.code}:${link.syncToken ?? ''}`).join('|') : '';
+  const familyLinkKey = `${state.inviteCode}:${state.syncWriteKey}:${state.guardians.map((link) => `${link.code}:${link.syncToken ?? ''}`).join('|')}`;
   useEffect(() => {
-    if (state.mode !== 'managed') return;
-    const links = familyRef.current.state.guardians
-      .filter((link) => link.syncToken)
-      .map((link) => ({ code: link.code, token: link.syncToken as string }));
-    return startManagedFamilySync(links, (code, places, profiles) => {
-      remoteRooms.current[code] = places;
-      familyRef.current.setRoomFamilyPlaces(code, places, profiles);
-      familyRef.current.applySharedProfiles(code, profiles);
-    });
-  }, [familyLinkKey, state.mode]);
+    let stopped = false;
+    let stop = () => {};
+    void (async () => {
+      const current = familyRef.current.state;
+      const links = current.guardians
+        .filter((link) => link.syncToken)
+        .map((link) => ({ code: link.code, token: link.syncToken as string }));
+      if (current.syncWriteKey && current.syncReadKey) {
+        const token = await syncTokenFor(current.syncWriteKey, current.syncReadKey);
+        if (!stopped && splitSyncToken(token)) links.push({ code: current.inviteCode, token });
+      }
+      if (stopped || links.length === 0) return;
+      stop = startManagedFamilySync(links, (code, places, profiles) => {
+        remoteRooms.current[code] = places;
+        familyRef.current.setRoomFamilyPlaces(code, places, profiles);
+        familyRef.current.applySharedProfiles(code, profiles);
+      });
+    })();
+    return () => {
+      stopped = true;
+      stop();
+    };
+  }, [familyLinkKey]);
 
   useEffect(() => {
-    if (state.mode !== 'managed') return;
+    const joined = new Set(state.guardians.map((link) => link.code));
+    if (state.inviteCode) joined.add(state.inviteCode);
+    if (joined.size === 0) return;
     const apply = () => {
+      const current = familyRef.current.state;
       const grouped = new Map<string, SharedPlace[]>();
       for (const place of readSharedPlaces()) {
-        if (place.audience !== 'family' || !place.sharing || place.lat == null || place.lng == null) continue;
+        if (!joined.has(place.code) || place.audience !== 'family' || !place.sharing || place.lat == null || place.lng == null) continue;
+        if (isSelfEchoPlace(place, current.profile?.id, current.inviteCode)) continue;
         const list = grouped.get(place.code) ?? [];
         list.push(place);
         grouped.set(place.code, list);
@@ -395,7 +410,7 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
     };
     apply();
     return subscribeSharedPlaces(apply);
-  }, [state.mode]);
+  }, [familyLinkKey]);
 
   useEffect(() => {
     const now = Date.now();
@@ -467,33 +482,46 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
     };
   }, [state.journeys]);
 
-  const placeKey = useRef('');
+  const placeKeys = useRef<Record<string, string>>({});
+  const memberPlaceKey = state.members
+    .filter((member) => hasLocation(member))
+    .map((member) => `${member.id}:${member.lat?.toFixed(3)},${member.lng?.toFixed(3)}:${member.place ?? ''}`)
+    .join('|');
   useEffect(() => {
-    if (state.stage !== 'map') return;
+    if (state.stage !== 'map' || !vworldApiKey()) return;
     const current = familyRef.current.state;
-    const located = current.members.find((member) => member.id === 'self');
-    if (!located || !hasLocation(located)) return;
-    const key = `${located.lat.toFixed(3)},${located.lng.toFixed(3)}`;
-    if (placeKey.current === key && located.place) return;
     const home = current.home;
-    if (home && haversineMeters(located, home) <= home.radiusM) {
-      placeKey.current = key;
+    const pending = current.members.find((member) => {
+      if (!hasLocation(member) || member.role === 'guardian' || member.lat == null || member.lng == null) return false;
+      const key = `${member.lat.toFixed(3)},${member.lng.toFixed(3)}`;
+      return !(placeKeys.current[member.id] === key && member.place);
+    });
+    if (!pending || pending.lat == null || pending.lng == null) return;
+    const key = `${pending.lat.toFixed(3)},${pending.lng.toFixed(3)}`;
+    const id = pending.id;
+    if (home && id === 'self' && haversineMeters({ lat: pending.lat, lng: pending.lng }, home) <= home.radiusM) {
+      placeKeys.current[id] = key;
       const label = home.label || '우리 집';
-      if (located.place !== label) familyRef.current.setSelfPlace(label);
+      if (pending.place !== label) familyRef.current.setMemberPlace(id, label);
       return;
     }
-    if (!vworldApiKey()) return;
     let cancel = false;
-    void reverseGeocodeCached(located.lat, located.lng).then((label) => {
+    const apply = (label: string | null) => {
       if (cancel) return;
-      placeKey.current = key;
+      placeKeys.current[id] = key;
       const short = label ? shortenAddress(label) : '';
-      if (short && short !== located.place) familyRef.current.setSelfPlace(short);
-    });
+      if (short) familyRef.current.setMemberPlace(id, short);
+    };
+    const cached = cachedAddress(pending.lat, pending.lng);
+    if (cached) {
+      apply(cached);
+      return;
+    }
+    void reverseGeocodeCached(pending.lat, pending.lng).then(apply);
     return () => {
       cancel = true;
     };
-  }, [self?.lat, self?.lng, state.home, state.stage]);
+  }, [memberPlaceKey, state.home, state.stage]);
 
   return { waiting, familyShareNote, native: umapLocationNative(), openSettings: openAlwaysLocation };
 }

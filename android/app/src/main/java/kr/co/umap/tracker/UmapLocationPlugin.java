@@ -64,8 +64,15 @@ public class UmapLocationPlugin extends Plugin {
     private boolean leftForSettings;
     private String openedScreen = "none";
     private long openedAt;
+    private boolean wantOverlay;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private Runnable bounceFallback;
+    private Runnable overlayTask;
+    private int overlayTries;
+    private PluginCall pendingOverlay;
+    private boolean leftForOverlay;
+    private long overlayOpenedAt;
+    private Runnable overlayBounce;
 
     public static void openChat(String code, String peer) {
         if (code == null || peer == null || code.isEmpty() || peer.isEmpty()) return;
@@ -183,12 +190,56 @@ public class UmapLocationPlugin extends Plugin {
     }
 
     @PluginMethod
+    public void locationAccess(PluginCall call) {
+        JSObject result = new JSObject();
+        String location = "denied";
+        if (hasBackground()) location = "always";
+        else if (hasForeground()) location = "while-using";
+        result.put("location", location);
+        call.resolve(result);
+    }
+
+    @PluginMethod
+    public void overlayPermission(PluginCall call) {
+        JSObject result = new JSObject();
+        result.put("granted", AlwaysAllowOverlay.canDraw(getContext()));
+        call.resolve(result);
+    }
+
+    @PluginMethod
+    public void openOverlaySettings(PluginCall call) {
+        if (AlwaysAllowOverlay.canDraw(getContext())) {
+            JSObject result = new JSObject();
+            result.put("opened", false);
+            result.put("granted", true);
+            call.resolve(result);
+            return;
+        }
+        Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION);
+        intent.setData(Uri.parse("package:" + getContext().getPackageName()));
+        call.setKeepAlive(true);
+        pendingOverlay = call;
+        leftForOverlay = false;
+        overlayOpenedAt = SystemClock.uptimeMillis();
+        if (startExternal(intent)) return;
+        pendingOverlay = null;
+        JSObject result = new JSObject();
+        result.put("opened", false);
+        result.put("granted", false);
+        call.resolve(result);
+    }
+
+    @PluginMethod
     public void openAlwaysLocation(PluginCall call) {
         AppCompatActivity activity = getActivity();
         if (activity == null) {
             resolveAlways(call, false);
             return;
         }
+        wantOverlay = Boolean.TRUE.equals(call.getBoolean("overlay", false));
+        clearOverlayTask();
+        AlwaysAllowOverlay.hide();
+        AlwaysAllowOverlay.consumeShown();
         call.setKeepAlive(true);
         pendingAlways = call;
         leftForSettings = false;
@@ -197,6 +248,7 @@ public class UmapLocationPlugin extends Plugin {
             if (openAlwaysSettings()) return;
             pendingAlways = null;
             leftForSettings = false;
+            wantOverlay = false;
             resolveAlways(call, false);
         });
     }
@@ -208,11 +260,41 @@ public class UmapLocationPlugin extends Plugin {
             leftForSettings = true;
             clearBounce();
         }
+        if (pendingOverlay != null) {
+            leftForOverlay = true;
+            if (overlayBounce != null) {
+                mainHandler.removeCallbacks(overlayBounce);
+                overlayBounce = null;
+            }
+        }
+    }
+
+    @Override
+    protected void handleOnDestroy() {
+        clearOverlayTask();
+        AlwaysAllowOverlay.hide();
+        super.handleOnDestroy();
     }
 
     @Override
     protected void handleOnResume() {
         super.handleOnResume();
+        if (pendingOverlay != null && leftForOverlay) {
+            long elapsed = SystemClock.uptimeMillis() - overlayOpenedAt;
+            if (elapsed < BOUNCE_MS) {
+                leftForOverlay = false;
+                overlayBounce = () -> {
+                    if (pendingOverlay == null || leftForOverlay) return;
+                    AppCompatActivity activity = getActivity();
+                    if (activity != null && !activity.hasWindowFocus()) return;
+                    resolveOverlay(true);
+                };
+                mainHandler.postDelayed(overlayBounce, BOUNCE_CONFIRM_MS);
+                return;
+            }
+            resolveOverlay(true);
+            return;
+        }
         if (pendingAlways != null && leftForSettings) {
             long elapsed = SystemClock.uptimeMillis() - openedAt;
             if (elapsed < BOUNCE_MS && !"app-details".equals(openedScreen)) {
@@ -351,7 +433,26 @@ public class UmapLocationPlugin extends Plugin {
         call.resolve(result);
     }
 
+    private void resolveOverlay(boolean opened) {
+        if (overlayBounce != null) {
+            mainHandler.removeCallbacks(overlayBounce);
+            overlayBounce = null;
+        }
+        PluginCall call = pendingOverlay;
+        pendingOverlay = null;
+        leftForOverlay = false;
+        if (call == null) return;
+        JSObject result = new JSObject();
+        result.put("opened", opened);
+        result.put("granted", AlwaysAllowOverlay.canDraw(getContext()));
+        call.resolve(result);
+    }
+
     private void resolveAlways(PluginCall call, boolean opened) {
+        clearOverlayTask();
+        boolean overlay = AlwaysAllowOverlay.consumeShown();
+        AlwaysAllowOverlay.hide();
+        wantOverlay = false;
         pendingAlways = null;
         leftForSettings = false;
         String location = "denied";
@@ -361,6 +462,7 @@ public class UmapLocationPlugin extends Plugin {
         result.put("location", location);
         result.put("opened", opened);
         result.put("native", true);
+        result.put("overlay", overlay);
         result.put("screen", opened ? openedScreen : "none");
         openedScreen = "none";
         call.resolve(result);
@@ -414,6 +516,34 @@ public class UmapLocationPlugin extends Plugin {
         openedAt = SystemClock.uptimeMillis();
         leftForSettings = false;
         armBounce();
+        if (wantOverlay) scheduleOverlay();
+    }
+
+    private void scheduleOverlay() {
+        clearOverlayTask();
+        overlayTries = 0;
+        overlayTask = new Runnable() {
+            @Override
+            public void run() {
+                if (pendingAlways == null || !wantOverlay) return;
+                AppCompatActivity activity = getActivity();
+                boolean covered = leftForSettings || (activity != null && !activity.hasWindowFocus());
+                if (!covered && overlayTries < 6) {
+                    overlayTries += 1;
+                    mainHandler.postDelayed(this, 300);
+                    return;
+                }
+                AlwaysAllowOverlay.show(getContext());
+            }
+        };
+        mainHandler.postDelayed(overlayTask, 350);
+    }
+
+    private void clearOverlayTask() {
+        if (overlayTask != null) {
+            mainHandler.removeCallbacks(overlayTask);
+            overlayTask = null;
+        }
     }
 
     private void armBounce() {
