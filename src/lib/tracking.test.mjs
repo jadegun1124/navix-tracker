@@ -14,6 +14,8 @@ import {
   seoulDayEndMs,
   seoulDayKey,
   shouldKeepTrailPoint,
+  displayCoordinate,
+  liveCoordinate,
   settleTrailPoint,
   tracksWithinHistory,
   trailDecision,
@@ -93,6 +95,49 @@ test('a still phone ignores one fast leap and keeps a sustained walk', () => {
   const origin = { lat: 37.5, lng: 127, at: t, accuracyM: 15, speedMps: 0, staying: true };
   assert.equal(trailDecision(origin, { ...offset(origin, 110, 0, t + 20_000), speedMps: 0, staying: true, accuracyM: 15 }), 'snap');
   assert.equal(trailDecision(origin, { ...offset(origin, 110, 0, t + 80_000), speedMps: 1.2, staying: true, accuracyM: 15 }), 'keep');
+});
+
+test('live pin holds courtyard jitter and follows a relocation the walk filter used to freeze', () => {
+  const t = 1_700_000_000_000;
+  const hagye = { lat: 37.6365, lng: 127.0678, at: t, accuracyM: 17, speedMps: 0, staying: true };
+  const courtyard = { ...offset(hagye, 28, 16, t + 12_000), accuracyM: 17, speedMps: 0, staying: true };
+  assert.equal(trailDecision(hagye, courtyard), 'snap');
+  const held = settleTrailPoint([hagye], courtyard, courtyard.at);
+  assert.equal(held.lat, hagye.lat);
+  assert.equal(held.lng, hagye.lng);
+  assert.equal(displayCoordinate([hagye], courtyard).lat, hagye.lat);
+  assert.equal(visibleTrail([hagye, courtyard]).length, 1);
+
+  const blockLeap = { ...offset(hagye, 100, 0, t + 12_000), accuracyM: 17, speedMps: 0, staying: true };
+  assert.equal(trailDecision(hagye, blockLeap), 'snap');
+  const leapt = settleTrailPoint([hagye], blockLeap, blockLeap.at);
+  assert.equal(leapt.decision, 'snap');
+  assert.equal(leapt.lat, blockLeap.lat);
+  assert.equal(leapt.lng, blockLeap.lng);
+  assert.equal(displayCoordinate([hagye], blockLeap).lat, blockLeap.lat);
+  assert.equal(visibleTrail([hagye, blockLeap]).length, 1);
+
+  const shortHop = { ...offset(hagye, 1000, 80, t + 15_000), accuracyM: 17, speedMps: 0, staying: true };
+  assert.equal(trailDecision(hagye, shortHop), 'keep');
+  const moved = settleTrailPoint([hagye], shortHop, shortHop.at);
+  assert.equal(moved.decision, 'keep');
+  assert.equal(moved.lat, shortHop.lat);
+  assert.equal(moved.lng, shortHop.lng);
+  assert.equal(displayCoordinate([hagye], shortHop).lat, shortHop.lat);
+  assert.equal(displayCoordinate([hagye], shortHop).lng, shortHop.lng);
+  assert.ok(visibleTrail(moved.points).length >= 2);
+
+  const slowBus = { ...offset(hagye, 1000, 0, t + 90_000), accuracyM: 12, speedMps: null, staying: true };
+  const driven = settleTrailPoint([hagye], slowBus, slowBus.at);
+  assert.equal(driven.decision, 'keep');
+  assert.equal(driven.lat, slowBus.lat);
+  assert.equal(liveCoordinate(hagye, slowBus).lat, slowBus.lat);
+
+  const wiggle = { ...offset(shortHop, 18, -12, shortHop.at + 10_000), accuracyM: 17, speedMps: 0, staying: true };
+  const stayed = settleTrailPoint(moved.points, wiggle, wiggle.at);
+  assert.equal(stayed.lat, shortHop.lat);
+  assert.equal(stayed.lng, shortHop.lng);
+  assert.equal(displayCoordinate(moved.points, wiggle).lat, shortHop.lat);
 });
 
 test('admin, managed, and remote trails drop courtyard spikes and keep a block corner', () => {
