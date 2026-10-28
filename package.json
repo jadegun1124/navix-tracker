@@ -1,14 +1,14 @@
 {
   "name": "gps-tracker-nabix",
   "private": true,
-  "version": "1.16.0",
+  "version": "1.17.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
-    "test": "node --test sync/protocol.test.mjs sync/webpush.test.mjs src/lib/tracking.test.mjs src/lib/localProfile.test.mjs src/lib/systemSettings.test.mjs src/lib/alwaysAllowGuide.test.mjs src/lib/cameraScan.test.mjs src/lib/managedPlace.test.mjs src/lib/placeAlias.test.mjs src/lib/sharedIdentity.test.mjs src/platform/androidBack.test.mjs",
+    "test": "node --test sync/protocol.test.mjs sync/webpush.test.mjs src/lib/tracking.test.mjs src/lib/localProfile.test.mjs src/lib/systemSettings.test.mjs src/lib/alwaysAllowGuide.test.mjs src/lib/cameraScan.test.mjs src/lib/managedPlace.test.mjs src/lib/placeAlias.test.mjs src/lib/sharedIdentity.test.mjs src/platform/androidBack.test.mjs src/lib/sideloadSigning.test.mjs",
     "sync": "node sync/dev-server.mjs"
   },
   "dependencies": {

@@ -1,5 +1,5 @@
 import { X } from 'lucide-react';
-import { alwaysAllowSteps, alwaysAllowWhy } from '../../lib/alwaysAllowGuide.mjs';
+import { alwaysAllowSteps } from '../../lib/alwaysAllowGuide.mjs';
 
 export function AlwaysAllowGuide({
   native,
@@ -20,13 +20,12 @@ export function AlwaysAllowGuide({
     <div className="absolute inset-0 z-[70] flex items-end bg-slate-900/40">
       <div role="dialog" aria-labelledby="always-allow-title" className="max-h-[88%] w-full overflow-y-auto rounded-t-3xl bg-white px-5 pb-8 pt-4">
         <div className="mb-2 flex items-start justify-between gap-3">
-          <h2 id="always-allow-title" className="text-xl font-black leading-snug">항상 허용하는 방법</h2>
+          <h2 id="always-allow-title" className="text-xl font-black leading-snug">항상 허용 방법</h2>
           <button type="button" onClick={onClose} className="rounded-full p-2 text-slate-400" aria-label="닫기">
             <X className="h-5 w-5" />
           </button>
         </div>
-        <p className="text-base font-semibold leading-7 text-slate-700">{alwaysAllowWhy()}</p>
-        <ol className="mt-4 space-y-3">
+        <ol className="mt-3 space-y-3">
           {alwaysAllowSteps().map((step, index) => (
             <li key={step} className="flex gap-3">
               <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#0084FF] text-sm font-black text-white">{index + 1}</span>
@@ -36,7 +35,7 @@ export function AlwaysAllowGuide({
         </ol>
         {!native && (
           <p className="mt-4 text-sm font-semibold leading-6 text-slate-500">
-            이 화면은 브라우저입니다. 항상 허용은 안드로이드 앱의 위치 권한 화면에서 고릅니다. 아래 버튼은 위치 허용 창만 엽니다.
+            브라우저는 위치 허용 창만 엽니다.
           </p>
         )}
         {note && <p className="mt-3 text-sm font-semibold leading-6 text-amber-800">{note}</p>}

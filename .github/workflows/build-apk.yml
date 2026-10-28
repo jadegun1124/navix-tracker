@@ -84,38 +84,74 @@ jobs:
       - name: Build Debug APK with Gradle
         run: |
           cd android
+          # assembleDebug uses android/app/umap-sideload.keystore, not the runner's
+          # ~/.android/debug.keystore. A fresh debug key on each runner made
+          # sideload updates fail with a certificate mismatch.
           ./gradlew assembleDebug --no-daemon --stacktrace
 
       - name: Prepare APK Output
         run: |
           mkdir -p output
           find android/ -name "*.apk" -ls
-          find android/ -name "*.apk" -exec cp {} output/umap-v1.16.0-tracker.apk \;
+          find android/ -name "*.apk" -exec cp {} output/umap-v1.17.0-tracker.apk \;
           echo "Output directory contents:"
           ls -lh output/
+
+      - name: Require the committed sideload certificate
+        run: |
+          set -euo pipefail
+          BUILD_TOOLS="$(ls -1 "$ANDROID_HOME/build-tools" | sort -V | tail -n 1)"
+          APKSIGNER="$ANDROID_HOME/build-tools/${BUILD_TOOLS}/apksigner"
+          "$APKSIGNER" verify --print-certs output/umap-v1.17.0-tracker.apk | tee output/apk-certs.txt
+          python3 - <<'PY'
+          import pathlib, re, subprocess
+          certs = pathlib.Path("output/apk-certs.txt").read_text()
+          apk = re.search(r"SHA-256 digest: ([0-9a-fA-F:]+)", certs)
+          if not apk:
+              raise SystemExit("APK has no SHA-256 certificate digest")
+          listed = subprocess.check_output([
+              "keytool", "-list", "-v",
+              "-keystore", "android/app/umap-sideload.keystore",
+              "-storepass", "umap-sideload",
+              "-alias", "umap-sideload",
+          ], text=True)
+          store = re.search(r"SHA256:\s*([0-9A-Fa-f:]+)", listed)
+          if not store:
+              raise SystemExit("keystore has no SHA256 fingerprint")
+          def norm(value):
+              return value.replace(":", "").lower()
+          if norm(apk.group(1)) != norm(store.group(1)):
+              raise SystemExit(
+                  f"APK certificate {apk.group(1)} does not match sideload keystore {store.group(1)}"
+              )
+          if "CN=Umap Sideload" not in certs:
+              raise SystemExit("APK certificate subject is not the sideload key")
+          print("Sideload certificate matches the committed keystore.")
+          PY
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: umap-v1.16.0-tracker-apk
-          path: output/umap-v1.16.0-tracker.apk
+          name: umap-v1.17.0-tracker-apk
+          path: output/umap-v1.17.0-tracker.apk
           retention-days: 30
 
       - name: Create or Update GitHub Release with APK
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.16.0
-          name: 'Umap Android APK v1.16.0'
+          tag_name: v1.17.0
+          name: 'Umap Android APK v1.17.0'
           make_latest: true
           body: |
-            ### Umap 안드로이드 앱 1.16.0
+            ### Umap 안드로이드 앱 1.17.0
             - 회사 홈 (GitHub Pages): https://jadegun1124.github.io/umap/
             - 이 파일: GitHub Releases APK. Google Play에는 없습니다.
-            - 다운로드: https://github.com/jadegun1124/umap/releases/download/v1.16.0/umap-v1.16.0-tracker.apk
+            - 다운로드: https://github.com/jadegun1124/umap/releases/download/v1.17.0/umap-v1.17.0-tracker.apk
             - 표시 이름: Umap
             - 패키지: `kr.co.umap.tracker`
-            - versionName: 1.16.0
-            - versionCode: 17
+            - versionName: 1.17.0
+            - versionCode: 18
+            - 1.17.0부터 사이드로드 APK는 저장소의 같은 서명으로 만듭니다. 새 APK를 받아 기존 앱 위에 설치하면 데이터가 남습니다. 1.16.0 이하(빌드마다 다른 디버그 서명)는 서명이 달라 한 번은 지운 뒤 설치해야 합니다. 그 다음부터는 지우지 않고 업데이트됩니다.
             - 최근 여정 카드 안에 경로 미리보기가 있고, 카드를 누르면 지도에서 ▶ 로 재생합니다. 출발·도착은 주소로 보이고, 같은 이동은 카드 하나로 합칩니다.
             - 개인 대화는 두 사람만 봅니다. 가족 목록과 가족 위치 응답에는 그 글이 섞이지 않습니다.
             - 관리자와 피관리자 모두 하단 탭 없이 지도만 둡니다. 왼쪽 위 메뉴에서 프로필, 우리 집, 알림, 설정을 엽니다. 지도에서 사람을 누르면 그 사람의 기록을 날짜 하나로 봅니다. 기본 날짜는 오늘이고, 날짜를 누르면 30일 목록이 열립니다. 개인 대화는 그 기록 화면에서 엽니다.
@@ -137,11 +173,11 @@ jobs:
             - 이 기기의 표시 이름, 권한 안내, 가족 지도, 30일 이동 기록, 우리 집 안심존, 초대 코드
             - 초대 QR은 카메라 권한을 물은 뒤에 읽고, 다시 물을 수 없으면 설정 화면을 엽니다.
             - 위치 유지는 사용자가 켠 뒤에만 시작합니다. 배터리 제한 없음이면 백그라운드 위치 간격을 유지합니다.
-            - 항상 허용은 「위치 액세스 권한」 화면을 바로 엽니다. 그 화면에서 항상 허용을 고르고 「정확한 위치 사용」은 직접 켭니다. 그 화면이 없으면 앱 권한 목록, 그다음 앱 정보입니다. 번호 안내는 메뉴의 「항상 허용 방법」에 있습니다.
+            - 항상 허용은 「위치 액세스 권한」 화면을 바로 엽니다. 안내는 세 줄입니다. 「항상 허용」 고르기, 「정확한 위치 사용」 켜기, 배터리 제한 없음.
             - 머무름 중 정확도 반경 안의 위치 흔들림은 이동 경로에 잇지 않습니다.
             - iOS 앱은 App Store / TestFlight에 없습니다.
             - 마이크, 문자, 주변 소리, 원격 경보음은 요청하지 않습니다.
-            - 이전 파일: https://github.com/jadegun1124/umap/releases/tag/v1.15.0
-          files: output/umap-v1.16.0-tracker.apk
+            - 이전 파일: https://github.com/jadegun1124/umap/releases/tag/v1.16.0
+          files: output/umap-v1.17.0-tracker.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

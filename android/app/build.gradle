@@ -7,8 +7,8 @@ android {
         applicationId "kr.co.umap.tracker"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 17
-        versionName "1.16.0"
+        versionCode 18
+        versionName "1.17.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
@@ -18,8 +18,23 @@ android {
         sourceCompatibility JavaVersion.VERSION_21
         targetCompatibility JavaVersion.VERSION_21
     }
+    // Sideload-only key. Committed so every GitHub Actions runner signs
+    // kr.co.umap.tracker with the same certificate and APKs can update in place.
+    // This is not a Play App Signing key.
+    signingConfigs {
+        sideload {
+            storeFile file('umap-sideload.keystore')
+            storePassword 'umap-sideload'
+            keyAlias 'umap-sideload'
+            keyPassword 'umap-sideload'
+        }
+    }
     buildTypes {
+        debug {
+            signingConfig signingConfigs.sideload
+        }
         release {
+            signingConfig signingConfigs.sideload
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }

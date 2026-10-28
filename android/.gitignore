@@ -53,7 +53,8 @@ captures/
 .idea/navEditor.xml
 
 # Keystore files
-# Uncomment the following lines if you do not want to check your keystore files in.
+# android/app/umap-sideload.keystore is committed on purpose. It is the sideload
+# update certificate, not a Play upload key. Do not ignore that file.
 #*.jks
 #*.keystore
 
