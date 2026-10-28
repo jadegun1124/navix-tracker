@@ -282,7 +282,7 @@ export function FamilyMapScreen() {
 
   const focusMember = (member: Member, fitTrail: boolean) => {
     setSelectedId(member.id);
-    const points = state.tracks[member.id] ?? [];
+    const points = visibleTrail(state.tracks[member.id] ?? []);
     if (fitTrail && showTrail && points.length >= 2) mapRef.current?.fit(points);
     else if (hasLocation(member)) mapRef.current?.panTo(member.lat, member.lng);
   };
@@ -326,7 +326,7 @@ export function FamilyMapScreen() {
                 setShowTrail((value) => {
                   const next = !value;
                   if (next && selected) {
-                    const points = state.tracks[selected.id] ?? [];
+                    const points = visibleTrail(state.tracks[selected.id] ?? []);
                     if (points.length >= 2) mapRef.current?.fit(points);
                   }
                   return next;

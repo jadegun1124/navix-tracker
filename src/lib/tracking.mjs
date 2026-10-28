@@ -48,6 +48,14 @@ export const TRAIL_POOR_ACCURACY_M = 40;
 export const TRAIL_STAY_SPEED_MPS = 0.8;
 /** A still phone must clear this before a far multipath spike becomes travel. */
 export const TRAIL_STILL_CONFIRM_M = 80;
+/** Drawn wobble inside about one accuracy bubble is removed. Block corners sit outside it. */
+const TRAIL_SIMPLIFY_MIN_M = 12;
+const TRAIL_SIMPLIFY_MAX_M = 22;
+/** A vertex this far off the shortcut, on a thin triangle, is courtyard multipath. */
+const TRAIL_SPUR_DEVIATION_M = 32;
+const TRAIL_SPUR_RATIO = 1.62;
+const TRAIL_SPUR_MAX_LEG_M = 260;
+const TRAIL_SPUR_WINDOW_MS = 180_000;
 
 const MODE_LABELS = {
   walk: '도보',
@@ -90,10 +98,130 @@ function positiveMeters(value) {
   return Number.isFinite(number) && number > 0 ? number : 0;
 }
 
-/** Stay bubble, widened when the fix itself says it is uncertain. */
+function toMeters(point, origin) {
+  const lat0 = (origin.lat * Math.PI) / 180;
+  return {
+    x: (point.lng - origin.lng) * 111_320 * Math.cos(lat0),
+    y: (point.lat - origin.lat) * 111_320,
+  };
+}
+
+function perpendicularDistanceM(point, start, end) {
+  const endM = toMeters(end, start);
+  const pointM = toMeters(point, start);
+  const length = Math.hypot(endM.x, endM.y);
+  if (length < 0.5) return Math.hypot(pointM.x, pointM.y);
+  return Math.abs(endM.x * pointM.y - endM.y * pointM.x) / length;
+}
+
+function bearingDeg(a, b) {
+  const lat1 = (a.lat * Math.PI) / 180;
+  const lat2 = (b.lat * Math.PI) / 180;
+  const dLng = ((b.lng - a.lng) * Math.PI) / 180;
+  const y = Math.sin(dLng) * Math.cos(lat2);
+  const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLng);
+  return (Math.atan2(y, x) * 180) / Math.PI;
+}
+
+function signedTurnDeg(a, b, c) {
+  const delta = bearingDeg(b, c) - bearingDeg(a, b);
+  return ((delta + 540) % 360) - 180;
+}
+
+/** Meters off the neighboring chord when the vertex is a thin there-and-back spike, otherwise 0. */
+function spikeDeviation(prev, tip, next) {
+  if (!prev || !tip || !next) return 0;
+  const ab = haversineMeters(prev, tip);
+  const bc = haversineMeters(tip, next);
+  const ac = haversineMeters(prev, next);
+  if (ab < 18 || bc < 18 || Math.max(ab, bc) > TRAIL_SPUR_MAX_LEG_M) return 0;
+  if (Math.abs(signedTurnDeg(prev, tip, next)) < 70) return 0;
+  const dt = Number.isFinite(next.at) && Number.isFinite(prev.at) ? next.at - prev.at : 0;
+  if (!Number.isFinite(dt) || dt < 0 || dt > TRAIL_SPUR_WINDOW_MS) return 0;
+  const deviation = perpendicularDistanceM(tip, prev, next);
+  if (deviation < TRAIL_SPUR_DEVIATION_M) return 0;
+  if ((ab + bc) / Math.max(ac, 1) < TRAIL_SPUR_RATIO) return 0;
+  return deviation;
+}
+
+function removeMultipathSpurs(points) {
+  if (!Array.isArray(points) || points.length < 3) return points;
+  let current = points;
+  let removedAny = false;
+  const limit = Math.min(current.length, 80);
+  for (let guard = 0; guard < limit; guard += 1) {
+    const indexes = [];
+    for (let index = 0; index < current.length; index += 1) {
+      if (current[index] && !current[index].stayEnd) indexes.push(index);
+    }
+    if (indexes.length < 3) break;
+    let worstAt = -1;
+    let worstDev = 0;
+    for (let index = 1; index < indexes.length - 1; index += 1) {
+      const dev = spikeDeviation(current[indexes[index - 1]], current[indexes[index]], current[indexes[index + 1]]);
+      if (dev > worstDev) {
+        worstDev = dev;
+        worstAt = indexes[index];
+      }
+    }
+    if (worstAt < 0) break;
+    const nextPoints = current.slice();
+    nextPoints.splice(worstAt, 1);
+    current = nextPoints;
+    removedAny = true;
+  }
+  if (!removedAny) return points;
+  const anchors = current.filter((point) => point && !point.stayEnd);
+  return current.filter((point) => {
+    if (!point?.stayEnd) return true;
+    return anchors.some((anchor) => haversineMeters(anchor, point) <= 20);
+  });
+}
+
+function displaySimplifyMeters(points) {
+  const samples = [];
+  for (const point of points) {
+    const accuracy = positiveMeters(point?.accuracyM);
+    if (accuracy > 0) samples.push(accuracy);
+  }
+  samples.sort((left, right) => left - right);
+  const median = samples.length ? samples[Math.floor((samples.length - 1) / 2)] : TRAIL_SIMPLIFY_MIN_M;
+  return Math.min(TRAIL_SIMPLIFY_MAX_M, Math.max(TRAIL_SIMPLIFY_MIN_M, median * 1.2));
+}
+
+function douglasPeucker(points, epsilon) {
+  if (points.length < 3) return points;
+  const keep = new Array(points.length).fill(false);
+  keep[0] = true;
+  keep[points.length - 1] = true;
+  const stack = [[0, points.length - 1]];
+  while (stack.length) {
+    const [start, end] = stack.pop();
+    let maxDist = 0;
+    let index = -1;
+    for (let cursor = start + 1; cursor < end; cursor += 1) {
+      const dist = perpendicularDistanceM(points[cursor], points[start], points[end]);
+      if (dist > maxDist) {
+        maxDist = dist;
+        index = cursor;
+      }
+    }
+    if (index >= 0 && maxDist > epsilon) {
+      keep[index] = true;
+      stack.push([start, index], [index, end]);
+    }
+  }
+  const simplified = points.filter((_, index) => keep[index]);
+  return simplified.length >= 2 ? simplified : points;
+}
+
+/** Stay bubble while still. While moving, ignore steps inside ~1.35× the reported accuracy. */
 export function trailMoveGate(last, point) {
   const accuracy = Math.max(positiveMeters(point?.accuracyM), positiveMeters(last?.accuracyM));
-  return Math.max(STOP_RADIUS_M, accuracy * 2);
+  const speed = typeof point?.speedMps === 'number' && Number.isFinite(point.speedMps) ? point.speedMps : null;
+  const staying = point?.staying === true || (speed != null && speed < TRAIL_STAY_SPEED_MPS);
+  if (staying) return Math.max(STOP_RADIUS_M, accuracy * 2);
+  return Math.max(12, accuracy * 1.35);
 }
 
 /**
@@ -115,10 +243,11 @@ export function trailDecision(last, point) {
   const speed = typeof point.speedMps === 'number' && Number.isFinite(point.speedMps) ? point.speedMps : null;
   const reportedStill = point.staying === true || (speed != null && speed < TRAIL_STAY_SPEED_MPS);
   // Precise fixes can still leap between towers. With no walking speed, that leap is not a path.
-  const quiet = reportedStill || (speed == null && accuracy > 0 && accuracy <= 25 && moved < TRAIL_STILL_CONFIRM_M);
+  const quiet = reportedStill || (speed == null && accuracy > 0 && accuracy <= 30 && moved < TRAIL_STILL_CONFIRM_M);
   if (quiet) {
     const implied = dt > 0 ? moved / (dt / 1000) : Infinity;
-    const sustainedWalk = moved >= TRAIL_STILL_CONFIRM_M && dt >= 20_000 && implied >= 0.9 && implied <= 8;
+    // One courtyard hop often implies 3–8 m/s for a few seconds. A real departure holds walking pace.
+    const sustainedWalk = moved >= Math.max(TRAIL_STILL_CONFIRM_M, accuracy * 3) && dt >= 45_000 && implied >= 0.7 && implied <= 2.5;
     if (!sustainedWalk) return 'snap';
   }
   const implied = dt > 0 ? moved / (dt / 1000) : Infinity;
@@ -174,11 +303,17 @@ export function collapseStayTrail(points) {
     }
     kept.push(point);
   }
+  const despiked = removeMultipathSpurs(kept);
+  if (despiked !== kept) return despiked;
   if (!changed && kept.length === points.length) return points;
   return kept;
 }
 
-/** Polyline vertices. Stay markers and sub-accuracy wiggles are not drawn. */
+/**
+ * Polyline vertices for every member.
+ * Stay markers, accuracy-bubble wiggles, and apartment multipath spikes are not drawn.
+ * Douglas–Peucker runs only here so stored history can still rebuild a real corner.
+ */
 export function visibleTrail(points) {
   const collapsed = collapseStayTrail(points);
   const drawn = [];
@@ -188,7 +323,8 @@ export function visibleTrail(points) {
     if (prev && haversineMeters(prev, point) < 8) continue;
     drawn.push(point);
   }
-  return drawn;
+  if (drawn.length < 3) return drawn;
+  return douglasPeucker(drawn, displaySimplifyMeters(drawn));
 }
 
 export function displayCoordinate(points, point) {
