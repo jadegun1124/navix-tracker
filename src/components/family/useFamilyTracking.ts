@@ -5,7 +5,6 @@ import type { AcceptedFix } from '../../lib/tracking.mjs';
 import { readSharedPlaces, publishSharedPlace, subscribeSharedPlaces, type SharedPlace } from '../../services/familyShare';
 import { familyEndpointAvailable, familySyncUrl, splitSyncToken, startManagedFamilySync, syncTokenFor } from '../../services/familySync';
 import { startLocationWatch } from '../../services/locationWatch';
-import { mergeChat } from '../../services/familyChat';
 import { cachedAddress, reverseGeocodeCached, shortenAddress } from '../../services/placeGeocode';
 import { openAlwaysLocation, readNativeBattery, umapLocation, umapLocationNative, type KeepAliveTarget } from '../../services/umapLocation';
 import { vworldApiKey } from '../../services/vworld';
@@ -309,10 +308,9 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
     const links = familyRef.current.state.guardians
       .filter((link) => link.syncToken)
       .map((link) => ({ code: link.code, token: link.syncToken as string }));
-    return startManagedFamilySync(links, (code, places, messages) => {
+    return startManagedFamilySync(links, (code, places) => {
       remoteRooms.current[code] = places;
       familyRef.current.setRoomFamilyPlaces(code, places);
-      if (messages.length > 0) mergeChat(code, messages);
     });
   }, [familyLinkKey, state.mode]);
 

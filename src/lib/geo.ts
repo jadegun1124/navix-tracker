@@ -58,6 +58,7 @@ export function buildInviteLink(
   home?: { label: string; lat: number; lng: number; radiusM: number } | null,
   syncToken?: string | null,
   rosterName?: string | null,
+  senderName?: string | null,
 ): string {
   const url = new URL(window.location.href);
   url.searchParams.set('app', '1');
@@ -68,6 +69,9 @@ export function buildInviteLink(
   const who = rosterName?.trim().slice(0, 80);
   if (who) url.searchParams.set('who', who);
   else url.searchParams.delete('who');
+  const from = senderName?.trim().slice(0, 20);
+  if (from) url.searchParams.set('from', from);
+  else url.searchParams.delete('from');
   if (home && Number.isFinite(home.lat) && Number.isFinite(home.lng) && home.radiusM >= 50) {
     url.searchParams.set('homeLat', String(home.lat));
     url.searchParams.set('homeLng', String(home.lng));

@@ -10,12 +10,12 @@
 | :--- | :--- | :--- |
 | 회사 홈 | GitHub Pages | https://jadegun1124.github.io/umap/ |
 | 앱 화면 미리보기 | 같은 Pages의 `?app=1` | https://jadegun1124.github.io/umap/?app=1 |
-| 안드로이드 앱 | GitHub Releases APK v1.13.0 | https://github.com/jadegun1124/umap/releases/download/v1.13.0/umap-v1.13.0-tracker.apk |
-| 릴리스 페이지 | GitHub Releases | https://github.com/jadegun1124/umap/releases/tag/v1.13.0 |
+| 안드로이드 앱 | GitHub Releases APK v1.14.0 | https://github.com/jadegun1124/umap/releases/download/v1.14.0/umap-v1.14.0-tracker.apk |
+| 릴리스 페이지 | GitHub Releases | https://github.com/jadegun1124/umap/releases/tag/v1.14.0 |
 
 Google Play, App Store, TestFlight에는 올리지 않았습니다. iOS는 아이콘 에셋만 있고 설치 파일은 없습니다.
 
-`main`에 푸시하면 GitHub Actions가 회사 홈을 Pages에 배포하고, 같은 커밋으로 디버그 APK를 만들어 GitHub Release `v1.13.0`의 `umap-v1.13.0-tracker.apk`를 갱신합니다. 이전 빌드는 `v1.12.0`, `v1.11.0`, `v1.10.0`, `v1.9.0`, `v1.8.0`, `v1.7.0`, `v1.6.0`, `v1.5.0`, `v1.4.0`, `v1.3.0`, `v1.2.0`, `v1.1.0`, `v1.0.0`에 남아 있습니다.
+`main`에 푸시하면 GitHub Actions가 회사 홈을 Pages에 배포하고, 같은 커밋으로 디버그 APK를 만들어 GitHub Release `v1.14.0`의 `umap-v1.14.0-tracker.apk`를 갱신합니다. 이전 빌드는 `v1.13.0`, `v1.12.0`, `v1.11.0`, `v1.10.0`, `v1.9.0`, `v1.8.0`, `v1.7.0`, `v1.6.0`, `v1.5.0`, `v1.4.0`, `v1.3.0`, `v1.2.0`, `v1.1.0`, `v1.0.0`에 남아 있습니다.
 
 ## 화면
 
@@ -91,9 +91,9 @@ npm run dev
 
 ## 안드로이드 APK
 
-받는 곳: https://github.com/jadegun1124/umap/releases/download/v1.13.0/umap-v1.13.0-tracker.apk
+받는 곳: https://github.com/jadegun1124/umap/releases/download/v1.14.0/umap-v1.14.0-tracker.apk
 
-`main` 푸시마다 `Build Android APK (Umap)` 워크플로가 웹을 빌드하고 `dist` 를 안드로이드 에셋으로 복사한 뒤 `assembleDebug` 로 APK를 만듭니다. 결과 파일은 GitHub Release `v1.13.0`에 올립니다. 앱 `versionName`은 `1.13.0`, `versionCode`는 14입니다. Play 스토어 트랙은 없습니다.
+`main` 푸시마다 `Build Android APK (Umap)` 워크플로가 웹을 빌드하고 `dist` 를 안드로이드 에셋으로 복사한 뒤 `assembleDebug` 로 APK를 만듭니다. 결과 파일은 GitHub Release `v1.14.0`에 올립니다. 앱 `versionName`은 `1.14.0`, `versionCode`는 15입니다. Play 스토어 트랙은 없습니다.
 
 ## 데이터
 
@@ -136,7 +136,7 @@ npx wrangler@4 login
 npx wrangler@4 deploy
 ```
 
-가족 대화는 `POST /v1/rooms/:code/chat` 과 `GET /v1/rooms/:code/chat` 입니다. 이 경로가 있는 Worker를 다시 올려야 다른 폰과 글이 오갑니다. 예전 Worker면 글은 이 기기에만 남고, 화면에 그 사실을 알립니다.
+개인 대화는 `POST /v1/rooms/:code/chat` 과 `GET /v1/rooms/:code/chat?me=&with=` 입니다. `me`만 있으면 그 이름이 참여한 대화만 돌아옵니다. 방 조회와 `GET /family`에는 글을 넣지 않습니다. 이 경로가 있는 Worker를 다시 올려야 다른 폰과 글이 오갑니다. 예전 Worker면 글은 이 기기에만 남고, 화면에 그 사실을 알립니다.
 
 `sync/wrangler.toml`이 Durable Object `FamilyRoom`을 만듭니다. 무료 한도에서 관리자 화면 하나가 켜져 있으면 조회가 하루 약 3만 번을 넘습니다. 한도에 닿으면 `src/services/familySync.ts`의 폴링 간격을 늘립니다.
 

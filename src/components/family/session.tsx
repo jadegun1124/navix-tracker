@@ -339,6 +339,7 @@ function cleanGuardians(value: unknown): GuardianLink[] {
     const share = link.share === 'allowed' || link.share === 'revoked' ? link.share : 'accepted';
     const syncToken = cleanSyncToken(link.syncToken);
     const rosterName = typeof link.rosterName === 'string' ? link.rosterName.trim().slice(0, 80) : '';
+    const adminName = typeof link.adminName === 'string' ? link.adminName.trim().slice(0, 20) : '';
     links.push({
       id: link.id,
       label: (link.label || '관리자').slice(0, 20),
@@ -347,6 +348,7 @@ function cleanGuardians(value: unknown): GuardianLink[] {
       leaveAlert: cleanLeaveAlert(link.leaveAlert),
       ...(syncToken ? { syncToken } : {}),
       ...(rosterName ? { rosterName } : {}),
+      ...(adminName ? { adminName } : {}),
     });
   }
   return links;
@@ -504,7 +506,7 @@ type Action =
   | { type: 'clear-home' }
   | { type: 'add-member'; name: string; code: string }
   | { type: 'remove-member'; id: string }
-  | { type: 'accept-invite'; label: string; code: string; syncToken: string | null; rosterName: string | null }
+  | { type: 'accept-invite'; label: string; code: string; syncToken: string | null; rosterName: string | null; adminName: string | null }
   | { type: 'set-guardian-share'; code: string; share: 'allowed' | 'revoked' }
   | { type: 'leave-guardian'; id: string }
   | { type: 'dismiss-invite' }
@@ -652,7 +654,17 @@ function reducer(state: Session, action: Action): Session {
       const leaveAlert = state.pendingInvite === code || readInvite() === code ? state.pendingLeaveAlert : null;
       const syncToken = cleanSyncToken(action.syncToken) || (state.pendingInvite === code ? cleanSyncToken(state.pendingSyncToken) : null);
       const rosterName = typeof action.rosterName === 'string' ? action.rosterName.trim().slice(0, 80) : '';
-      const link: GuardianLink = { id: `g-${Date.now()}`, label, code, share: 'accepted', leaveAlert, ...(syncToken ? { syncToken } : {}), ...(rosterName ? { rosterName } : {}) };
+      const adminName = typeof action.adminName === 'string' ? action.adminName.trim().slice(0, 20) : '';
+      const link: GuardianLink = {
+        id: `g-${Date.now()}`,
+        label,
+        code,
+        share: 'accepted',
+        leaveAlert,
+        ...(syncToken ? { syncToken } : {}),
+        ...(rosterName ? { rosterName } : {}),
+        ...(adminName ? { adminName } : {}),
+      };
       const alertNote = leaveAlert ? ` 위치 공유를 허용한 뒤 집 반경 ${leaveAlert.radiusM}m를 나가면 관리자 화면에 사이렌이 울립니다. 이 폰에서는 울리지 않습니다.` : '';
       return {
         ...state,
@@ -1005,7 +1017,7 @@ interface FamilyApi {
   clearHome: () => void;
   addMember: (name: string, code: string) => void;
   removeMember: (id: string) => void;
-  acceptInvite: (label: string, code: string, syncToken?: string | null, rosterName?: string | null) => void;
+  acceptInvite: (label: string, code: string, syncToken?: string | null, rosterName?: string | null, adminName?: string | null) => void;
   setGuardianShare: (code: string, share: 'allowed' | 'revoked') => void;
   leaveGuardian: (id: string) => void;
   dismissInvite: () => void;
@@ -1078,7 +1090,7 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
     clearHome: () => dispatch({ type: 'clear-home' }),
     addMember: (name, code) => dispatch({ type: 'add-member', name, code }),
     removeMember: (id) => dispatch({ type: 'remove-member', id }),
-    acceptInvite: (label, code, syncToken, rosterName) => dispatch({ type: 'accept-invite', label, code, syncToken: syncToken ?? null, rosterName: rosterName ?? null }),
+    acceptInvite: (label, code, syncToken, rosterName, adminName) => dispatch({ type: 'accept-invite', label, code, syncToken: syncToken ?? null, rosterName: rosterName ?? null, adminName: adminName ?? null }),
     setGuardianShare: (code, share) => dispatch({ type: 'set-guardian-share', code, share }),
     leaveGuardian: (id) => dispatch({ type: 'leave-guardian', id }),
     dismissInvite: () => dispatch({ type: 'dismiss-invite' }),

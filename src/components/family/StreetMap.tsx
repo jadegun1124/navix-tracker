@@ -43,7 +43,8 @@ export const StreetMap = forwardRef<StreetMapHandle, {
   selectedId?: string;
   playback?: { lat: number; lng: number; label: string } | null;
   onSelect: (id: string) => void;
-}>(function StreetMap({ center, zoom, members, home, trail, trailColor, selectedId, playback, onSelect }, ref) {
+  onMove?: (center: { lat: number; lng: number }) => void;
+}>(function StreetMap({ center, zoom, members, home, trail, trailColor, selectedId, playback, onSelect, onMove }, ref) {
   const nodeRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
   const layersRef = useRef<L.LayerGroup | null>(null);
@@ -52,8 +53,10 @@ export const StreetMap = forwardRef<StreetMapHandle, {
   const key = vworldApiKey();
   const initialRef = useRef({ center, zoom });
   const onSelectRef = useRef(onSelect);
+  const onMoveRef = useRef(onMove);
   useEffect(() => {
     onSelectRef.current = onSelect;
+    onMoveRef.current = onMove;
   });
 
   useImperativeHandle(ref, () => ({
@@ -95,6 +98,16 @@ export const StreetMap = forwardRef<StreetMapHandle, {
     map.attributionControl.setPosition('bottomleft');
     layersRef.current = L.layerGroup().addTo(map);
     mapRef.current = map;
+    let moveTick = 0;
+    const emitMove = () => {
+      const current = map.getCenter();
+      onMoveRef.current?.({ lat: current.lat, lng: current.lng });
+    };
+    map.on('move', () => {
+      window.clearTimeout(moveTick);
+      moveTick = window.setTimeout(emitMove, 80);
+    });
+    map.on('moveend', emitMove);
     setReady(true);
     const resize = () => map.invalidateSize();
     resize();
@@ -103,8 +116,11 @@ export const StreetMap = forwardRef<StreetMapHandle, {
     const timer = window.setTimeout(resize, 250);
     return () => {
       window.clearTimeout(timer);
+      window.clearTimeout(moveTick);
       observer.disconnect();
       setReady(false);
+      map.off('move');
+      map.off('moveend');
       map.remove();
       mapRef.current = null;
       layersRef.current = null;

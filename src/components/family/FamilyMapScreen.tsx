@@ -1,11 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Bell, ChevronLeft, Copy, Home, LocateFixed, MapPin, MessageCircle, Minus, Plus, Route, UserPlus, X } from 'lucide-react';
+import { Bell, ChevronLeft, ChevronRight, Copy, Home, LocateFixed, MapPin, Menu, Minus, Plus, Route, Settings, UserPlus, X } from 'lucide-react';
 import { buildInviteLink, formatClock, hasLocation, haversineMeters, shouldAlertLeave } from '../../lib/geo';
 import { KEEP_PERMISSION_ASKED_KEY, KEEP_START_ASKED_KEY, keepEntryPrompt, markSessionFlag, readSessionFlag } from '../../lib/systemSettings.mjs';
 import { collapseDuplicateJourneys, displayCoordinate, historyDayKeys, historyDayLabel, liveTrailPoints, previewOpenJourney, seoulDayEndMs, seoulDayKey, visibleTrail } from '../../lib/tracking.mjs';
 import { ackFamilyAlert, isFamilyAlertAcked, publishFamilyAlert, readFamilyAlert, subscribeFamilyAlerts, type FamilyAlert } from '../../services/familyAlert';
 import { readSharedPlaces, subscribeSharedPlaces } from '../../services/familyShare';
-import { currentSyncPhase, familySyncConfigured, familySyncUrl, registerAdminPush, splitSyncToken, startAdminRemoteSync, startSyncMonitor, subscribeSyncPhase, syncTokenFor, type SyncPhase } from '../../services/familySync';
+import { currentSyncPhase, familySyncConfigured, familySyncUrl, fetchMyDirectThreads, registerAdminPush, splitSyncToken, startAdminRemoteSync, startSyncMonitor, subscribeSyncPhase, syncTokenFor, type SyncPhase } from '../../services/familySync';
 import { umapLocation, umapLocationNative } from '../../services/umapLocation';
 import { sounds } from '../../utils/audio';
 import { DEFAULT_CENTER, type GuardianLink, type HomeZone, type Member } from '../../types/family';
@@ -13,14 +13,15 @@ import { AlwaysAllowNotice } from './AlwaysAllowNotice';
 import { InviteQrImage, InviteQrScan } from './InviteQr';
 import { StreetMap, type StreetMapHandle } from './StreetMap';
 import { JourneyCards, JourneyScrubber, playbackMark } from './JourneyCards';
-import { FamilyChatSheet, type ChatRoom } from './FamilyChatSheet';
+import { FamilyChatSheet, type DirectChatTarget } from './FamilyChatSheet';
 import { MemberAvatar } from './MemberAvatar';
 import { PhotoPicker } from './ProfilePhoto';
-import { mergeChat, subscribeChat, unreadCount } from '../../services/familyChat';
+import { chatName, mergeDirectChat, subscribeChat, unreadCount } from '../../services/familyChat';
 import { TodayRecord } from './TodayRecord';
 import { askAlwaysLocation, askBattery, askNotifications } from '../../services/systemPermissions';
 import { useFamilyTracking } from './useFamilyTracking';
 import { useFamily } from './session';
+import { consumeAndroidBack } from '../../platform/androidBack';
 
 export function FamilyMapScreen() {
   const family = useFamily();
@@ -29,10 +30,10 @@ export function FamilyMapScreen() {
   const center = DEFAULT_CENTER;
   const [showZone, setShowZone] = useState(true);
   const [showTrail, setShowTrail] = useState(true);
-  const [homeCenter, setHomeCenter] = useState(DEFAULT_CENTER);
   const [draftHome, setDraftHome] = useState<HomeZone | null>(null);
+  const [placingHome, setPlacingHome] = useState(false);
   const mapRef = useRef<StreetMapHandle>(null);
-  const [sheet, setSheet] = useState<'home' | 'invite' | 'accept' | 'today' | null>(state.mode === 'managed' && state.pendingInvite ? 'accept' : null);
+  const [sheet, setSheet] = useState<'invite' | 'accept' | 'today' | null>(state.mode === 'managed' && state.pendingInvite ? 'accept' : null);
   const [confirm, setConfirm] = useState<{ kind: 'remove' | 'leave'; id: string; name: string } | null>(null);
   const [incoming, setIncoming] = useState<FamilyAlert | null>(null);
   const [sirenOn, setSirenOn] = useState(false);
@@ -59,11 +60,16 @@ export function FamilyMapScreen() {
   const [keepNote, setKeepNote] = useState<string | null>(null);
   const [alertsOpen, setAlertsOpen] = useState(false);
   const [historyDay, setHistoryDay] = useState(() => seoulDayKey(Date.now()));
+  const [dayPicker, setDayPicker] = useState(false);
   const [scrub, setScrub] = useState(0);
   const [detailId, setDetailId] = useState<string | null>(null);
   const [playing, setPlaying] = useState(false);
-  const [chatOpen, setChatOpen] = useState(false);
+  const [dm, setDm] = useState<DirectChatTarget | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [recordId, setRecordId] = useState<string | null>(null);
+  const [managedSettings, setManagedSettings] = useState(false);
   const [chatTick, setChatTick] = useState(0);
+  const placingRef = useRef(false);
   const scrubRef = useRef(0);
   useEffect(() => {
     scrubRef.current = scrub;
@@ -71,6 +77,9 @@ export function FamilyMapScreen() {
 
   useEffect(() => subscribeSyncPhase(setSyncPhase), []);
   useEffect(() => subscribeChat(() => setChatTick((value) => value + 1)), []);
+  useEffect(() => {
+    placingRef.current = placingHome;
+  }, [placingHome]);
   useEffect(() => startSyncMonitor(), []);
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 15_000);
@@ -187,7 +196,6 @@ export function FamilyMapScreen() {
       {
         onPlace: (place) => familyRef.current.applySharedPlace(place),
         onAlert: handle,
-        onMessages: (messages) => mergeChat(familyRef.current.state.inviteCode, messages),
       },
     );
     return () => {
@@ -196,6 +204,40 @@ export function FamilyMapScreen() {
       navigator.serviceWorker?.removeEventListener('message', onPush);
     };
   }, [notifyOk, state.inviteCode, state.mode, state.syncReadKey, state.syncWriteKey]);
+
+  const dmRoomKey = state.mode === 'admin'
+    ? `admin:${state.inviteCode}:${state.syncWriteKey}`
+    : state.guardians.map((link) => `${link.code}:${link.syncToken ?? ''}:${link.rosterName ?? ''}`).join('|');
+  useEffect(() => {
+    if (state.tab !== 'map') return;
+    let cancel = false;
+    const tick = async () => {
+      const current = familyRef.current.state;
+      const rooms = current.mode === 'admin'
+        ? [{ code: current.inviteCode, me: myChatName(current, current.inviteCode), writeKey: current.syncWriteKey, readKey: current.syncReadKey, token: null as string | null }]
+        : current.guardians
+          .filter((link) => link.share !== 'revoked' && link.syncToken)
+          .map((link) => ({ code: link.code, me: myChatName(current, link.code), token: link.syncToken ?? null, writeKey: '', readKey: '' }));
+      for (const room of rooms) {
+        if (cancel) return;
+        const token = room.token && room.token.includes('.')
+          ? room.token
+          : room.writeKey && room.readKey
+            ? await syncTokenFor(room.writeKey, room.readKey)
+            : null;
+        if (!token || cancel) continue;
+        const threads = await fetchMyDirectThreads(room.code, token, room.me);
+        if (!threads) continue;
+        for (const thread of threads) mergeDirectChat(room.code, room.me, thread.peer, thread.messages);
+      }
+    };
+    void tick();
+    const timer = window.setInterval(() => void tick(), 12000);
+    return () => {
+      cancel = true;
+      window.clearInterval(timer);
+    };
+  }, [dmRoomKey, state.tab]);
 
   useEffect(() => {
     if (state.mode !== 'admin' || state.permissions.notifications !== 'granted' || !familySyncConfigured()) return;
@@ -239,7 +281,10 @@ export function FamilyMapScreen() {
     }
   };
 
-  const selected = state.members.find((member) => member.id === selectedId) ?? state.members.find((member) => member.id === 'self');
+  const managed = state.mode === 'managed';
+  const selected = (managed && recordId ? state.members.find((member) => member.id === recordId) : null)
+    ?? state.members.find((member) => member.id === selectedId)
+    ?? state.members.find((member) => member.id === 'self');
   const liveDay = seoulDayKey(now);
   const visibleMembers = state.members.filter((member) => {
     if (member.id === 'self') return true;
@@ -278,7 +323,10 @@ export function FamilyMapScreen() {
     }, 200);
     return () => window.clearInterval(timer);
   }, [shareKey, state.members, state.mode]);
-  const pathDay = state.tab === 'history' ? historyDay : liveDay;
+  const historyDays = historyDayKeys(now);
+  const activeHistoryDay = historyDays.includes(historyDay) ? historyDay : historyDays[0];
+  const viewingRecords = managed ? recordId != null && !placingHome : state.tab === 'history';
+  const pathDay = viewingRecords ? activeHistoryDay : liveDay;
   const memberPoints = selected ? state.tracks[selected.id] ?? [] : [];
   const dayPoints = useMemo(
     () => memberPoints.filter((point) => seoulDayKey(point.at) === pathDay),
@@ -303,19 +351,23 @@ export function FamilyMapScreen() {
     setPlaying(false);
   }, [pathDay, selected?.id]);
   useEffect(() => {
-    if (state.tab !== 'history') {
+    if (state.mode === 'managed' && state.tab !== 'map') familyRef.current.setTab('map');
+  }, [state.mode, state.tab]);
+  useEffect(() => {
+    if (!viewingRecords) {
       setDetailId(null);
       setPlaying(false);
+      setDayPicker(false);
     }
-    if (state.tab !== 'map') setChatOpen(false);
-  }, [state.tab]);
+    if (!managed && state.tab !== 'map') setDm(null);
+  }, [managed, state.tab, viewingRecords]);
   const detailJourney = detailId && detailId !== 'open'
     ? dayJourneys.find((journey) => journey.id === detailId) ?? null
     : null;
-  const detailOpen = state.tab === 'history' && !!detailId && (detailId === 'open' ? !!openJourney : !!detailJourney);
+  const detailOpen = viewingRecords && !!detailId && (detailId === 'open' ? !!openJourney : !!detailJourney);
   const detailPoints = detailId === 'open' ? liveLine : detailJourney?.points ?? [];
   const mapPoints = detailOpen ? detailPoints : liveLine;
-  const showPath = detailOpen || (!!selected && state.tab === 'map' && showTrail && (selected.id === 'self' || selected.share === 'allowed' || selected.role === 'admin-share'));
+  const showPath = detailOpen || (!!selected && (managed || state.tab === 'map') && showTrail && (selected.id === 'self' || selected.share === 'allowed' || selected.role === 'admin-share'));
   const dayVisits = useMemo(() => {
     const list = selected ? state.visits[selected.id] ?? [] : [];
     return list.filter((visit) => seoulDayKey(visit.arrivedAt) === pathDay);
@@ -378,17 +430,95 @@ export function FamilyMapScreen() {
     if (scrub >= 1000) setScrub(0);
     setPlaying(true);
   };
-  const chatRooms: ChatRoom[] = state.mode === 'admin'
-    ? [{ code: state.inviteCode, label: '우리 가족', writeKey: state.syncWriteKey, readKey: state.syncReadKey }]
-    : state.guardians
-      .filter((link) => link.share !== 'revoked')
-      .map((link) => ({ code: link.code, label: link.label, token: link.syncToken ?? null }));
-  const unread = (chatTick >= 0 ? chatRooms : []).reduce((sum, room) => sum + unreadCount(room.code), 0);
+  const startHomePick = () => {
+    const existing = state.home;
+    const located = self && hasLocation(self) ? { lat: self.lat, lng: self.lng } : null;
+    const start = existing
+      ? { lat: existing.lat, lng: existing.lng }
+      : located ?? mapRef.current?.getCenter() ?? center;
+    setShowZone(true);
+    setDraftHome(existing
+      ? { ...existing, lat: start.lat, lng: start.lng, alertPhone: '' }
+      : { label: '우리 집', address: '', lat: start.lat, lng: start.lng, radiusM: 200, alertPhone: '' });
+    setMenuOpen(false);
+    setManagedSettings(false);
+    setRecordId(null);
+    setPlacingHome(true);
+    family.setTab('map');
+    window.setTimeout(() => mapRef.current?.panTo(start.lat, start.lng), 60);
+  };
+  const openPerson = (member: Member) => {
+    if (managed) {
+      setSelectedId(member.id);
+      setRecordId(member.id);
+      setHistoryDay(seoulDayKey(Date.now()));
+      setDetailId(null);
+      setPlaying(false);
+      if (hasLocation(member)) mapRef.current?.panTo(member.lat, member.lng);
+      return;
+    }
+    const thread = directThreadFor(state, member);
+    if (hasLocation(member)) focusMember(member, true);
+    if (thread) setDm(thread);
+  };
+  useEffect(() => consumeAndroidBack(() => {
+    if (confirm) {
+      setConfirm(null);
+      return true;
+    }
+    if (keepPrompt !== 'none') {
+      setKeepPrompt('none');
+      return true;
+    }
+    if (dayPicker) {
+      setDayPicker(false);
+      return true;
+    }
+    if (dm) {
+      setDm(null);
+      return true;
+    }
+    if (alertsOpen) {
+      setAlertsOpen(false);
+      return true;
+    }
+    if (sheet) {
+      setSheet(null);
+      return true;
+    }
+    if (managedSettings) {
+      setManagedSettings(false);
+      return true;
+    }
+    if (menuOpen) {
+      setMenuOpen(false);
+      return true;
+    }
+    if (placingHome) {
+      setDraftHome(null);
+      setPlacingHome(false);
+      return true;
+    }
+    if (detailId) {
+      setDetailId(null);
+      setPlaying(false);
+      return true;
+    }
+    if (recordId) {
+      setRecordId(null);
+      return true;
+    }
+    return false;
+  }), [alertsOpen, confirm, dayPicker, detailId, dm, keepPrompt, managedSettings, menuOpen, placingHome, recordId, sheet]);
+  const people = state.mode === 'managed'
+    ? state.members.filter((member) => member.id === 'self' || member.role === 'admin-share')
+    : state.members.filter((member) => member.role !== 'guardian' && member.role !== 'admin-share');
+  const extraChats = guardianThreads(state).filter((thread) => chatTick >= 0 || thread.peer);
 
   return (
     <div className="flex h-full justify-center bg-[#d7e3ee]">
       <div className="relative flex h-full w-full max-w-[430px] flex-col overflow-hidden bg-white">
-        {(state.tab !== 'history' || detailOpen) && (
+        {(managed || state.tab !== 'history' || detailOpen) && (
         <div className="relative min-h-0 flex-1">
           <StreetMap
             ref={mapRef}
@@ -402,31 +532,46 @@ export function FamilyMapScreen() {
             selectedId={selected?.id}
             onSelect={(id) => {
               const member = state.members.find((item) => item.id === id);
-              if (member) focusMember(member, true);
+              if (!member) return;
+              if (managed) openPerson(member);
+              else focusMember(member, true);
+            }}
+            onMove={(next) => {
+              if (!placingRef.current) return;
+              setDraftHome((prev) => {
+                if (!prev) return prev;
+                if (Math.abs(prev.lat - next.lat) < 0.000001 && Math.abs(prev.lng - next.lng) < 0.000001) return prev;
+                return { ...prev, lat: next.lat, lng: next.lng };
+              });
             }}
           />
 
-          {state.tab === 'map' && (
+          {(managed || state.tab === 'map') && !detailOpen && (
           <>
+          {managed && (
+            <button
+              type="button"
+              aria-label="메뉴"
+              onClick={() => setMenuOpen(true)}
+              className="absolute left-3 top-3 z-30 flex h-11 w-11 items-center justify-center rounded-full bg-white shadow-md"
+            >
+              <Menu className="h-5 w-5 text-slate-800" />
+            </button>
+          )}
           <button
             type="button"
             aria-label="알림"
             onClick={() => setAlertsOpen(true)}
-            className="absolute left-3 top-3 z-30 flex h-11 w-11 items-center justify-center rounded-full bg-white shadow-md"
+            className={`absolute top-3 z-30 flex h-11 w-11 items-center justify-center rounded-full bg-white shadow-md ${managed ? 'left-16' : 'left-3'}`}
           >
             <Bell className={`h-5 w-5 ${unreadAlerts ? 'text-[#0084FF]' : 'text-slate-700'}`} />
             {unreadAlerts && <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-[#ff8a34]" />}
           </button>
-          <button
-            type="button"
-            aria-label="가족 대화"
-            onClick={() => setChatOpen(true)}
-            className="absolute left-16 top-3 z-30 flex items-center gap-1 rounded-full bg-white px-3 py-2 text-sm font-black text-[#0084FF] shadow-md"
-          >
-            <MessageCircle className="h-4 w-4" />
-            대화
-            {unread > 0 && <span className="min-w-4 rounded-full bg-[#ff8a34] px-1 text-[10px] font-black text-white">{unread}</span>}
-          </button>
+          {placingHome && (
+            <div className="pointer-events-none absolute left-1/2 top-1/2 z-20 -translate-x-1/2 -translate-y-full">
+              <span className="rounded-full bg-white px-2 py-1 text-[11px] font-black text-slate-800 shadow">집</span>
+            </div>
+          )}
 
           <div className="absolute right-3 top-3 z-30 flex flex-col gap-2">
             <RoundButton label="안심존 표시" onClick={() => setShowZone((value) => !value)}>
@@ -502,16 +647,7 @@ export function FamilyMapScreen() {
               <UserPlus className="h-4 w-4" />
               가족 초대
             </button>
-          ) : (
-            <button
-              type="button"
-              onClick={() => setSheet('accept')}
-              className="absolute bottom-3 right-3 flex items-center gap-1 rounded-full bg-[#0084FF] px-3 py-2 text-xs font-bold text-white shadow-lg"
-            >
-              <UserPlus className="h-4 w-4" />
-              초대 수락
-            </button>
-          )}
+          ) : null}
           </>
           )}
           {detailOpen && (
@@ -537,49 +673,141 @@ export function FamilyMapScreen() {
         </div>
         )}
 
-        {state.tab === 'map' && (
-          <section className="rounded-t-3xl bg-white px-4 pb-2 pt-3 shadow-[0_-8px_30px_rgba(15,23,42,0.08)]">
-            <div className="mb-1 flex items-center justify-between">
-              <h2 className="text-lg font-black">우리 가족</h2>
-              <button type="button" onClick={() => setChatOpen(true)} className="flex items-center gap-1 rounded-full bg-[#0084FF] px-3 py-1.5 text-xs font-black text-white">
-                <MessageCircle className="h-4 w-4" />
-                대화
+        {state.tab === 'map' && placingHome && draftHome && (
+          <HomePlaceBar
+            draft={draftHome}
+            saved={!!state.home}
+            canUseSelf={!!self && hasLocation(self)}
+            onDraft={setDraftHome}
+            onUseSelf={() => {
+              if (self && hasLocation(self)) mapRef.current?.panTo(self.lat, self.lng);
+            }}
+            onCancel={() => {
+              setDraftHome(null);
+              setPlacingHome(false);
+              if (!managed) family.setTab('menu');
+            }}
+            onSave={() => {
+              family.saveHome(draftHome);
+              setDraftHome(null);
+              setPlacingHome(false);
+              setShowZone(true);
+            }}
+            onClear={() => {
+              family.clearHome();
+              setDraftHome(null);
+              setPlacingHome(false);
+              if (!managed) family.setTab('menu');
+            }}
+          />
+        )}
+
+        {managed && recordId && !placingHome && !detailOpen && (
+          <section className="max-h-[48%] overflow-y-auto rounded-t-3xl bg-white px-4 pb-3 pt-3 shadow-[0_-8px_30px_rgba(15,23,42,0.08)]">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <h2 className="truncate text-lg font-black">{selected?.id === 'self' ? '내 기록' : `${selected?.name ?? ''} 기록`}</h2>
+              <button type="button" onClick={() => setRecordId(null)} className="shrink-0 rounded-full bg-slate-100 px-3 py-1.5 text-xs font-bold">
+                닫기
               </button>
             </div>
+            <button
+              type="button"
+              aria-haspopup="dialog"
+              aria-label={`날짜 ${historyDayLabel(activeHistoryDay, now)}`}
+              onClick={() => setDayPicker(true)}
+              className="flex w-full items-center justify-between rounded-2xl bg-slate-100 px-4 py-3 text-left"
+            >
+              <span>
+                <span className="block text-[11px] font-semibold text-slate-400">날짜</span>
+                <span className="block text-sm font-black text-slate-900">{historyDayLabel(activeHistoryDay, now)}</span>
+              </span>
+              <span className="text-xs font-bold text-[#0084FF]">변경</span>
+            </button>
+            {selected && selected.id !== 'self' && directThreadFor(state, selected) && (
+              <button
+                type="button"
+                onClick={() => {
+                  const thread = directThreadFor(state, selected);
+                  if (thread) setDm(thread);
+                }}
+                className="mt-2 w-full rounded-full bg-[#0084FF] py-2.5 text-sm font-black text-white"
+              >
+                개인 대화
+              </button>
+            )}
+            <div className="mt-3 space-y-3">
+              <JourneyCards
+                journeys={dayJourneys}
+                open={openJourney}
+                selectedId={detailId}
+                onSelect={(id) => openDetail(id, false)}
+                onPlay={(id) => openDetail(id, true)}
+              />
+              <TodayRecord visits={dayVisits} />
+            </div>
+          </section>
+        )}
+
+        {(managed || state.tab === 'map') && !placingHome && !(managed && recordId) && (
+          <section className="rounded-t-3xl bg-white px-4 pb-2 pt-3 shadow-[0_-8px_30px_rgba(15,23,42,0.08)]">
+            <div className="mb-1">
+              <h2 className="text-lg font-black">우리 가족</h2>
+              <p className="text-[11px] font-semibold text-slate-400">{managed ? '사람을 누르면 그 사람의 기록을 봅니다' : '사람을 누르면 그 사람과만 대화합니다'}</p>
+            </div>
             <div className="max-h-52 overflow-y-auto">
-              {(state.mode === 'managed'
-                ? state.members.filter((member) => member.id === 'self' || member.role === 'admin-share')
-                : state.members.filter((member) => member.role !== 'guardian' && member.role !== 'admin-share')).map((member) => (
-                <MemberCard
-                  key={member.id}
-                  member={member}
-                  home={state.mode === 'admin' ? state.home : null}
-                  selected={member.id === selected?.id}
-                  onSelect={() => focusMember(member, true)}
-                  onPhoto={member.id === 'self' ? (photo) => family.setPhoto(photo) : undefined}
-                  onRemove={state.mode === 'admin' && member.id !== 'self' ? () => setConfirm({ kind: 'remove', id: member.id, name: member.name }) : undefined}
-                />
+              {people.map((member) => {
+                const thread = directThreadFor(state, member);
+                const unread = thread ? unreadCount(thread.code, thread.me, thread.peer) : 0;
+                return (
+                  <MemberCard
+                    key={member.id}
+                    member={member}
+                    home={state.mode === 'admin' ? state.home : null}
+                    selected={member.id === selected?.id}
+                    unread={chatTick >= 0 ? unread : 0}
+                    chatHint={!managed && member.id !== 'self'}
+                    onSelect={() => openPerson(member)}
+                    onPhoto={member.id === 'self' ? (photo) => family.setPhoto(photo) : undefined}
+                    onRemove={state.mode === 'admin' && member.id !== 'self' ? () => setConfirm({ kind: 'remove', id: member.id, name: member.name }) : undefined}
+                  />
+                );
+              })}
+              {extraChats.map((thread) => (
+                <button
+                  key={`${thread.code}:${thread.peer}`}
+                  type="button"
+                  onClick={() => setDm(thread)}
+                  className="flex w-full items-center justify-between rounded-2xl px-1 py-2 text-left"
+                >
+                  <span>
+                    <span className="block font-bold">{thread.label}</span>
+                    <span className="block text-xs text-slate-500">개인 대화</span>
+                  </span>
+                  {unreadCount(thread.code, thread.me, thread.peer) > 0 && (
+                    <span className="rounded-full bg-[#ff8a34] px-2 py-0.5 text-[10px] font-black text-white">{unreadCount(thread.code, thread.me, thread.peer)}</span>
+                  )}
+                </button>
               ))}
             </div>
           </section>
         )}
 
-        {state.tab === 'history' && !detailOpen && (
+        {!managed && state.tab === 'history' && !detailOpen && (
           <section className="min-h-0 flex-1 overflow-y-auto bg-white px-4 pb-4 pt-4">
             <h2 className="text-lg font-black">이동 기록</h2>
-            <p className="text-[11px] font-semibold text-slate-400">오늘부터 30일 전 · 서울 날짜</p>
-            <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
-              {historyDayKeys(now).map((day) => (
-                <button
-                  key={day}
-                  type="button"
-                  onClick={() => setHistoryDay(day)}
-                  className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-bold ${day === historyDay ? 'bg-[#0084FF] text-white' : 'bg-slate-100 text-slate-600'}`}
-                >
-                  {historyDayLabel(day, now)}
-                </button>
-              ))}
-            </div>
+            <button
+              type="button"
+              aria-haspopup="dialog"
+              aria-label={`날짜 ${historyDayLabel(activeHistoryDay, now)}`}
+              onClick={() => setDayPicker(true)}
+              className="mt-3 flex w-full items-center justify-between rounded-2xl bg-slate-100 px-4 py-3 text-left"
+            >
+              <span>
+                <span className="block text-[11px] font-semibold text-slate-400">날짜</span>
+                <span className="block text-sm font-black text-slate-900">{historyDayLabel(activeHistoryDay, now)}</span>
+              </span>
+              <span className="text-xs font-bold text-[#0084FF]">변경</span>
+            </button>
             {visibleMembers.length > 1 && (
               <div className="mt-2 flex gap-2 overflow-x-auto pb-1">
                 {visibleMembers.map((member) => (
@@ -623,7 +851,7 @@ export function FamilyMapScreen() {
           </section>
         )}
 
-        {state.tab === 'menu' && (
+        {!managed && state.tab === 'menu' && (
           <section className="min-h-[52%] overflow-y-auto bg-white px-4 py-4 text-sm">
             <h2 className="text-lg font-black">메뉴</h2>
             <p className="mt-3 text-xs font-bold text-[#0084FF]">{state.mode === 'admin' ? '관리자 모드' : '피관리자 모드'}</p>
@@ -637,16 +865,27 @@ export function FamilyMapScreen() {
             </div>
             <p className="mt-1 text-xs leading-5 text-slate-400">이 기기에만 저장된 이름입니다. 전화번호나 Google 계정으로 본인을 확인하지 않습니다.</p>
             {state.mode === 'admin' && (
-              <button
-                type="button"
-                onClick={() => {
-                  setHomeCenter(mapRef.current?.getCenter() ?? center);
-                  setSheet('home');
-                }}
-                className="mt-3 w-full rounded-full bg-slate-100 py-3 font-bold"
-              >
-                {state.home ? '우리 집 수정' : '우리 집 추가'}
-              </button>
+              <div className="mt-3 rounded-2xl bg-slate-50 p-3">
+                <p className="text-xs font-bold text-slate-400">우리 집</p>
+                {state.home ? (
+                  <>
+                    <p className="mt-1 font-black">{state.home.label || '우리 집'}</p>
+                    <p className="text-xs leading-5 text-slate-500">
+                      반경 {state.home.radiusM}m{state.home.address ? ` · ${state.home.address}` : ''}. 이 원을 나가면 알림이 남습니다.
+                    </p>
+                    <button type="button" onClick={startHomePick} className="mt-3 w-full rounded-full bg-[#0084FF] py-3 text-sm font-black text-white">
+                      지도에서 다시 고르기
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <p className="mt-1 text-sm leading-6 text-slate-600">아직 집이 없습니다. 지도에서 위치를 고르면, 가족이 그 반경을 나갈 때 알림이 남습니다.</p>
+                    <button type="button" onClick={startHomePick} className="mt-3 w-full rounded-full bg-[#0084FF] py-3 text-sm font-black text-white">
+                      지도에서 집 정하기
+                    </button>
+                  </>
+                )}
+              </div>
             )}
             {state.mode === 'admin' && (
               <button
@@ -686,7 +925,6 @@ export function FamilyMapScreen() {
                     family.setKeepAlive(true);
                   })();
                 }}
-                onStop={() => family.setKeepAlive(false)}
               />
             </div>
             {state.mode === 'managed' && state.guardians.map((link) => (
@@ -737,40 +975,39 @@ export function FamilyMapScreen() {
           </section>
         )}
 
+        {!managed && (
         <nav className="grid grid-cols-3 border-t border-slate-100 bg-white pb-[env(safe-area-inset-bottom)] text-[11px] font-bold text-slate-400">
           <NavButton active={state.tab === 'map'} label="지도" onClick={() => family.setTab('map')} icon={<MapPin className="h-5 w-5" />} />
           <NavButton active={state.tab === 'history'} label="기록" onClick={() => family.setTab('history')} icon={<Route className="h-5 w-5" />} />
           <NavButton active={state.tab === 'menu'} label="메뉴" onClick={() => family.setTab('menu')} icon={<span className="text-lg leading-none">☰</span>} />
         </nav>
+        )}
 
-        {chatOpen && state.tab === 'map' && (
+        {dm && (managed || state.tab === 'map') && (
           <FamilyChatSheet
-            name={state.profile?.name || '나'}
-            rooms={chatRooms}
-            onClose={() => setChatOpen(false)}
+            target={dm}
+            onClose={() => setDm(null)}
           />
         )}
-        {sheet === 'home' && (
-          <HomeSheet
-            initial={state.home}
-            center={homeCenter}
-            onPreview={setDraftHome}
-            onClose={() => {
-              setDraftHome(null);
-              setSheet(null);
-            }}
-            onSave={(home) => {
-              family.saveHome(home);
-              mapRef.current?.panTo(home.lat, home.lng);
-              setDraftHome(null);
-              setSheet(null);
-            }}
-            onClear={() => {
-              family.clearHome();
-              setDraftHome(null);
-              setSheet(null);
-            }}
-          />
+        {dayPicker && !detailOpen && (managed ? !!recordId : state.tab === 'history') && (
+          <Sheet title="날짜" onClose={() => setDayPicker(false)}>
+            <p className="mb-3 text-sm leading-6 text-slate-500">오늘부터 30일 전입니다. 서울 날짜로 고릅니다.</p>
+            <div className="space-y-1">
+              {historyDays.map((day) => (
+                <button
+                  key={day}
+                  type="button"
+                  onClick={() => {
+                    setHistoryDay(day);
+                    setDayPicker(false);
+                  }}
+                  className={`flex w-full rounded-2xl px-3 py-3 text-left text-sm font-bold ${day === activeHistoryDay ? 'bg-[#0084FF] text-white' : 'bg-slate-50 text-slate-800'}`}
+                >
+                  {historyDayLabel(day, now)}
+                </button>
+              ))}
+            </div>
+          </Sheet>
         )}
         {alertsOpen && (
           <Sheet
@@ -801,6 +1038,7 @@ export function FamilyMapScreen() {
             writeKey={state.syncWriteKey}
             readKey={state.syncReadKey}
             home={state.home}
+            senderName={state.profile?.name || ''}
             onClose={() => setSheet(null)}
             onCreate={(name) => family.addMember(name, state.inviteCode)}
           />
@@ -814,7 +1052,7 @@ export function FamilyMapScreen() {
               family.dismissInvite();
               setSheet(null);
             }}
-            onAccept={(label, code, syncToken, rosterName) => family.acceptInvite(label, code, syncToken, rosterName)}
+            onAccept={(label, code, syncToken, rosterName, adminName) => family.acceptInvite(label, code, syncToken, rosterName, adminName)}
             onShare={(code, share) => family.setGuardianShare(code, share)}
           />
         )}
@@ -859,6 +1097,89 @@ export function FamilyMapScreen() {
             }}
           />
         )}
+        {managed && menuOpen && (
+          <ManagedMenu
+            name={state.profile?.name || '나'}
+            photo={state.profile?.photo}
+            home={state.home}
+            alertHint={unreadAlerts ? '새 알림이 있습니다' : '들어오고 나간 기록'}
+            guardians={state.guardians}
+            onPhoto={(photo) => family.setPhoto(photo)}
+            onClose={() => setMenuOpen(false)}
+            onHome={startHomePick}
+            onAlerts={() => {
+              setMenuOpen(false);
+              setAlertsOpen(true);
+            }}
+            onInvite={() => {
+              setMenuOpen(false);
+              setSheet('accept');
+            }}
+            onSettings={() => setManagedSettings(true)}
+            onToggleShare={(link) => family.setGuardianShare(link.code, link.share === 'allowed' ? 'revoked' : 'allowed')}
+          />
+        )}
+        {managed && managedSettings && (
+          <Sheet title="설정" onClose={() => setManagedSettings(false)}>
+            <p className="text-sm leading-6 text-slate-500">위치는 초대를 수락하고 공유를 허용한 뒤에만 나갑니다. 위치 유지를 켠 뒤에는 이 화면에서 끄지 않습니다.</p>
+            <button
+              type="button"
+              onClick={() => {
+                void askAlwaysLocation(state.permissions.accuracy === 'precise').then((result) => {
+                  setSettingsNote(result.note);
+                  if (result.location === 'always' || result.location === 'while-using' || result.location === 'denied') {
+                    family.finishPermissions({ ...state.permissions, locationMode: result.location, completed: true });
+                  }
+                });
+              }}
+              className="mt-4 w-full rounded-full bg-slate-100 py-3 text-sm font-bold"
+            >
+              {tracking.native ? '항상 허용' : '위치 허용'}
+            </button>
+            {tracking.native && (
+              <button type="button" onClick={() => { void askBattery().then((result) => setSettingsNote(result.note)); }} className="mt-2 w-full rounded-full bg-slate-100 py-3 text-sm font-bold">
+                배터리 제한 없음
+              </button>
+            )}
+            {!(state.permissions.locationMode === 'always' && state.backgroundKeepAlive) && (
+              <button
+                type="button"
+                onClick={() => {
+                  void (async () => {
+                    const notifications = await askNotifications();
+                    if (notifications.note) setSettingsNote(notifications.note);
+                    if (tracking.native) {
+                      const battery = await askBattery();
+                      if (battery.note) setSettingsNote(battery.note);
+                    }
+                    family.setKeepAlive(true);
+                  })();
+                }}
+                className="mt-2 w-full rounded-full bg-[#0084FF] py-3 text-sm font-black text-white"
+              >
+                위치 유지 켜기
+              </button>
+            )}
+            {state.backgroundKeepAlive && state.permissions.locationMode === 'always' && (
+              <p className="mt-3 text-xs font-semibold leading-5 text-slate-500">위치 유지가 켜져 있습니다. 끄는 버튼은 없습니다.</p>
+            )}
+            {settingsNote && <p className="mt-3 text-xs leading-5 text-amber-800">{settingsNote}</p>}
+            {state.guardians.map((link) => (
+              <button
+                key={link.id}
+                type="button"
+                onClick={() => {
+                  setManagedSettings(false);
+                  setMenuOpen(false);
+                  setConfirm({ kind: 'leave', id: link.id, name: link.label });
+                }}
+                className="mt-3 w-full py-2 text-sm font-bold text-slate-400"
+              >
+                {link.label} 연결 끊기
+              </button>
+            ))}
+          </Sheet>
+        )}
         {confirm && (
           <ConfirmSheet
             title={confirm.kind === 'remove' ? '가족에서 지울까요?' : '연결을 끊을까요?'}
@@ -879,6 +1200,165 @@ export function FamilyMapScreen() {
   );
 }
 
+function MenuRow({ icon, label, hint, onClick }: { icon: React.ReactNode; label: string; hint: string; onClick: () => void }) {
+  return (
+    <button type="button" onClick={onClick} className="flex w-full items-center gap-3 border-t border-slate-100 px-4 py-3.5 text-left first:border-t-0">
+      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-700">{icon}</span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-sm font-bold text-slate-900">{label}</span>
+        <span className="block truncate text-xs text-slate-400">{hint}</span>
+      </span>
+      <ChevronRight className="h-4 w-4 shrink-0 text-slate-300" />
+    </button>
+  );
+}
+
+function ManagedMenu({
+  name,
+  photo,
+  home,
+  alertHint,
+  guardians,
+  onPhoto,
+  onClose,
+  onHome,
+  onAlerts,
+  onInvite,
+  onSettings,
+  onToggleShare,
+}: {
+  name: string;
+  photo?: string;
+  home: HomeZone | null;
+  alertHint: string;
+  guardians: GuardianLink[];
+  onPhoto: (photo: string) => void;
+  onClose: () => void;
+  onHome: () => void;
+  onAlerts: () => void;
+  onInvite: () => void;
+  onSettings: () => void;
+  onToggleShare: (link: GuardianLink) => void;
+}) {
+  return (
+    <div className="absolute inset-0 z-50 flex flex-col bg-[#f2f4f7]">
+      <header className="flex items-center bg-white px-1 py-2">
+        <button type="button" aria-label="닫기" onClick={onClose} className="flex h-11 w-11 items-center justify-center text-slate-800">
+          <X className="h-6 w-6" />
+        </button>
+        <h2 className="flex-1 text-center text-base font-bold">메뉴</h2>
+        <span className="h-11 w-11" />
+      </header>
+      <div className="flex-1 overflow-y-auto px-4 py-4">
+        <div className="flex items-center gap-3 rounded-2xl bg-white px-4 py-4 shadow-sm">
+          <PhotoPicker name={name} photo={photo} onPhoto={onPhoto} />
+          <div className="min-w-0">
+            <p className="truncate text-base font-black">{name}</p>
+            <p className="text-xs text-slate-400">이 기기에만 저장된 이름</p>
+          </div>
+        </div>
+        <div className="mt-4 overflow-hidden rounded-2xl bg-white shadow-sm">
+          <MenuRow icon={<Home className="h-4 w-4" />} label="우리 집 설정" hint={home ? `${home.label || '우리 집'} · 반경 ${home.radiusM}m` : '지도에서 집 위치를 정합니다'} onClick={onHome} />
+          <MenuRow icon={<Bell className="h-4 w-4" />} label="알림" hint={alertHint} onClick={onAlerts} />
+          <MenuRow icon={<UserPlus className="h-4 w-4" />} label="초대 수락" hint="관리자에게 받은 코드" onClick={onInvite} />
+        </div>
+        {guardians.length > 0 && (
+          <div className="mt-4 overflow-hidden rounded-2xl bg-white shadow-sm">
+            {guardians.map((link) => (
+              <button
+                key={link.id}
+                type="button"
+                onClick={() => onToggleShare(link)}
+                className="flex w-full items-center gap-3 border-t border-slate-100 px-4 py-3.5 text-left first:border-t-0"
+              >
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-700">
+                  <MapPin className="h-4 w-4" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-bold">{link.label}</span>
+                  <span className="block text-xs text-slate-400">위치 공유</span>
+                </span>
+                <span className={`text-xs font-bold ${link.share === 'allowed' ? 'text-[#0084FF]' : 'text-slate-400'}`}>
+                  {link.share === 'allowed' ? '공유 중' : '공유 안 함'}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+        <div className="mt-4 overflow-hidden rounded-2xl bg-white shadow-sm">
+          <MenuRow icon={<Settings className="h-4 w-4" />} label="설정" hint="위치 권한" onClick={onSettings} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function myChatName(state: { mode: string | null; profile: { name?: string } | null; guardians: GuardianLink[] }, code: string): string {
+  if (state.mode === 'managed') {
+    const link = state.guardians.find((item) => item.code === code && item.share !== 'revoked');
+    return chatName(link?.rosterName || state.profile?.name) || '나';
+  }
+  return chatName(state.profile?.name) || '나';
+}
+
+function directThreadFor(state: {
+  mode: string | null;
+  profile: { name?: string } | null;
+  guardians: GuardianLink[];
+  inviteCode: string;
+  syncWriteKey: string;
+  syncReadKey: string;
+}, member: Member): DirectChatTarget | null {
+  if (member.id === 'self') return null;
+  if (state.mode === 'admin') {
+    const peer = chatName(member.name);
+    const me = myChatName(state, state.inviteCode);
+    if (!peer || peer === me) return null;
+    return {
+      code: member.inviteCode || state.inviteCode,
+      me,
+      peer,
+      label: member.name,
+      writeKey: state.syncWriteKey,
+      readKey: state.syncReadKey,
+    };
+  }
+  const codeFromId = member.id.startsWith('family:') ? member.id.split(':')[1] || '' : '';
+  const link = state.guardians.find((item) => item.share !== 'revoked' && item.code === codeFromId)
+    ?? state.guardians.find((item) => item.share !== 'revoked' && chatName(item.adminName || item.label) === chatName(member.name));
+  const code = link?.code || codeFromId;
+  if (!code) return null;
+  const peer = chatName(member.name);
+  const me = myChatName(state, code);
+  if (!peer || peer === me) return null;
+  return { code, me, peer, label: member.name, token: link?.syncToken ?? null };
+}
+
+function guardianThreads(state: {
+  mode: string | null;
+  profile: { name?: string } | null;
+  guardians: GuardianLink[];
+  members: Member[];
+}): DirectChatTarget[] {
+  if (state.mode !== 'managed') return [];
+  const shown = new Set(state.members.filter((member) => member.role === 'admin-share').map((member) => chatName(member.name)));
+  const threads: DirectChatTarget[] = [];
+  for (const link of state.guardians) {
+    if (link.share === 'revoked') continue;
+    const peer = chatName(link.adminName || link.label);
+    const me = myChatName(state, link.code);
+    if (!peer || peer === me || shown.has(peer)) continue;
+    threads.push({
+      code: link.code,
+      me,
+      peer,
+      label: link.adminName || link.label,
+      token: link.syncToken ?? null,
+    });
+  }
+  return threads;
+}
+
 function personArea(member: Member, home: HomeZone | null) {
   if (member.place) return member.place;
   if (home && hasLocation(member) && haversineMeters(member, home) <= home.radiusM) return home.label || '우리 집';
@@ -895,6 +1375,8 @@ function MemberCard({
   member,
   home,
   selected,
+  unread = 0,
+  chatHint = false,
   onSelect,
   onPhoto,
   onRemove,
@@ -902,6 +1384,8 @@ function MemberCard({
   member: Member;
   home: HomeZone | null;
   selected: boolean;
+  unread?: number;
+  chatHint?: boolean;
   onSelect: () => void;
   onPhoto?: (photo: string) => void;
   onRemove?: () => void;
@@ -917,9 +1401,10 @@ function MemberCard({
       <button type="button" onClick={onSelect} className="min-w-0 flex-1 text-left">
         <span className="block truncate font-bold">{member.name}</span>
         <span className="block truncate text-xs text-slate-500">
-          {personArea(member, home)}{live ? ` · ${live}` : ''}
+          {personArea(member, home)}{live ? ` · ${live}` : ''}{chatHint ? ' · 개인 대화' : ''}
         </span>
       </button>
+      {unread > 0 && <span className="shrink-0 rounded-full bg-[#ff8a34] px-2 py-0.5 text-[10px] font-black text-white">{unread}</span>}
       {member.battery != null && <span className="shrink-0 text-xs font-bold text-slate-500">{member.battery}%</span>}
       {onRemove && (
         <button type="button" onClick={onRemove} aria-label={`${member.name} 지우기`} className="shrink-0 rounded-full p-2 text-slate-400">
@@ -979,84 +1464,90 @@ function GuardianCard({
   );
 }
 
-function HomeSheet({
-  initial,
-  center,
-  onPreview,
-  onClose,
+const HOME_RADIUS_CHOICES = [100, 200, 300, 500];
+
+function HomePlaceBar({
+  draft,
+  saved,
+  canUseSelf,
+  onDraft,
+  onUseSelf,
+  onCancel,
   onSave,
   onClear,
 }: {
-  initial: HomeZone | null;
-  center: { lat: number; lng: number };
-  onPreview: (home: HomeZone) => void;
-  onClose: () => void;
-  onSave: (home: HomeZone) => void;
+  draft: HomeZone;
+  saved: boolean;
+  canUseSelf: boolean;
+  onDraft: (home: HomeZone) => void;
+  onUseSelf: () => void;
+  onCancel: () => void;
+  onSave: () => void;
   onClear: () => void;
 }) {
-  const [address, setAddress] = useState(initial?.address ?? '');
-  const [radius, setRadius] = useState(initial?.radiusM ?? 200);
-  const draft = (nextRadius: number, nextAddress: string): HomeZone => ({
-    label: nextAddress.trim() || '우리 집',
-    address: nextAddress.trim(),
-    lat: center.lat,
-    lng: center.lng,
-    radiusM: nextRadius,
-    alertPhone: '',
-  });
-  const publish = (nextRadius: number, nextAddress = address) => {
-    const clamped = Math.min(2000, Math.max(50, Math.round(nextRadius) || 50));
-    setRadius(clamped);
-    onPreview(draft(clamped, nextAddress));
+  const setRadius = (radiusM: number) => {
+    const clamped = Math.min(2000, Math.max(50, Math.round(radiusM) || 50));
+    onDraft({ ...draft, radiusM: clamped });
   };
-  useEffect(() => {
-    onPreview(draft(radius, address));
-  }, [address, center.lat, center.lng, onPreview, radius]);
   return (
-    <Sheet title="우리 집 반경" onClose={onClose}>
-      <p className="text-sm leading-6 text-slate-500">지도 가운데가 집입니다. 숫자를 바꾸면 파란 원이 바로 커지거나 작아집니다. 피관리자가 위치 공유를 허용한 뒤 이 원을 나가면 관리자 화면에 사이렌이 울립니다.</p>
-      <label className="mt-4 block text-xs font-bold text-slate-400" htmlFor="home-address">
-        주소 또는 이름
+    <section className="rounded-t-3xl bg-white px-4 pb-3 pt-3 shadow-[0_-8px_30px_rgba(15,23,42,0.08)]">
+      <h2 className="text-lg font-black">{saved ? '우리 집 위치' : '우리 집 정하기'}</h2>
+      <p className="text-xs leading-5 text-slate-500">지도를 움직여 파란 원 가운데를 집에 맞추세요. 가족이 이 원을 나가면 알림이 남습니다.</p>
+      <label className="mt-3 block text-xs font-bold text-slate-400" htmlFor="home-address">
+        집 이름
       </label>
       <input
         id="home-address"
-        value={address}
+        value={draft.address}
         onChange={(event) => {
-          setAddress(event.target.value);
-          onPreview(draft(radius, event.target.value));
+          const address = event.target.value;
+          onDraft({ ...draft, address, label: address.trim() || '우리 집' });
         }}
-        placeholder="주소 또는 이름"
+        placeholder="우리 집"
         className="mt-1 w-full rounded-2xl border border-slate-200 px-3 py-3 outline-none focus:border-[#0084FF]"
       />
-      <label className="mt-4 block text-xs font-bold text-slate-400" htmlFor="home-radius">
-        반경 {radius}m
-      </label>
-      <div className="mt-2 flex items-center gap-3">
-        <input
-          id="home-radius"
-          type="number"
-          min={50}
-          max={2000}
-          value={radius}
-          onChange={(event) => publish(Number(event.target.value))}
-          className="w-24 rounded-2xl border border-slate-200 px-3 py-2 outline-none focus:border-[#0084FF]"
-        />
-        <span className="text-sm font-bold text-slate-500">미터</span>
+      <p className="mt-3 text-xs font-bold text-slate-400">반경 {draft.radiusM}m</p>
+      <div className="mt-2 flex gap-2">
+        {HOME_RADIUS_CHOICES.map((radius) => (
+          <button
+            key={radius}
+            type="button"
+            onClick={() => setRadius(radius)}
+            className={`flex-1 rounded-full py-2 text-xs font-bold ${draft.radiusM === radius ? 'bg-[#0084FF] text-white' : 'bg-slate-100 text-slate-600'}`}
+          >
+            {radius}m
+          </button>
+        ))}
       </div>
-      <input type="range" min={50} max={2000} step={10} value={radius} onChange={(event) => publish(Number(event.target.value))} className="mt-3 w-full" />
-      <button
-        type="button"
-        onClick={() => onSave(draft(radius, address))}
-        className="mt-4 w-full rounded-full bg-[#ff8a34] py-3.5 font-bold text-white"
-      >
-        저장
-      </button>
-      {initial && (
-        <button type="button" onClick={onClear} className="mt-2 w-full py-2 text-sm font-bold text-slate-400">
+      <input
+        aria-label="집 반경"
+        type="range"
+        min={50}
+        max={2000}
+        step={10}
+        value={draft.radiusM}
+        onChange={(event) => setRadius(Number(event.target.value))}
+        className="mt-3 w-full"
+      />
+      <div className="mt-3 flex gap-2">
+        <button type="button" onClick={onCancel} className="flex-1 rounded-full bg-slate-100 py-3 text-sm font-bold">
+          취소
+        </button>
+        <button type="button" onClick={onSave} className="flex-[2] rounded-full bg-[#ff8a34] py-3 text-sm font-black text-white">
+          이 위치로 저장
+        </button>
+      </div>
+      {canUseSelf && (
+        <button type="button" onClick={onUseSelf} className="mt-2 w-full rounded-full bg-slate-100 py-2 text-xs font-bold text-slate-600">
+          내 현재 위치로 맞추기
+        </button>
+      )}
+      {saved && (
+        <button type="button" onClick={onClear} className="mt-1 w-full py-2 text-sm font-bold text-slate-400">
           우리 집 지우기
         </button>
       )}
-    </Sheet>
+    </section>
   );
 }
 
@@ -1065,6 +1556,7 @@ function AdminInviteSheet({
   writeKey,
   readKey,
   home,
+  senderName,
   onClose,
   onCreate,
 }: {
@@ -1072,6 +1564,7 @@ function AdminInviteSheet({
   writeKey: string;
   readKey: string;
   home: HomeZone | null;
+  senderName: string;
   onClose: () => void;
   onCreate: (name: string) => void;
 }) {
@@ -1125,7 +1618,7 @@ function AdminInviteSheet({
     <Sheet title="2. 코드를 보내세요" onClose={onClose}>
       <p className="text-sm leading-6 text-slate-500">{sentName} 님 폰에서 피관리자 모드로 링크를 엽니다. 수락 다음에 위치 공유를 따로 묻습니다. 전화번호로는 위치를 찾지 않습니다.</p>
       <p className="mt-4 text-center text-4xl font-black tracking-[0.25em] text-[#0084FF]">{code}</p>
-      {token && <InviteQrImage text={buildInviteLink(code, home, token, sentName)} />}
+      {token && <InviteQrImage text={buildInviteLink(code, home, token, sentName, senderName)} />}
       {token && <p className="mt-2 text-center text-[11px] leading-5 text-slate-400">QR은 초대 링크와 같습니다. 위치를 읽는 키는 들어 있지 않고, 전화번호도 없습니다.</p>}
       <label className="mt-4 block text-xs font-bold text-slate-400" htmlFor="sync-token">
         동기화 키
@@ -1136,7 +1629,7 @@ function AdminInviteSheet({
           <Copy className="mr-1 inline h-3.5 w-3.5" />
           코드 복사
         </button>
-        <button type="button" disabled={!token} onClick={() => copy(buildInviteLink(code, home, token, sentName), '링크를 복사했습니다')} className="rounded-full bg-slate-100 py-2 text-xs font-bold disabled:opacity-40">
+        <button type="button" disabled={!token} onClick={() => copy(buildInviteLink(code, home, token, sentName, senderName), '링크를 복사했습니다')} className="rounded-full bg-slate-100 py-2 text-xs font-bold disabled:opacity-40">
           링크 복사
         </button>
       </div>
@@ -1161,7 +1654,7 @@ function AdminInviteSheet({
   );
 }
 
-function parseInviteDraft(value: string): { code: string; syncToken: string | null; rosterName: string | null } {
+function parseInviteDraft(value: string): { code: string; syncToken: string | null; rosterName: string | null; adminName: string | null } {
   const trimmed = value.trim();
   if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
     try {
@@ -1169,12 +1662,13 @@ function parseInviteDraft(value: string): { code: string; syncToken: string | nu
       const code = (url.searchParams.get('invite') || '').replace(/\D/g, '').slice(0, 6);
       const syncToken = splitSyncToken(url.searchParams.get('sync')) ? url.searchParams.get('sync') : null;
       const rosterName = (url.searchParams.get('who') || '').trim().slice(0, 80) || null;
-      return { code, syncToken, rosterName };
+      const adminName = (url.searchParams.get('from') || '').trim().slice(0, 20) || null;
+      return { code, syncToken, rosterName, adminName };
     } catch {
       /* 링크가 아니면 코드로 봅니다. */
     }
   }
-  return { code: trimmed.replace(/\D/g, '').slice(0, 6), syncToken: null, rosterName: null };
+  return { code: trimmed.replace(/\D/g, '').slice(0, 6), syncToken: null, rosterName: null, adminName: null };
 }
 
 function ManagedInviteSheet({
@@ -1189,12 +1683,13 @@ function ManagedInviteSheet({
   pendingSyncToken: string | null;
   guardians: GuardianLink[];
   onClose: () => void;
-  onAccept: (label: string, code: string, syncToken: string | null, rosterName: string | null) => void;
+  onAccept: (label: string, code: string, syncToken: string | null, rosterName: string | null, adminName: string | null) => void;
   onShare: (code: string, share: 'allowed' | 'revoked') => void;
 }) {
   const [code, setCode] = useState(pending ?? '');
   const [syncToken, setSyncToken] = useState(pendingSyncToken ?? '');
   const [rosterName, setRosterName] = useState(() => new URLSearchParams(window.location.search).get('who')?.trim().slice(0, 80) ?? '');
+  const [adminName, setAdminName] = useState(() => new URLSearchParams(window.location.search).get('from')?.trim().slice(0, 20) ?? '');
   const [label, setLabel] = useState('');
   const [step, setStep] = useState<'join' | 'share'>('join');
   const [joinedCode, setJoinedCode] = useState('');
@@ -1215,6 +1710,7 @@ function ManagedInviteSheet({
                 setCode(parsed.code);
                 if (parsed.syncToken) setSyncToken(parsed.syncToken);
                 if (parsed.rosterName) setRosterName(parsed.rosterName);
+                if (parsed.adminName) setAdminName(parsed.adminName);
                 return;
               }
               setCode(next.replace(/\D/g, '').slice(0, 6));
@@ -1229,6 +1725,7 @@ function ManagedInviteSheet({
               if (parsed.code) setCode(parsed.code);
               if (parsed.syncToken) setSyncToken(parsed.syncToken);
               if (parsed.rosterName) setRosterName(parsed.rosterName);
+              if (parsed.adminName) setAdminName(parsed.adminName);
             }}
           />
           <label className="mt-3 block text-xs font-bold text-slate-400" htmlFor="managed-sync-token">
@@ -1246,7 +1743,7 @@ function ManagedInviteSheet({
             disabled={code.length < 4}
             onClick={() => {
               const token = splitSyncToken(syncToken) ? syncToken : null;
-              onAccept(label, code, token, rosterName.trim() || null);
+              onAccept(label, code, token, rosterName.trim() || null, adminName.trim() || null);
               setJoinedCode(code);
               setStep('share');
             }}

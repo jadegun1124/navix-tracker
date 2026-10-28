@@ -70,6 +70,8 @@ export interface GuardianLink {
   syncToken?: string;
   /** Admin's roster label carried in the invite link. The phone still publishes under this name when set. */
   rosterName?: string;
+  /** Admin display name from the invite, used as the other side of a private chat. */
+  adminName?: string;
 }
 
 export interface HomeZone {
