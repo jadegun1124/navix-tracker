@@ -101,7 +101,7 @@ test('chat shade notification is one event and opens that conversation', () => {
   assert.match(plugin, /notifyListeners\("chat"/);
 });
 
-test('gps is 2.5s only while moving and backs off to 2 then 5 minutes while still', () => {
+test('gps is 2.5s while walking or riding, 12s for 3 minutes after a ride, then 2 and 5 minutes while parked', () => {
   const location = readFileSync(new URL('../../android/app/src/main/java/kr/co/umap/tracker/LocationKeepService.java', import.meta.url), 'utf8');
   assert.match(location, /GPS_MOVING_MS = 2_500L/);
   assert.match(location, /SAMPLE_GAP_MS = 1_200L/);
@@ -109,6 +109,12 @@ test('gps is 2.5s only while moving and backs off to 2 then 5 minutes while stil
   assert.match(location, /GPS_STILL_LONG_MS = 300_000L/);
   assert.match(location, /STILL_LONG_AFTER_MS = 7 \* 60_000L/);
   assert.match(location, /MOVING_HOLD_MS = 45_000L/);
+  assert.match(location, /RIDE_MIN_MPS = 7f \/ 3.6f/);
+  assert.match(location, /RIDE_STEP_M = 8f/);
+  assert.match(location, /RIDE_STAY_STEP_M = 18f/);
+  assert.match(location, /RIDE_BRIDGE_MS = 12_000L/);
+  assert.match(location, /RIDE_BRIDGE_FOR_MS = 3 \* 60_000L/);
+  assert.match(location, /lastRideAt = 0L/);
   assert.match(location, /PUBLISH_MOVING_MS = 8_000L/);
   assert.match(location, /PUBLISH_STILL_MS = 120_000L/);
   assert.match(location, /PUBLISH_MOVING_M = 25f/);
@@ -121,6 +127,7 @@ test('gps is 2.5s only while moving and backs off to 2 then 5 minutes while stil
   assert.equal(location.includes('15_000L'), false);
   assert.equal(location.includes('GPS_MOVING_MS = 5_000L'), false);
   assert.equal(location.includes('GPS_MOVING_MS = 3_000L'), false);
+  assert.equal(location.includes('GPS_MOVING_MS = 1_000L'), false);
   assert.equal(location.includes('5_000L, 0f'), false);
   assert.equal(location.includes('isStayJitter'), false);
 });

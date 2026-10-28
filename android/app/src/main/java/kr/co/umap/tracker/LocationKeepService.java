@@ -42,14 +42,17 @@ import org.json.JSONObject;
  * accuracy above 80m, later fixes worse than 40m, jumps faster than 350 m/s.
  * Coordinates are the real fix. The live pin's stay bubble is applied in JS.
  * Keep-alive is not a continuous 2.5s GNSS stream. GPS is requested every
- * 2.5s only after a walk or ride is clear (about 12m at walking pace, or a
- * reported speed with real displacement). A short light does not drop that
- * rate: the stream stays dense until the phone has barely moved for 45s.
- * A confirmed stay is 2 minutes, then 5 minutes after 7 minutes still — the
- * same moment a journey card is archived. The first request, and every fresh
- * process, starts at 2 minutes. Family HTTP is separate: at most every 8s or
- * 25m while moving, and every 2 minutes while still. The local trail still
- * receives every accepted fix.
+ * 2.5s after a walk is clear (about 12m at walking pace, or a reported speed
+ * with real displacement) or the pace is a bike or vehicle (about 7 km/h,
+ * 8m when speed is reported, 18m when it is not). A short light does not drop
+ * a walk: the stream stays dense until the phone has barely moved for 45s.
+ * After a ride, a stop holds 12s fixes for 3 minutes so the next departure is
+ * not a 20s hole. It does not stay at 2.5s while parked. A confirmed stay is
+ * then 2 minutes, and 5 minutes after 7 minutes still — the same moment a
+ * journey card is archived. The first request, and every fresh process,
+ * starts at 2 minutes. Family HTTP is separate: at most every 8s or 25m while
+ * moving, and every 2 minutes while still. The local trail still receives
+ * every accepted fix.
  */
 public class LocationKeepService {
     public static final String ACTION_FIX = "kr.co.umap.tracker.LOCATION_FIX";
@@ -80,6 +83,18 @@ public class LocationKeepService {
     private static final long MOVING_HOLD_MS = 45_000L;
     private static final float WALK_DISPLACE_M = 12f;
     private static final long WALK_DISPLACE_MS = 4_000L;
+    /** 7 km/h. Same cut as MODE_WALK_MAX_KMH / TRAIL_RIDE_MIN_MPS. */
+    private static final float RIDE_MIN_MPS = 7f / 3.6f;
+    /** Reported ride speed with this much real movement. Matches TRAIL_RIDE_MIN_STEP_M. */
+    private static final float RIDE_STEP_M = 8f;
+    /** No speed reading. Matches TRAIL_RIDE_STAY_STEP_M so a courtyard hop does not arm GPS. */
+    private static final float RIDE_STAY_STEP_M = 18f;
+    /**
+     * After a ride, sample faster than the 20s dash hole, slower than 2.5s.
+     * Three minutes covers a signal. A longer park returns to 2 minutes, then 5.
+     */
+    private static final long RIDE_BRIDGE_MS = 12_000L;
+    private static final long RIDE_BRIDGE_FOR_MS = 3 * 60_000L;
     /** Drop a second provider's burst. 2.5s GPS fixes sit outside this window. */
     private static final long SAMPLE_GAP_MS = 1_200L;
     /** Family server. Local emit() is not throttled by these. */
@@ -88,6 +103,7 @@ public class LocationKeepService {
     private static final float PUBLISH_MOVING_M = 25f;
     private static long requestedGpsMs = GPS_STILL_MS;
     private static long stillSinceMs = 0;
+    private static long lastRideAt = 0L;
     private static boolean movingStream = false;
     private static boolean updatesRegistered = false;
     private static String registeredConfig = "";
@@ -361,6 +377,7 @@ public class LocationKeepService {
         lastPublishedAt = 0L;
         requestedGpsMs = GPS_STILL_MS;
         stillSinceMs = 0L;
+        lastRideAt = 0L;
         movingStream = false;
         lastSampleAt = 0L;
         motionAnchor = null;
@@ -492,7 +509,13 @@ public class LocationKeepService {
         boolean pacedWalk = dt >= WALK_DISPLACE_MS && dt <= 20_000L && moved >= WALK_DISPLACE_M && implied >= 0.75f && implied <= 12f;
         boolean pacedTrip = dt > 20_000L && moved >= WALK_DISPLACE_M && implied >= 0.75f && implied <= 45f;
         boolean reported = speed >= 0.8f && moved >= 8f && dt >= WALK_DISPLACE_MS && dt <= 20_000L;
-        if (pacedWalk || pacedTrip || reported) {
+        // Above a walk, the 4–20s window used to ignore anything faster than 12 m/s
+        // unless a speed was reported inside that same window. A car then stayed on
+        // the 2 minute request and the trail became one dashed chord.
+        boolean rideReported = speed >= RIDE_MIN_MPS && moved >= RIDE_STEP_M && dt >= 1_000L && dt <= 30_000L && implied >= RIDE_MIN_MPS * 0.45f;
+        boolean rideImplied = speed < 0f && dt >= 2_500L && dt <= 180_000L && moved >= RIDE_STAY_STEP_M && implied > 2.4f && implied <= 45f;
+        if (pacedWalk || pacedTrip || reported || rideReported || rideImplied) {
+            if (speed >= RIDE_MIN_MPS || implied >= RIDE_MIN_MPS) lastRideAt = fixAt;
             motionAnchor = new Location(fix);
             motionAnchor.setTime(fixAt);
             stillSinceMs = 0L;
@@ -523,6 +546,7 @@ public class LocationKeepService {
         if (moving) return GPS_MOVING_MS;
         long stillFor = stillSinceMs > 0L ? Math.max(0L, now - stillSinceMs) : 0L;
         if (stillFor >= STILL_LONG_AFTER_MS) return GPS_STILL_LONG_MS;
+        if (lastRideAt > 0L && now - lastRideAt < RIDE_BRIDGE_FOR_MS) return RIDE_BRIDGE_MS;
         return GPS_STILL_MS;
     }
 

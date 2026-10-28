@@ -23,7 +23,7 @@ function looksLikeCoordinates(text: string) {
 
 function placeText(place: Place, fallback: string) {
   const label = place.label?.trim();
-  if (label && !looksLikeCoordinates(label)) return label;
+  if (label && label !== '근처' && !looksLikeCoordinates(label)) return label;
   return fallback;
 }
 

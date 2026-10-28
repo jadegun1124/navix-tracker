@@ -7,9 +7,9 @@ import type { AcceptedFix } from '../../lib/tracking.mjs';
 import { readSharedPlaces, publishSharedPlace, subscribeSharedPlaces, type SharedPlace } from '../../services/familyShare';
 import { familyEndpointAvailable, familySyncUrl, publishProfileRemote, splitSyncToken, startManagedFamilySync, syncTokenFor } from '../../services/familySync';
 import { startLocationWatch } from '../../services/locationWatch';
+import { cleanPlace } from '../../lib/memberPlace.mjs';
 import { cachedAddress, reverseGeocodeCached, shortenAddress } from '../../services/placeGeocode';
 import { openAlwaysLocation, readNativeBattery, umapLocation, umapLocationNative, type KeepAliveTarget } from '../../services/umapLocation';
-import { vworldApiKey } from '../../services/vworld';
 import { useFamily } from './session';
 
 const WAITING_KO: Record<string, string> = {
@@ -420,7 +420,6 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
   }, [state.tracks, state.trailDay]);
 
   useEffect(() => {
-    if (!vworldApiKey()) return;
     let pending: { memberId: string; id: string; lat: number; lng: number } | null = null;
     for (const [memberId, list] of Object.entries(state.visits)) {
       for (const visit of list) {
@@ -449,7 +448,6 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
   }, [state.visits]);
 
   useEffect(() => {
-    if (!vworldApiKey()) return;
     let pending: { memberId: string; id: string; which: 'start' | 'end'; lat: number; lng: number } | null = null;
     for (const [memberId, list] of Object.entries(state.journeys ?? {})) {
       for (const journey of list) {
@@ -488,38 +486,64 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
     .map((member) => `${member.id}:${member.lat?.toFixed(3)},${member.lng?.toFixed(3)}:${member.place ?? ''}`)
     .join('|');
   useEffect(() => {
-    if (state.stage !== 'map' || !vworldApiKey()) return;
+    if (state.stage !== 'map') return;
     const current = familyRef.current.state;
     const home = current.home;
-    const pending = current.members.find((member) => {
+    const queue = current.members.filter((member) => {
       if (!hasLocation(member) || member.role === 'guardian' || member.lat == null || member.lng == null) return false;
       const key = `${member.lat.toFixed(3)},${member.lng.toFixed(3)}`;
-      return !(placeKeys.current[member.id] === key && member.place);
+      return !(placeKeys.current[member.id] === key && cleanPlace(member.place));
     });
-    if (!pending || pending.lat == null || pending.lng == null) return;
-    const key = `${pending.lat.toFixed(3)},${pending.lng.toFixed(3)}`;
-    const id = pending.id;
-    if (home && id === 'self' && haversineMeters({ lat: pending.lat, lng: pending.lng }, home) <= home.radiusM) {
-      placeKeys.current[id] = key;
-      const label = home.label || '우리 집';
-      if (pending.place !== label) familyRef.current.setMemberPlace(id, label);
-      return;
-    }
+    if (!queue.length) return;
     let cancel = false;
-    const apply = (label: string | null) => {
+    let timer = 0;
+    let cursor = 0;
+    const step = () => {
       if (cancel) return;
-      placeKeys.current[id] = key;
-      const short = label ? shortenAddress(label) : '';
-      if (short) familyRef.current.setMemberPlace(id, short);
+      const pending = queue[cursor++];
+      if (!pending || pending.lat == null || pending.lng == null) {
+        const stillOpen = queue.some((member) => {
+          if (member.lat == null || member.lng == null) return false;
+          const bucket = `${member.lat.toFixed(3)},${member.lng.toFixed(3)}`;
+          return !(placeKeys.current[member.id] === bucket && cleanPlace(member.place));
+        });
+        if (stillOpen) timer = window.setTimeout(() => {
+          cursor = 0;
+          step();
+        }, 60_000);
+        return;
+      }
+      const key = `${pending.lat.toFixed(3)},${pending.lng.toFixed(3)}`;
+      const id = pending.id;
+      if (home && id === 'self' && haversineMeters({ lat: pending.lat, lng: pending.lng }, home) <= home.radiusM) {
+        placeKeys.current[id] = key;
+        const label = home.label || '우리 집';
+        if (pending.place !== label) familyRef.current.setMemberPlace(id, label);
+        else step();
+        return;
+      }
+      const apply = (label: string | null) => {
+        if (cancel) return;
+        const short = label ? shortenAddress(label) : '';
+        if (!short) {
+          step();
+          return;
+        }
+        placeKeys.current[id] = key;
+        if (cleanPlace(pending.place) !== short) familyRef.current.setMemberPlace(id, short);
+        else step();
+      };
+      const cached = cachedAddress(pending.lat, pending.lng);
+      if (cached) {
+        apply(cached);
+        return;
+      }
+      void reverseGeocodeCached(pending.lat, pending.lng).then(apply);
     };
-    const cached = cachedAddress(pending.lat, pending.lng);
-    if (cached) {
-      apply(cached);
-      return;
-    }
-    void reverseGeocodeCached(pending.lat, pending.lng).then(apply);
+    step();
     return () => {
       cancel = true;
+      window.clearTimeout(timer);
     };
   }, [memberPlaceKey, state.home, state.stage]);
 

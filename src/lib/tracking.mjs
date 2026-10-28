@@ -74,6 +74,24 @@ const TRAIL_STILL_STEP_M = 22;
 const TRAIL_STILL_STEP_MS = 12_000;
 const TRAIL_STILL_PACE_MIN_MPS = 0.85;
 const TRAIL_STILL_PACE_MAX_MPS = 2.4;
+/**
+ * Bike and vehicle. Same cut as classifyMode: 7 km/h.
+ * A stay flag must not throw these steps away. The line stays solid when the
+ * fixes themselves are closer than TRAIL_GAP_MS. Nothing is drawn between fixes.
+ */
+export const TRAIL_RIDE_MIN_MPS = MODE_WALK_MAX_KMH / 3.6;
+/** Matches the moving GPS period. An implied ride slower than this is not a vehicle step. */
+export const TRAIL_RIDE_VERTEX_MS = 2_500;
+/** Reported ride speed still has to move. Under this, a speed badge on a parked phone is jitter. */
+export const TRAIL_RIDE_MIN_STEP_M = 8;
+/**
+ * No GPS speed, and the accelerometer still says stay.
+ * 18m is past the 16m spur and short of the 22m calm-walk step, so courtyard
+ * jitter stays put. At 15 km/h that step is about 4–5s, under the 20s dash hole.
+ */
+export const TRAIL_RIDE_STAY_STEP_M = 18;
+/** Family card keeps 「지금」 this long after the last ride vertex. Same 45s as the walk GPS hold. */
+export const RIDE_STATUS_FRESH_MS = 45_000;
 /** A vertex this far off the shortcut, on a thin triangle, is courtyard multipath. */
 const TRAIL_SPUR_DEVIATION_M = 16;
 const TRAIL_SPUR_MIN_LEG_M = 16;
@@ -287,6 +305,57 @@ function walkPace(speed) {
 }
 
 /**
+ * True when this step should be a time-based vertex, not a stay snap.
+ * Reported speed at or above 7 km/h, and the ground track agrees (at least
+ * 8m, and not a frozen coordinate wearing a speed reading).
+ * With no speed reading, trust displacement only above a calm walk. A reported
+ * 0 or a walking speed stays on the walk and stay filters.
+ */
+export function isRideStep(last, point) {
+  const pace = stepPace(last, point);
+  if (!pace || !(pace.speed >= 0) || pace.speed > FIX_MAX_JUMP_MPS) return false;
+  const reported = pointSpeed(point);
+  if (reported != null && reported >= TRAIL_RIDE_MIN_MPS) {
+    return pace.moved >= TRAIL_RIDE_MIN_STEP_M
+      && pace.dt >= 800
+      && pace.speed >= TRAIL_RIDE_MIN_MPS * 0.45;
+  }
+  if (reported != null) return false;
+  if (pace.speed < TRAIL_RIDE_MIN_MPS || pace.dt < TRAIL_RIDE_VERTEX_MS) return false;
+  if (point?.staying === true) {
+    if (pace.speed <= TRAIL_STILL_PACE_MAX_MPS) return false;
+    return pace.moved >= TRAIL_RIDE_STAY_STEP_M;
+  }
+  return pace.moved >= TRAIL_RIDE_MIN_STEP_M;
+}
+
+/** The sample extends a ride from the current trail anchor. */
+export function fixShowsRide(points, point) {
+  return isRideStep(drawnAnchor(Array.isArray(points) ? points : []), point);
+}
+
+/** The newest drawn segment is a fresh bike-or-faster step. */
+export function recentRide(points, now) {
+  if (!Array.isArray(points) || !Number.isFinite(now)) return false;
+  const drawn = [];
+  for (const point of points) {
+    if (point && !point.stayEnd && Number.isFinite(point.lat) && Number.isFinite(point.at)) drawn.push(point);
+  }
+  if (drawn.length < 2) return false;
+  const end = drawn[drawn.length - 1];
+  if (now - end.at > RIDE_STATUS_FRESH_MS || now < end.at) return false;
+  return isRideStep(drawn[drawn.length - 2], end);
+}
+
+/** Family row: 「머무름」 only when the phone is still and the last fix is not a ride. */
+export function liveMotionLabel({ located, moving, points, now }) {
+  if (!located) return '';
+  if (moving !== false) return '지금';
+  if (recentRide(points, now)) return '지금';
+  return '머무름';
+}
+
+/**
  * Meters the next sample must clear before it is a new vertex.
  * A reported walk, or a 2.5s step whose own pace is a walk: 2.5m.
  * Accuracy must not widen this, or a ±19m fix skips the bend.
@@ -324,6 +393,9 @@ export function trailDecision(last, point) {
   if (moved === 0 && dt === 0) return 'drop';
   const implied = dt > 0 ? moved / (dt / 1000) : Infinity;
   if (implied > FIX_MAX_JUMP_MPS) return 'drop';
+  // Bike and vehicle fixes are kept on the GPS clock. A stay flag, or a missing
+  // speed, must not wait for a 50–120m chord. Walk jitter still snaps below.
+  if (isRideStep(last, point)) return 'keep';
   if (moved <= trailMoveGate(last, point)) return 'snap';
   // A stay flag with a walking GPS speed still keeps 4m vertices.
   // A fast hop inside the bubble is multipath that borrowed a speed reading.
@@ -410,6 +482,7 @@ function trailingSpur(points, point) {
   const prev = previousVertex(points);
   if (!tip || !prev || !point || tip === point) return false;
   if (spikeDeviation(prev, tip, point) > 0) return true;
+  if (isRideStep(prev, tip) || isRideStep(tip, point)) return false;
   if (speedShowsMoving(point) && point.staying !== true) return false;
   if (!stillSample(point) && point.staying !== true) return false;
   const turn = Math.abs(signedTurnDeg(prev, tip, point));

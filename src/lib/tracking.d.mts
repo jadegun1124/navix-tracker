@@ -17,6 +17,11 @@ export const FIX_JUMP_WINDOW_MS: number;
 export const TRAIL_POOR_ACCURACY_M: number;
 export const TRAIL_STAY_SPEED_MPS: number;
 export const TRAIL_STILL_CONFIRM_M: number;
+export const TRAIL_RIDE_MIN_MPS: number;
+export const TRAIL_RIDE_VERTEX_MS: number;
+export const TRAIL_RIDE_MIN_STEP_M: number;
+export const TRAIL_RIDE_STAY_STEP_M: number;
+export const RIDE_STATUS_FRESH_MS: number;
 
 export type TravelMode = 'walk' | 'bike' | 'vehicle' | 'plane';
 
@@ -67,6 +72,15 @@ export interface AcceptedFix {
 export function modeLabel(mode: TravelMode | string): string;
 export function seoulDayKey(epochMs: number): string;
 export function needsDailyWipe(storedDay: string | null | undefined, now: number): boolean;
+export function isRideStep(last: TrailSample | null | undefined, point: TrailSample | null | undefined): boolean;
+export function fixShowsRide(points: TrailSample[] | null | undefined, point: TrailSample | null | undefined): boolean;
+export function recentRide(points: TrailSample[] | null | undefined, now: number): boolean;
+export function liveMotionLabel(input: {
+  located: boolean;
+  moving: boolean | null | undefined;
+  points?: TrailSample[] | null;
+  now: number;
+}): '' | '지금' | '머무름';
 export function trailMoveGate(last: TrailSample | null | undefined, point: TrailSample | null | undefined): number;
 export function trailDecision(last: TrailSample | null | undefined, point: TrailSample | null | undefined): TrailDecision;
 export function shouldKeepTrailPoint(last: TrailSample | null | undefined, point: TrailSample): boolean;

@@ -5,7 +5,7 @@ import { carryPlace, cleanPlace } from '../../lib/memberPlace.mjs';
 import { isSelfEchoPlace, mergePeerSessions, withoutSelfEcho } from '../../lib/peerFamily.mjs';
 import { resolveManagedTarget } from '../../lib/managedPlace.mjs';
 import { familyPinId, isMemberId, moveKeyed } from '../../lib/sharedIdentity.mjs';
-import { HISTORY_DAYS, JOURNEY_POINT_CAP, TRAIL_POINT_CAP, isWithinHistory, journeysWithinHistory, labelJourneyPlace, mergeJourneyLists, seoulDayKey, settleTrailPoint, splitClosedJourneys, tracksWithinHistory, trimJourneyList, visitsWithinHistory, type JourneyRecord } from '../../lib/tracking.mjs';
+import { HISTORY_DAYS, JOURNEY_POINT_CAP, TRAIL_POINT_CAP, fixShowsRide, isWithinHistory, journeysWithinHistory, labelJourneyPlace, mergeJourneyLists, recentRide, seoulDayKey, settleTrailPoint, splitClosedJourneys, tracksWithinHistory, trimJourneyList, visitsWithinHistory, type JourneyRecord } from '../../lib/tracking.mjs';
 import type { DayStop } from '../../lib/tracking.mjs';
 import type { SharedPlace, SharedProfile } from '../../services/familyShare';
 import { umapLocation } from '../../services/umapLocation';
@@ -417,7 +417,7 @@ function withoutDemo(session: Session): Session {
       const charging = renamed.charging === true ? true : renamed.charging === false ? false : null;
       const battery = typeof renamed.battery === 'number' && renamed.battery >= 0 && renamed.battery <= 100 ? Math.round(renamed.battery) : null;
       const photo = cleanPhoto(renamed.photo) || (renamed.id === 'self' ? cleanPhoto(profile?.photo) : undefined);
-      const place = typeof renamed.place === 'string' ? renamed.place.trim().slice(0, 40) : '';
+      const place = cleanPlace(renamed.place);
       const publisherId = isMemberId(renamed.publisherId) ? renamed.publisherId : '';
       const next = {
         ...renamed,
@@ -751,6 +751,10 @@ function reducer(state: Session, action: Action): Session {
         accuracyM: action.accuracyM,
         staying: self?.moving === false,
       };
+      // A cruise often looks still to the accelerometer. GPS pace at bike speed or
+      // faster is not a stay, so the vertex is kept and the card does not say 머무름.
+      const riding = fixShowsRide(state.tracks.self, sample);
+      if (riding) sample.staying = false;
       const settled = settleTrailPoint(state.tracks.self, sample, at);
       if (settled.decision === 'drop') {
         if (settled.points === state.tracks.self) return archiveJourneys(state, at);
@@ -777,6 +781,7 @@ function reducer(state: Session, action: Action): Session {
                 lng: nextLng,
                 accuracyM: Math.max(1, Math.round(action.accuracyM)),
                 updatedAt: at,
+                ...(riding ? { moving: true } : {}),
                 ...(keptPlace ? { place: keptPlace } : { place: undefined }),
               }
             : member,
@@ -1109,6 +1114,7 @@ function reducer(state: Session, action: Action): Session {
       };
     }
     case 'set-motion':
+      if (!action.moving && recentRide(state.tracks.self, Date.now())) return state;
       return {
         ...state,
         members: state.members.map((member) => (member.id === 'self' ? { ...member, moving: action.moving } : member)),

@@ -11,6 +11,11 @@ test('member status uses the nearest address and never says nearby', () => {
   assert.equal(memberPlaceLabel({ place: '', located: true, address: '근처' }), '');
   const joined = ['강북구 수유동', '머무름'].join(' · ');
   assert.equal(joined.includes('근처'), false);
+  const card = (place, live) => [memberPlaceLabel({ place, located: true }), live].filter(Boolean).join(' · ');
+  assert.equal(card('구리시 수택동', '지금'), '구리시 수택동 · 지금');
+  assert.equal(card('남양주시 다산동', '머무름'), '남양주시 다산동 · 머무름');
+  assert.equal(card('근처', '지금').includes('근처'), false);
+  assert.equal(card('근처 근처', '머무름'), '머무름');
 });
 
 test('a moved pin does not keep the previous neighborhood', () => {
