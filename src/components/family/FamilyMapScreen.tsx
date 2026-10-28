@@ -3,13 +3,14 @@ import { Bell, ChevronLeft, ChevronRight, Copy, Home, LocateFixed, MapPin, Menu,
 import { looksLikePhone, localProfile } from '../../lib/localProfile.mjs';
 import { buildInviteLink, formatClock, hasLocation, haversineMeters, shouldAlertLeave } from '../../lib/geo';
 import { ALWAYS_GUIDE_DISMISSED_KEY, CHAT_NOTIFY_ASKED_KEY, KEEP_PERMISSION_ASKED_KEY, KEEP_START_ASKED_KEY, keepEntryPrompt, markSessionFlag, readSessionFlag } from '../../lib/systemSettings.mjs';
+import { familyMapShowsTrail } from '../../lib/mapTrail.mjs';
 import { collapseDuplicateJourneys, displayCoordinate, historyDayKeys, historyDayLabel, liveMotionLabel, liveTrailPoints, previewOpenJourney, seoulDayEndMs, seoulDayKey, visibleTrail } from '../../lib/tracking.mjs';
 import { ackFamilyAlert, isFamilyAlertAcked, publishFamilyAlert, readFamilyAlert, subscribeFamilyAlerts, type FamilyAlert } from '../../services/familyAlert';
 import { readSharedPlaces, subscribeSharedPlaces } from '../../services/familyShare';
 import { currentSyncPhase, familySyncConfigured, familySyncUrl, fetchMyDirectThreads, registerRoomPush, splitSyncToken, startAdminRemoteSync, startSyncMonitor, subscribeSyncPhase, syncTokenFor, type SyncPhase } from '../../services/familySync';
 import { consumePendingChat, listenChatOpen, overlayPermissionGranted, umapLocation, umapLocationNative } from '../../services/umapLocation';
 import { sounds } from '../../utils/audio';
-import { DEFAULT_CENTER, type GuardianLink, type HomeZone, type Member } from '../../types/family';
+import { DEFAULT_CENTER, type GuardianLink, type HomeZone, type Member, type TrackPoint } from '../../types/family';
 import { AlwaysAllowGuide, AlwaysAllowMapHint } from './AlwaysAllowGuide';
 import { AlwaysAllowSetup } from './AlwaysAllowSetup';
 import { memberPlaceLabel } from '../../lib/memberPlace.mjs';
@@ -27,6 +28,8 @@ import { askAlwaysLocation, askBattery, askNotifications } from '../../services/
 import { useFamilyTracking } from './useFamilyTracking';
 import { useFamily } from './session';
 import { consumeAndroidBack } from '../../platform/androidExit';
+
+const HIDDEN_TRAIL: TrackPoint[] = [];
 
 export function FamilyMapScreen() {
   const family = useFamily();
@@ -471,7 +474,12 @@ export function FamilyMapScreen() {
   const detailOpen = viewingRecords && !!detailId && (detailId === 'open' ? !!openJourney : !!detailJourney);
   const detailPoints = detailId === 'open' ? liveLine : detailJourney?.points ?? [];
   const mapPoints = detailOpen ? detailPoints : liveLine;
-  const showPath = detailOpen || (!!selected && showTrail && (selected.id === 'self' || selected.share === 'allowed' || selected.role === 'admin-share'));
+  const showPath = familyMapShowsTrail({
+    viewingRecords,
+    detailOpen,
+    showTrail,
+    member: selected,
+  });
   const dayVisits = useMemo(() => {
     const list = selected ? state.visits[selected.id] ?? [] : [];
     return list.filter((visit) => seoulDayKey(visit.arrivedAt) === pathDay);
@@ -663,7 +671,7 @@ export function FamilyMapScreen() {
             zoom={16}
             members={detailOpen ? [] : visibleMembers}
             home={detailOpen ? null : (draftHome ?? (showZone ? state.home : null))}
-            trail={showPath ? mapPoints : []}
+            trail={showPath ? mapPoints : HIDDEN_TRAIL}
             trailColor="#0084FF"
             playback={playback}
             selectedId={selected?.id}
@@ -720,6 +728,7 @@ export function FamilyMapScreen() {
             <RoundButton label="안심존 표시" onClick={() => setShowZone((value) => !value)}>
               <Home className={`h-5 w-5 ${showZone ? 'text-[#0084FF]' : 'text-slate-400'}`} />
             </RoundButton>
+            {viewingRecords && (
             <RoundButton
               label="이동 경로"
               onClick={() => {
@@ -733,8 +742,9 @@ export function FamilyMapScreen() {
                 });
               }}
             >
-              <Route className={`h-5 w-5 ${showTrail ? 'text-[#0084FF]' : 'text-slate-400'}`} />
+              <Route className={`h-5 w-5 ${showPath ? 'text-[#0084FF]' : 'text-slate-400'}`} />
             </RoundButton>
+            )}
             <RoundButton label="확대" onClick={() => mapRef.current?.zoomBy(1)}>
               <Plus className="h-5 w-5" />
             </RoundButton>
@@ -836,7 +846,7 @@ export function FamilyMapScreen() {
           <section className="max-h-[48%] overflow-y-auto rounded-t-3xl bg-white px-4 pb-3 pt-3 shadow-[0_-8px_30px_rgba(15,23,42,0.08)]">
             <div className="mb-2 flex items-center justify-between gap-2">
               <h2 className="truncate text-lg font-black">{selected?.id === 'self' ? '내 기록' : `${selected?.name ?? ''} 기록`}</h2>
-              <button type="button" onClick={() => setRecordId(null)} className="shrink-0 rounded-full bg-slate-100 px-3 py-1.5 text-xs font-bold">
+              <button type="button" onClick={() => { setRecordId(null); setDetailId(null); setPlaying(false); }} aria-label="기록 닫기" className="shrink-0 rounded-full bg-slate-100 px-3 py-1.5 text-xs font-bold">
                 닫기
               </button>
             </div>

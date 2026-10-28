@@ -94,7 +94,7 @@ jobs:
         run: |
           mkdir -p output
           find android/ -name "*.apk" -ls
-          find android/ -name "*.apk" -exec cp {} output/umap-v1.21.0-tracker.apk \;
+          find android/ -name "*.apk" -exec cp {} output/umap-v1.22.0-tracker.apk \;
           echo "Output directory contents:"
           ls -lh output/
 
@@ -103,7 +103,7 @@ jobs:
           set -euo pipefail
           BUILD_TOOLS="$(ls -1 "$ANDROID_HOME/build-tools" | sort -V | tail -n 1)"
           APKSIGNER="$ANDROID_HOME/build-tools/${BUILD_TOOLS}/apksigner"
-          "$APKSIGNER" verify --print-certs output/umap-v1.21.0-tracker.apk | tee output/apk-certs.txt
+          "$APKSIGNER" verify --print-certs output/umap-v1.22.0-tracker.apk | tee output/apk-certs.txt
           python3 - <<'PY'
           import pathlib, re, subprocess
           certs = pathlib.Path("output/apk-certs.txt").read_text()
@@ -133,25 +133,26 @@ jobs:
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: umap-v1.21.0-tracker-apk
-          path: output/umap-v1.21.0-tracker.apk
+          name: umap-v1.22.0-tracker-apk
+          path: output/umap-v1.22.0-tracker.apk
           retention-days: 30
 
       - name: Create or Update GitHub Release with APK
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.21.0
-          name: 'Umap Android APK v1.21.0'
+          tag_name: v1.22.0
+          name: 'Umap Android APK v1.22.0'
           make_latest: true
           body: |
-            ### Umap 안드로이드 앱 1.21.0
+            ### Umap 안드로이드 앱 1.22.0
             - 회사 홈 (GitHub Pages): https://jadegun1124.github.io/umap/
             - 이 파일: GitHub Releases APK. Google Play에는 없습니다.
-            - 다운로드: https://github.com/jadegun1124/umap/releases/download/v1.21.0/umap-v1.21.0-tracker.apk
+            - 다운로드: https://github.com/jadegun1124/umap/releases/download/v1.22.0/umap-v1.22.0-tracker.apk
             - 표시 이름: Umap
             - 패키지: `kr.co.umap.tracker`
-            - versionName: 1.21.0
-            - versionCode: 22
+            - versionName: 1.22.0
+            - versionCode: 23
+            - 가족 전체 지도에서는 실시간 궤적을 그리지 않고, 사람 기록 화면에서만 봅니다. 기록을 닫으면 선이 사라지고, 위치 수집은 계속됩니다.
             - 항상 허용은 먼저 「앱 사용 중에만 허용」을 고르고, 삼성 「위치 액세스 권한」 화면 위에 「Umap 항상 허용으로 설정」 안내를 띄웁니다. 다른 앱 위에 표시를 거절해도 그 화면은 열리고, 앱 안 세 줄 안내가 남습니다.
             - Google 로그인은 확인된 계정만 통과합니다. 웹 클라이언트 ID가 없으면 로그인으로 넘어가지 않습니다. 표시 이름은 그대로 이 기기에 둡니다.
             - 가족 카드의 현위치는 핀의 주소입니다. 예: 「구리시 수택동 · 지금」, 「남양주시 다산동 · 머무름」. VWorld 주소가 우선이고, 키가 없거나 실패하면 OpenStreetMap Nominatim으로 시·동을 채웁니다. 「근처」는 쓰지 않습니다.
@@ -186,6 +187,6 @@ jobs:
             - iOS 앱은 App Store / TestFlight에 없습니다.
             - 마이크, 문자, 주변 소리, 원격 경보음은 요청하지 않습니다.
             - 이전 파일: https://github.com/jadegun1124/umap/releases/tag/v1.18.0
-          files: output/umap-v1.21.0-tracker.apk
+          files: output/umap-v1.22.0-tracker.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
