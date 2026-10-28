@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { hasLocation, haversineMeters } from '../../lib/geo';
-import { isSelfEchoPlace } from '../../lib/testRole.mjs';
+import { isSelfEchoPlace } from '../../lib/peerFamily.mjs';
 import { placePriorName } from '../../lib/placeAlias.mjs';
 import { buildDayRecord } from '../../lib/tracking.mjs';
 import type { AcceptedFix } from '../../lib/tracking.mjs';
@@ -196,6 +196,7 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
         name,
         ...(memberId ? { memberId } : {}),
         ...(priorName ? { priorName } : {}),
+        audience: 'family',
         lat: sharing && located ? located.lat : null,
         lng: sharing && located ? located.lng : null,
         accuracyM: located?.accuracyM ?? 0,
@@ -223,7 +224,7 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
       const ready = await familyEndpointAvailable(state.inviteCode, token);
       if (cancel) return;
       if (!ready) {
-        setFamilyShareNote(share ? '가족 위치 서버를 갱신하기 전에는 피관리자 화면으로 내 위치를 보내지 않습니다. 이 폰 지도에는 내 위치가 그대로 보입니다.' : null);
+        setFamilyShareNote(share ? '가족 위치 서버를 갱신하기 전에는 다른 폰으로 내 위치를 보내지 않습니다. 이 폰 지도에는 내 위치가 그대로 보입니다.' : null);
         return;
       }
       setFamilyShareNote(null);
@@ -323,7 +324,7 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
       for (const link of current.guardians) {
         if (!link.syncToken || !splitSyncToken(link.syncToken)) continue;
         if (link.share !== 'allowed' && link.share !== 'revoked') continue;
-        targets.push({ token: link.syncToken, code: link.code, audience: 'admin', sharing: link.share === 'allowed' });
+        targets.push({ token: link.syncToken, code: link.code, audience: 'family', sharing: link.share === 'allowed' });
       }
       if (current.shareSelfWithFamily || nativeAdminShared.current) {
         const token = await syncTokenFor(current.syncWriteKey, current.syncReadKey);
@@ -362,21 +363,35 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
     };
   }, [keepKey]);
 
-  const familyLinkKey = state.guardians.map((link) => `${link.code}:${link.syncToken ?? ''}`).join('|');
+  const familyLinkKey = `${state.inviteCode}:${state.syncWriteKey}:${state.guardians.map((link) => `${link.code}:${link.syncToken ?? ''}`).join('|')}`;
   useEffect(() => {
-    const links = familyRef.current.state.guardians
-      .filter((link) => link.syncToken)
-      .map((link) => ({ code: link.code, token: link.syncToken as string }));
-    if (links.length === 0) return;
-    return startManagedFamilySync(links, (code, places, profiles) => {
-      remoteRooms.current[code] = places;
-      familyRef.current.setRoomFamilyPlaces(code, places, profiles);
-      familyRef.current.applySharedProfiles(code, profiles);
-    });
+    let stopped = false;
+    let stop = () => {};
+    void (async () => {
+      const current = familyRef.current.state;
+      const links = current.guardians
+        .filter((link) => link.syncToken)
+        .map((link) => ({ code: link.code, token: link.syncToken as string }));
+      if (current.syncWriteKey && current.syncReadKey) {
+        const token = await syncTokenFor(current.syncWriteKey, current.syncReadKey);
+        if (!stopped && splitSyncToken(token)) links.push({ code: current.inviteCode, token });
+      }
+      if (stopped || links.length === 0) return;
+      stop = startManagedFamilySync(links, (code, places, profiles) => {
+        remoteRooms.current[code] = places;
+        familyRef.current.setRoomFamilyPlaces(code, places, profiles);
+        familyRef.current.applySharedProfiles(code, profiles);
+      });
+    })();
+    return () => {
+      stopped = true;
+      stop();
+    };
   }, [familyLinkKey]);
 
   useEffect(() => {
     const joined = new Set(state.guardians.map((link) => link.code));
+    if (state.inviteCode) joined.add(state.inviteCode);
     if (joined.size === 0) return;
     const apply = () => {
       const current = familyRef.current.state;

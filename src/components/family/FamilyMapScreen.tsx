@@ -13,7 +13,7 @@ import { DEFAULT_CENTER, type GuardianLink, type HomeZone, type Member } from '.
 import { AlwaysAllowGuide, AlwaysAllowMapHint } from './AlwaysAllowGuide';
 import { AlwaysAllowSetup } from './AlwaysAllowSetup';
 import { memberPlaceLabel } from '../../lib/memberPlace.mjs';
-import { TEST_ROLE_HINT, mapMembers, rosterMembers, testRoleLabel } from '../../lib/testRole.mjs';
+import { mapMembers, rosterMembers } from '../../lib/peerFamily.mjs';
 import { AlwaysAllowNotice } from './AlwaysAllowNotice';
 import { InviteQrImage, InviteQrScan } from './InviteQr';
 import { StreetMap, type StreetMapHandle } from './StreetMap';
@@ -38,7 +38,7 @@ export function FamilyMapScreen() {
   const [draftHome, setDraftHome] = useState<HomeZone | null>(null);
   const [placingHome, setPlacingHome] = useState(false);
   const mapRef = useRef<StreetMapHandle>(null);
-  const [sheet, setSheet] = useState<'invite' | 'accept' | 'today' | null>(state.mode === 'managed' && state.pendingInvite ? 'accept' : null);
+  const [sheet, setSheet] = useState<'invite' | 'accept' | 'today' | null>(state.pendingInvite ? 'accept' : null);
   const [confirm, setConfirm] = useState<{ kind: 'remove' | 'leave'; id: string; name: string } | null>(null);
   const [incoming, setIncoming] = useState<FamilyAlert | null>(null);
   const [sirenOn, setSirenOn] = useState(false);
@@ -100,7 +100,7 @@ export function FamilyMapScreen() {
     familyRef.current.closeJourneys(now);
   }, [now]);
 
-  const watchFamilyRoom = state.mode === 'admin' || state.members.some((member) => member.role === 'child');
+  const watchFamilyRoom = Boolean(state.syncWriteKey && state.syncReadKey);
   useEffect(() => {
     if (!watchFamilyRoom) return;
     const apply = (place: Parameters<typeof familyRef.current.applySharedPlace>[0]) => {
@@ -157,7 +157,7 @@ export function FamilyMapScreen() {
   }, [notifyOk, state.home, state.members]);
 
   useEffect(() => {
-    if (state.mode !== 'managed' || !self || !hasLocation(self)) return;
+    if (!self || !hasLocation(self)) return;
     const profileName = state.profile?.name || '가족';
     for (const link of state.guardians) {
       const zone = link.leaveAlert;
@@ -218,19 +218,18 @@ export function FamilyMapScreen() {
     };
   }, [notifyOk, state.inviteCode, watchFamilyRoom, state.syncReadKey, state.syncWriteKey]);
 
-  const dmRoomKey = state.mode === 'admin'
-    ? `admin:${state.inviteCode}:${state.syncWriteKey}`
-    : state.guardians.map((link) => `${link.code}:${link.syncToken ?? ''}:${link.rosterName ?? ''}`).join('|');
+  const dmRoomKey = `peer:${state.inviteCode}:${state.syncWriteKey}:${state.guardians.map((link) => `${link.code}:${link.syncToken ?? ''}`).join('|')}`;
   useEffect(() => {
     if (state.tab !== 'map') return;
     let cancel = false;
     const tick = async () => {
       const current = familyRef.current.state;
-      const rooms = current.mode === 'admin'
-        ? [{ code: current.inviteCode, me: myChatName(current, current.inviteCode), writeKey: current.syncWriteKey, readKey: current.syncReadKey, token: null as string | null }]
-        : current.guardians
-          .filter((link) => link.share !== 'revoked' && link.syncToken)
-          .map((link) => ({ code: link.code, me: myChatName(current, link.code), token: link.syncToken ?? null, writeKey: '', readKey: '' }));
+      const rooms = [
+        { code: current.inviteCode, me: myChatName(current, current.inviteCode), writeKey: current.syncWriteKey, readKey: current.syncReadKey, token: null as string | null },
+        ...current.guardians
+          .filter((link) => link.syncToken)
+          .map((link) => ({ code: link.code, me: myChatName(current, link.code), token: link.syncToken ?? null, writeKey: '', readKey: '' })),
+      ];
       for (const room of rooms) {
         if (cancel) return;
         const token = room.token && room.token.includes('.')
@@ -270,7 +269,7 @@ export function FamilyMapScreen() {
     void (async () => {
       const current = familyRef.current.state;
       const rooms: Array<{ code: string; token: string; me: string; readKey?: string }> = [];
-      if (current.mode === 'admin' && current.syncWriteKey && current.syncReadKey) {
+      if (current.syncWriteKey && current.syncReadKey) {
         const token = await syncTokenFor(current.syncWriteKey, current.syncReadKey);
         rooms.push({
           code: current.inviteCode,
@@ -278,11 +277,10 @@ export function FamilyMapScreen() {
           me: myChatName(current, current.inviteCode),
           readKey: current.syncReadKey,
         });
-      } else if (current.mode === 'managed') {
-        for (const link of current.guardians) {
-          if (link.share === 'revoked' || !link.syncToken?.includes('.')) continue;
-          rooms.push({ code: link.code, token: link.syncToken, me: myChatName(current, link.code) });
-        }
+      }
+      for (const link of current.guardians) {
+        if (!link.syncToken?.includes('.')) continue;
+        rooms.push({ code: link.code, token: link.syncToken, me: myChatName(current, link.code) });
       }
       if (cancel || rooms.length === 0) return;
       let allPushed = true;
@@ -381,14 +379,19 @@ export function FamilyMapScreen() {
     for (const link of links) {
       publishFamilyAlert({ kind: 'sos', code: link.code, from: name, body: `${name} 님이 SOS를 눌렀습니다.` }, link.syncToken);
     }
+    if (state.syncWriteKey && state.syncReadKey) {
+      void syncTokenFor(state.syncWriteKey, state.syncReadKey).then((token) => {
+        publishFamilyAlert({ kind: 'sos', code: state.inviteCode, from: name, body: `${name} 님이 SOS를 눌렀습니다.` }, token);
+      });
+    }
   };
 
-  const managed = state.mode === 'managed';
+  const managed = false;
   const selected = (recordId ? state.members.find((member) => member.id === recordId) : null)
     ?? state.members.find((member) => member.id === selectedId)
     ?? state.members.find((member) => member.id === 'self');
   const liveDay = seoulDayKey(now);
-  const visibleMembers = mapMembers(state.members, state.profile?.id, state.inviteCode).map((member) => {
+  const visibleMembers = mapMembers(state.members, state.profile?.id, state.inviteCode, state.profile?.name).map((member) => {
     if (!hasLocation(member)) return member;
     const todayPoints = liveTrailPoints(
       (state.tracks[member.id] ?? []).filter((point) => seoulDayKey(point.at) === liveDay),
@@ -409,7 +412,7 @@ export function FamilyMapScreen() {
     .map((member) => `${member.id}:${member.lat.toFixed(5)},${member.lng.toFixed(5)}`)
     .join('|');
   useEffect(() => {
-    if (state.mode !== 'admin' || fittedShare.current) return;
+    if (fittedShare.current) return;
     const points = state.members.filter((member) => member.role !== 'guardian' && hasLocation(member) && (member.id === 'self' || member.share === 'allowed'));
     if (points.length < 2) return;
     const timer = window.setInterval(() => {
@@ -495,7 +498,7 @@ export function FamilyMapScreen() {
     frame = requestAnimationFrame(step);
     return () => cancelAnimationFrame(frame);
   }, [detailId, detailOpen, playing]);
-  const missingSyncKey = state.mode === 'managed' && state.guardians.some((link) => (link.share === 'allowed' || link.share === 'revoked') && !link.syncToken);
+  const missingSyncKey = state.guardians.some((link) => (link.share === 'allowed' || link.share === 'revoked') && !link.syncToken);
   const syncBanner = syncBannerText(syncPhase, missingSyncKey);
   const remoteLive = syncPhase === 'live';
 
@@ -574,12 +577,6 @@ export function FamilyMapScreen() {
       applyLocationResult(result);
     });
   };
-  const switchTestRole = () => {
-    family.testSwitchMode();
-    setProfileOpen(false);
-    setManagedSettings(false);
-    setAdminSettings(false);
-  };
   const openBatterySettings = () => {
     void askBattery().then((result) => setSettingsNote(result.note));
   };
@@ -648,7 +645,7 @@ export function FamilyMapScreen() {
     }
     return false;
   }), [adminSettings, alertsOpen, alwaysGuide, alwaysSetup, confirm, dayPicker, detailId, dm, keepPrompt, managedSettings, menuOpen, placingHome, profileOpen, recordId, sheet]);
-  const people = rosterMembers(state.members, state.profile?.id, state.inviteCode);
+  const people = rosterMembers(state.members, state.profile?.id, state.inviteCode, state.profile?.name);
   const extraChats = guardianThreads(state).filter((thread) => chatTick >= 0 || thread.peer);
 
   return (
@@ -753,39 +750,35 @@ export function FamilyMapScreen() {
               {syncBanner}
             </p>
           )}
-          {state.mode === 'managed' && (
-            <button
-              type="button"
-              onClick={sirenOn ? stopIncoming : triggerSos}
-              className={`absolute bottom-3 left-3 z-30 rounded-full px-5 py-4 text-base font-black text-white shadow-lg ${sirenOn ? 'bg-slate-900' : 'bg-red-600'}`}
-            >
-              {sirenOn ? '사이렌 끄기' : 'SOS'}
-            </button>
-          )}
-          {incoming && state.mode === 'admin' && (
+          <button
+            type="button"
+            onClick={sirenOn ? stopIncoming : triggerSos}
+            className={`absolute bottom-3 left-3 z-30 rounded-full px-5 py-4 text-base font-black text-white shadow-lg ${sirenOn ? 'bg-slate-900' : 'bg-red-600'}`}
+          >
+            {sirenOn ? '사이렌 끄기' : 'SOS'}
+          </button>
+          {incoming && (
             <div className="absolute inset-x-4 top-24 z-40 rounded-3xl bg-red-600 px-4 py-4 text-white shadow-xl">
               <p className="text-lg font-black">{incoming.kind === 'sos' ? 'SOS' : '집 반경 이탈'}</p>
               <p className="mt-1 text-sm leading-5">{incoming.body}</p>
               <p className="mt-1 text-xs leading-5 text-red-100">
                 {remoteLive
-                  ? '다른 폰의 관리자 화면에도 사이렌이 전달됩니다. 피관리자 폰에서는 집 이탈 사이렌이 울리지 않습니다.'
-                  : '위치 서버에 연결되지 않아 이 브라우저의 관리자 화면만 사이렌이 들립니다.'}
+                  ? '같은 가족 방의 다른 폰에도 사이렌이 전달됩니다.'
+                  : '위치 서버에 연결되지 않아 이 브라우저에서만 사이렌이 들립니다.'}
               </p>
               <button type="button" onClick={stopIncoming} className="mt-3 w-full rounded-full bg-white py-3 text-sm font-black text-red-600">
                 사이렌 끄기
               </button>
             </div>
           )}
-          {state.mode === 'admin' ? (
-            <button
-              type="button"
-              onClick={() => setSheet('invite')}
-              className="absolute bottom-3 right-3 flex items-center gap-1 rounded-full bg-[#0084FF] px-3 py-2 text-xs font-bold text-white shadow-lg"
-            >
-              <UserPlus className="h-4 w-4" />
-              가족 초대
-            </button>
-          ) : null}
+          <button
+            type="button"
+            onClick={() => setSheet('invite')}
+            className="absolute bottom-3 right-3 flex items-center gap-1 rounded-full bg-[#0084FF] px-3 py-2 text-xs font-bold text-white shadow-lg"
+          >
+            <UserPlus className="h-4 w-4" />
+            가족 초대
+          </button>
           </>
           )}
           {detailOpen && (
@@ -894,12 +887,12 @@ export function FamilyMapScreen() {
                   <MemberCard
                     key={member.id}
                     member={member}
-                    home={state.mode === 'admin' ? state.home : null}
+                    home={state.home}
                     selected={member.id === selected?.id}
                     unread={chatTick >= 0 ? unread : 0}
                     onSelect={() => openPerson(member)}
                     onPhoto={member.id === 'self' ? (photo) => family.setPhoto(photo) : undefined}
-                    onRemove={state.mode === 'admin' && member.id !== 'self' ? () => setConfirm({ kind: 'remove', id: member.id, name: member.name }) : undefined}
+                    onRemove={member.id !== 'self' ? () => setConfirm({ kind: 'remove', id: member.id, name: member.name }) : undefined}
                   />
                 );
               })}
@@ -988,7 +981,7 @@ export function FamilyMapScreen() {
             )}
           </Sheet>
         )}
-        {sheet === 'invite' && state.mode === 'admin' && (
+        {sheet === 'invite' && (
           <AdminInviteSheet
             code={state.inviteCode}
             writeKey={state.syncWriteKey}
@@ -999,7 +992,7 @@ export function FamilyMapScreen() {
             onCreate={(name) => family.addMember(name, state.inviteCode)}
           />
         )}
-        {sheet === 'accept' && state.mode === 'managed' && (
+        {sheet === 'accept' && (
           <ManagedInviteSheet
             pending={state.pendingInvite}
             pendingSyncToken={state.pendingSyncToken}
@@ -1053,35 +1046,7 @@ export function FamilyMapScreen() {
             }}
           />
         )}
-        {menuOpen && (managed ? (
-          <ManagedMenu
-            name={state.profile?.name || '나'}
-            photo={state.profile?.photo}
-            home={state.home}
-            alertHint={unreadAlerts ? '새 알림이 있습니다' : '들어오고 나간 기록'}
-            guardians={state.guardians}
-            onProfile={() => setProfileOpen(true)}
-            onClose={() => {
-              setProfileOpen(false);
-              setManagedSettings(false);
-              setMenuOpen(false);
-            }}
-            onHome={startHomePick}
-            onAlerts={() => {
-              setMenuOpen(false);
-              setAlertsOpen(true);
-            }}
-            onInvite={() => {
-              setMenuOpen(false);
-              setSheet('accept');
-            }}
-            onSettings={() => setManagedSettings(true)}
-            onAlwaysGuide={openLocationSettings}
-            onTestRole={switchTestRole}
-            testRole={testRoleLabel(state.mode)}
-            onToggleShare={(link) => family.setGuardianShare(link.code, link.share === 'allowed' ? 'revoked' : 'allowed')}
-          />
-        ) : (
+        {menuOpen && (
           <AdminMenu
             name={state.profile?.name || '나'}
             photo={state.profile?.photo}
@@ -1102,11 +1067,13 @@ export function FamilyMapScreen() {
             }}
             onSettings={() => setAdminSettings(true)}
             onAlwaysGuide={openLocationSettings}
-            onTestRole={switchTestRole}
-            testRole={testRoleLabel(state.mode)}
+            onAcceptInvite={() => {
+              setMenuOpen(false);
+              setSheet('accept');
+            }}
             onToggleShare={() => family.setShareSelf(!state.shareSelfWithFamily)}
           />
-        ))}
+        )}
         {profileOpen && (
           <ProfileSettingsSheet
             name={state.profile?.name || '나'}
@@ -1178,13 +1145,13 @@ export function FamilyMapScreen() {
         )}
         {!managed && adminSettings && (
           <Sheet title="설정" onClose={() => setAdminSettings(false)}>
-            <p className="text-sm leading-6 text-slate-500">관리자 모드입니다. 위치 유지를 켠 뒤에는 이 화면에서 끄지 않습니다.</p>
+            <p className="text-sm leading-6 text-slate-500">가족은 같은 방에서 위치를 나눕니다. 위치 유지를 켠 뒤에는 이 화면에서 끄지 않습니다.</p>
             <button
               type="button"
               onClick={() => family.setShareSelf(!state.shareSelfWithFamily)}
               className={`mt-4 w-full rounded-2xl px-3 py-3 text-left text-xs font-bold ${state.shareSelfWithFamily ? 'bg-blue-50 text-[#0084FF]' : 'bg-slate-50 text-slate-600'}`}
             >
-              {state.shareSelfWithFamily ? '내 위치를 가족에게 보여주는 중 · 끄기' : '내 위치를 피관리자에게 공유'}
+              {state.shareSelfWithFamily ? '내 위치를 가족에게 보여주는 중 · 끄기' : '내 위치를 가족에게 공유'}
               {tracking.familyShareNote && <span className="mt-1 block font-semibold text-amber-700">{tracking.familyShareNote}</span>}
             </button>
             <div className="mt-3">
@@ -1220,15 +1187,12 @@ export function FamilyMapScreen() {
               <Line k="배터리 안내" v={state.permissions.battery === 'acknowledged' ? '확인함' : state.permissions.battery === 'skipped' ? '나중에' : '해당 없음'} />
             </dl>
             <p className="mt-3 text-xs leading-5 text-slate-400">
-              가족 위치와 배터리는 초대 동기화 키로 위치 서버에 올라가고, 관리자 폰이 그 서버에서 받아 지도에 표시합니다. 예시 좌표나 하드코딩된 팝업이 아닙니다. 알림을 허용하면 앱을 닫아도 SOS와 새 대화가 알림 목록에 옵니다. 전화번호로는 위치를 찾지 않습니다.
+              가족 위치와 배터리는 초대를 수락하고 위치 공유를 허용한 뒤에만 가족 방에 올라갑니다. 예시 좌표는 없습니다. 알림을 허용하면 앱을 닫아도 SOS와 새 대화가 알림 목록에 옵니다. 전화번호로는 위치를 찾지 않습니다.
             </p>
             <p className="mt-3 text-xs leading-5 text-slate-400">
               「항상 허용」 고르기. 「정확한 위치 사용」 켜기. 배터리 제한 없음.
             </p>
             <div className="mt-4 space-y-2">
-              <button type="button" onClick={family.reopenMode} className="w-full rounded-full bg-slate-100 py-3 text-sm font-bold">
-                모드 다시 고르기
-              </button>
               <button type="button" onClick={family.revisitPermissions} className="w-full rounded-full bg-slate-100 py-3 text-sm font-bold">
                 권한 안내 다시 보기
               </button>
@@ -1373,8 +1337,6 @@ function ManagedMenu({
   onInvite,
   onSettings,
   onAlwaysGuide,
-  onTestRole,
-  testRole,
   onToggleShare,
 }: {
   name: string;
@@ -1389,8 +1351,6 @@ function ManagedMenu({
   onInvite: () => void;
   onSettings: () => void;
   onAlwaysGuide: () => void;
-  onTestRole: () => void;
-  testRole: string;
   onToggleShare: (link: GuardianLink) => void;
 }) {
   return (
@@ -1442,7 +1402,6 @@ function ManagedMenu({
         )}
         <div className="mt-4 overflow-hidden rounded-2xl bg-white shadow-sm">
           <MenuRow icon={<Settings className="h-4 w-4" />} label="설정" hint="위치 권한" onClick={onSettings} />
-          {testRole && <MenuRow icon={<UserPlus className="h-4 w-4" />} label={testRole} hint={TEST_ROLE_HINT} onClick={onTestRole} />}
         </div>
       </div>
     </div>
@@ -1462,8 +1421,7 @@ function AdminMenu({
   onAlerts,
   onSettings,
   onAlwaysGuide,
-  onTestRole,
-  testRole,
+  onAcceptInvite,
   onToggleShare,
 }: {
   name: string;
@@ -1478,8 +1436,7 @@ function AdminMenu({
   onAlerts: () => void;
   onSettings: () => void;
   onAlwaysGuide: () => void;
-  onTestRole: () => void;
-  testRole: string;
+  onAcceptInvite: () => void;
   onToggleShare: () => void;
 }) {
   return (
@@ -1504,6 +1461,7 @@ function AdminMenu({
           <MenuRow icon={<Home className="h-4 w-4" />} label="우리 집 설정" hint={home ? `${home.label || '우리 집'} · 반경 ${home.radiusM}m` : '지도에서 집 위치를 정합니다'} onClick={onHome} />
           <MenuRow icon={<Bell className="h-4 w-4" />} label="알림" hint={alertHint} onClick={onAlerts} />
           <MenuRow icon={<MapPin className="h-4 w-4" />} label="항상 허용 방법" hint="앱을 닫아도 위치를 보내기" onClick={onAlwaysGuide} />
+          <MenuRow icon={<UserPlus className="h-4 w-4" />} label="초대 수락" hint="가족에게 받은 코드" onClick={onAcceptInvite} />
         </div>
         <div className="mt-4 overflow-hidden rounded-2xl bg-white shadow-sm">
           <button type="button" onClick={onToggleShare} className="flex w-full items-center gap-3 px-4 py-3.5 text-left">
@@ -1512,7 +1470,7 @@ function AdminMenu({
             </span>
             <span className="min-w-0 flex-1">
               <span className="block text-sm font-bold">내 위치 공유</span>
-              <span className="block truncate text-xs text-slate-400">{shareNote || (shareSelf ? '피관리자에게 보여주는 중' : '피관리자에게 보여 주지 않음')}</span>
+              <span className="block truncate text-xs text-slate-400">{shareNote || (shareSelf ? '가족에게 보여주는 중' : '가족에게 보여 주지 않음')}</span>
             </span>
             <span className={`text-xs font-bold ${shareSelf ? 'text-[#0084FF]' : 'text-slate-400'}`}>
               {shareSelf ? '공유 중' : '공유 안 함'}
@@ -1520,8 +1478,7 @@ function AdminMenu({
           </button>
         </div>
         <div className="mt-4 overflow-hidden rounded-2xl bg-white shadow-sm">
-          <MenuRow icon={<Settings className="h-4 w-4" />} label="설정" hint="위치 권한 · 모드" onClick={onSettings} />
-          {testRole && <MenuRow icon={<UserPlus className="h-4 w-4" />} label={testRole} hint={TEST_ROLE_HINT} onClick={onTestRole} />}
+          <MenuRow icon={<Settings className="h-4 w-4" />} label="설정" hint="위치 권한 · 위치 공유" onClick={onSettings} />
         </div>
       </div>
     </div>
@@ -1538,27 +1495,19 @@ function chatTargetFor(state: {
 }, code: string, peer: string): DirectChatTarget | null {
   const name = chatName(peer);
   if (!name || !/^\d{4,6}$/.test(code)) return null;
-  if (state.mode === 'admin' && code === state.inviteCode) {
-    const me = myChatName(state, code);
-    if (!me || me === name) return null;
-    return { code, me, peer: name, label: name, writeKey: state.syncWriteKey, readKey: state.syncReadKey };
-  }
-  if (state.mode !== 'managed') return null;
-  const link = state.guardians.find((item) => item.code === code && item.share !== 'revoked' && item.syncToken);
-  if (!link) return null;
   const me = myChatName(state, code);
   if (!me || me === name) return null;
+  if (code === state.inviteCode) return { code, me, peer: name, label: name, writeKey: state.syncWriteKey, readKey: state.syncReadKey };
+  const link = state.guardians.find((item) => item.code === code && item.syncToken);
+  if (!link) return null;
   return { code, me, peer: name, label: name, token: link.syncToken };
 }
 
 function myChatName(state: { mode: string | null; profile: { name?: string } | null; guardians: GuardianLink[] }, code: string): string {
   const own = chatName(state.profile?.name);
   if (own) return own;
-  if (state.mode === 'managed') {
-    const link = state.guardians.find((item) => item.code === code && item.share !== 'revoked');
-    return chatName(link?.rosterName) || '나';
-  }
-  return '나';
+  const link = state.guardians.find((item) => item.code === code);
+  return chatName(link?.rosterName) || '나';
 }
 
 function directThreadFor(state: {
@@ -1570,27 +1519,17 @@ function directThreadFor(state: {
   syncReadKey: string;
 }, member: Member): DirectChatTarget | null {
   if (member.id === 'self') return null;
-  if (state.mode === 'admin') {
-    const peer = chatName(member.name);
-    const me = myChatName(state, state.inviteCode);
-    if (!peer || peer === me) return null;
-    return {
-      code: member.inviteCode || state.inviteCode,
-      me,
-      peer,
-      label: member.name,
-      writeKey: state.syncWriteKey,
-      readKey: state.syncReadKey,
-    };
-  }
   const codeFromId = member.id.startsWith('family:') ? member.id.split(':')[1] || '' : '';
   const link = state.guardians.find((item) => item.share !== 'revoked' && item.code === codeFromId)
     ?? state.guardians.find((item) => item.share !== 'revoked' && chatName(item.adminName || item.label) === chatName(member.name));
-  const code = link?.code || codeFromId;
+  const code = member.inviteCode || link?.code || codeFromId || state.inviteCode;
   if (!code) return null;
   const peer = chatName(member.name);
   const me = myChatName(state, code);
   if (!peer || peer === me) return null;
+  if (code === state.inviteCode) {
+    return { code, me, peer, label: member.name, writeKey: state.syncWriteKey, readKey: state.syncReadKey };
+  }
   return { code, me, peer, label: member.name, token: link?.syncToken ?? null };
 }
 
@@ -1600,7 +1539,7 @@ function guardianThreads(state: {
   guardians: GuardianLink[];
   members: Member[];
 }): DirectChatTarget[] {
-  if (state.mode !== 'managed') return [];
+  if (state.guardians.length === 0) return [];
   const shown = new Set(state.members.filter((member) => member.role === 'admin-share').map((member) => chatName(member.name)));
   const shownCodes = new Set(state.members.filter((member) => member.role === 'admin-share' && member.id.startsWith('family:')).map((member) => member.id.split(':')[1] || ''));
   const threads: DirectChatTarget[] = [];
@@ -1829,7 +1768,7 @@ function AdminInviteSheet({
 
   return (
     <Sheet title="2. 코드를 보내세요" onClose={onClose}>
-      <p className="text-sm leading-6 text-slate-500">{sentName} 님 폰에서 피관리자 모드로 링크를 엽니다. 수락 다음에 위치 공유를 따로 묻습니다. 전화번호로는 위치를 찾지 않습니다.</p>
+      <p className="text-sm leading-6 text-slate-500">{sentName} 님 폰에서 링크를 열고 가족으로 참여합니다. 수락 다음에 위치 공유를 따로 묻습니다. 전화번호로는 위치를 찾지 않습니다.</p>
       <p className="mt-4 text-center text-4xl font-black tracking-[0.25em] text-[#0084FF]">{code}</p>
       {token && <InviteQrImage text={buildInviteLink(code, home, token, sentName, senderName)} />}
       {token && <p className="mt-2 text-center text-[11px] leading-5 text-slate-400">QR은 초대 링크와 같습니다. 위치를 읽는 키는 들어 있지 않고, 전화번호도 없습니다.</p>}
@@ -1858,7 +1797,7 @@ function AdminInviteSheet({
           : '이 빌드에는 위치 서버 주소가 없습니다. 코드는 같은 브라우저 안에서만 공유됩니다.'}
         {' '}
         {home ? `링크에는 집 반경 ${home.radiusM}m가 들어 있습니다. 상대가 위치 공유를 허용한 뒤 그 원을 나가면 관리자 화면에 사이렌이 울립니다.` : '우리 집을 저장한 뒤 링크를 다시 복사하면 집 반경 이탈 사이렌이 연결됩니다.'}
-        {' '}피관리자 폰에서는 이탈 사이렌이 울리지 않습니다. SOS는 양쪽에서 울리고, 관리자가 알림을 허용하면 앱을 닫아도 알림이 옵니다. 위치를 읽는 키는 관리자 폰에만 있습니다.
+        {' '}위치를 공유한 가족이 이 반경을 나가면 가족 방에 알림이 남습니다. SOS는 같은 방에서 울리고, 알림을 허용하면 앱을 닫아도 옵니다.
       </p>
       <button type="button" onClick={onClose} className="mt-4 w-full rounded-full bg-[#0084FF] py-3.5 font-bold text-white">
         완료
@@ -1913,7 +1852,7 @@ function ManagedInviteSheet({
       {step === 'join' ? (
         <>
           <p className="text-sm leading-6 text-slate-500">관리자에게 받은 코드를 입력하거나 초대 링크를 붙여 넣습니다. 수락만으로는 위치가 나가지 않습니다. 전화번호는 쓰지 않습니다.</p>
-          <input value={label} onChange={(event) => setLabel(event.target.value)} placeholder="관리자 이름 (예: 엄마)" className="mt-4 w-full rounded-2xl border border-slate-200 px-3 py-3 outline-none focus:border-[#0084FF]" />
+          <input value={label} onChange={(event) => setLabel(event.target.value)} placeholder="가족 이름 (예: 엄마)" className="mt-4 w-full rounded-2xl border border-slate-200 px-3 py-3 outline-none focus:border-[#0084FF]" />
           <input
             value={code}
             onChange={(event) => {

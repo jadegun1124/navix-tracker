@@ -2,7 +2,7 @@ import React, { createContext, useContext, useEffect, useReducer } from 'react';
 import { hasLocation, haversineMeters } from '../../lib/geo';
 import { deviceProfileKey, localProfile } from '../../lib/localProfile.mjs';
 import { carryPlace, cleanPlace } from '../../lib/memberPlace.mjs';
-import { applyRole, isSelfEchoPlace, testRoleFlip } from '../../lib/testRole.mjs';
+import { isSelfEchoPlace, mergePeerSessions, withoutSelfEcho } from '../../lib/peerFamily.mjs';
 import { resolveManagedTarget } from '../../lib/managedPlace.mjs';
 import { familyPinId, isMemberId, moveKeyed } from '../../lib/sharedIdentity.mjs';
 import { HISTORY_DAYS, JOURNEY_POINT_CAP, TRAIL_POINT_CAP, isWithinHistory, journeysWithinHistory, labelJourneyPlace, mergeJourneyLists, seoulDayKey, settleTrailPoint, splitClosedJourneys, tracksWithinHistory, trimJourneyList, visitsWithinHistory, type JourneyRecord } from '../../lib/tracking.mjs';
@@ -33,10 +33,6 @@ import {
 const STORAGE_KEY = 'umap_family_v1';
 const SESSION_KEYS = [STORAGE_KEY, `${STORAGE_KEY}:admin`, `${STORAGE_KEY}:managed`] as const;
 
-function storageKey(mode: AppMode | null): string {
-  return mode ? `${STORAGE_KEY}:${mode}` : STORAGE_KEY;
-}
-
 function clearStoredSessions() {
   sessionStorage.removeItem(STORAGE_KEY);
   for (const key of SESSION_KEYS) {
@@ -45,21 +41,23 @@ function clearStoredSessions() {
   }
 }
 
-function newestStoredRaw(): string | null {
+function storedSnapshots(): Session[] {
+  const found: Session[] = [];
+  const push = (raw: string, at: number) => {
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      if (isSession(parsed)) found.push({ ...parsed, savedAt: at } as Session);
+    } catch {
+      /* 깨진 저장은 건너뛴다 */
+    }
+  };
   const tab = sessionStorage.getItem(STORAGE_KEY);
-  if (tab) return tab;
-  let best: string | null = null;
-  let bestAt = -1;
+  if (tab) push(tab, Date.now());
   for (const key of SESSION_KEYS) {
     const raw = localStorage.getItem(key);
-    if (!raw) continue;
-    const at = Number(localStorage.getItem(`${key}:at`) || 0);
-    if (at >= bestAt) {
-      best = raw;
-      bestAt = at;
-    }
+    if (raw) push(raw, Number(localStorage.getItem(`${key}:at`) || 0));
   }
-  return best;
+  return found;
 }
 
 const EMPTY_TERMS: Record<string, boolean> = {
@@ -448,8 +446,9 @@ function withoutDemo(session: Session): Session {
     if (trimmed.length === 0) continue;
     journeys[id] = trimmed;
   }
-  const mode = session.mode === 'admin' || session.mode === 'managed' ? session.mode : null;
-  return { ...session, profile, members, tracks, journeys, mode, guardians: cleanGuardians(session.guardians) };
+  const profileId = profile?.id;
+  const nextMembers = withoutSelfEcho(members, profileId, session.inviteCode, profile?.name);
+  return { ...session, profile, members: nextMembers, tracks, journeys, mode: null, guardians: cleanGuardians(session.guardians) };
 }
 
 function isSession(value: unknown): value is Session {
@@ -468,10 +467,9 @@ function load(): Session {
     return { ...fresh(), pendingSyncToken };
   }
   try {
-    const raw = newestStoredRaw();
-    if (!raw) return { ...fresh(), pendingSyncToken };
-    const parsed: unknown = JSON.parse(raw);
-    if (!isSession(parsed)) return { ...fresh(), pendingSyncToken };
+    const merged = mergePeerSessions(storedSnapshots());
+    if (!merged || !isSession(merged)) return { ...fresh(), pendingSyncToken };
+    const parsed = merged;
     const invite = readInvite();
     const base = fresh();
     const session: Session = {
@@ -482,7 +480,7 @@ function load(): Session {
       tracks: cleanTracks((parsed as Session).tracks),
       home: cleanHome(parsed.home),
       pendingInvite: invite || parsed.pendingInvite,
-      mode: parsed.mode === 'admin' || parsed.mode === 'managed' ? parsed.mode : null,
+      mode: null,
       guardians: cleanGuardians(parsed.guardians),
       pendingLeaveAlert: readLeaveAlert() || cleanLeaveAlert(parsed.pendingLeaveAlert),
       syncWriteKey: isKeyPart(parsed.syncWriteKey) ? parsed.syncWriteKey : base.syncWriteKey,
@@ -504,8 +502,8 @@ function load(): Session {
     const stage = !profile
       ? (loaded.stage === 'splash' ? 'splash' : 'login')
       : loaded.permissions.completed
-        ? (loaded.mode ? 'map' : 'mode')
-        : loaded.stage;
+        ? 'map'
+        : (loaded.stage === 'mode' ? 'survey' : loaded.stage);
     return archiveJourneys({
       ...loaded,
       profile,
@@ -577,8 +575,7 @@ function reducer(state: Session, action: Action): Session {
   switch (action.type) {
     case 'splash-done':
       if (!state.profile) return { ...state, stage: 'login' };
-      if (!state.mode) return { ...state, stage: 'mode' };
-      return { ...state, stage: state.permissions.completed ? 'map' : 'survey' };
+      return { ...state, mode: null, stage: state.permissions.completed ? 'map' : 'survey' };
     case 'login': {
       const cleaned = cleanProfile({ ...action.profile, profileKey: action.profile.profileKey || state.profile?.profileKey });
       if (!cleaned) return state;
@@ -591,27 +588,23 @@ function reducer(state: Session, action: Action): Session {
         ...state,
         profile,
         members,
+        mode: null,
         phone: '',
         phoneVerified: false,
-        stage: state.mode ? (state.permissions.completed ? 'map' : 'survey') : 'mode',
+        stage: state.permissions.completed ? 'map' : 'survey',
       });
     }
     case 'choose-mode':
-      if (state.mode && state.mode !== action.mode) return applyRole(state, action.mode);
-      return { ...state, mode: action.mode, stage: state.permissions.completed ? 'map' : 'survey' };
     case 'test-switch-mode':
-      return testRoleFlip(state);
     case 'reopen-mode':
-      return { ...state, stage: 'mode' };
     case 'close-mode':
-      if (!state.mode) return state;
-      return { ...state, stage: state.permissions.completed ? 'map' : 'survey' };
+      return { ...state, mode: null, stage: state.stage === 'mode' ? 'survey' : state.stage };
     case 'skip-survey':
       return { ...state, stage: 'terms' };
     case 'pick-survey':
       return { ...state, survey: action.id, stage: 'terms' };
     case 'back': {
-      const order: Stage[] = ['login', 'mode', 'survey', 'terms', 'permissions'];
+      const order: Stage[] = ['login', 'survey', 'terms', 'permissions'];
       const index = order.indexOf(state.stage);
       if (index <= 0) return state;
       return { ...state, stage: order[index - 1] };
@@ -636,7 +629,7 @@ function reducer(state: Session, action: Action): Session {
     case 'save-home': {
       const created = notice(
         '우리 집을 저장했습니다',
-        `반경 ${action.home.radiusM}m입니다. 위치 공유를 허용한 피관리자가 이 원을 나가면 관리자 화면에 사이렌이 울립니다. 피관리자 폰에서는 울리지 않습니다.`,
+        `반경 ${action.home.radiusM}m입니다. 위치를 공유한 가족이 이 원을 나가면 이 폰에 알림이 남습니다.`,
       );
       return archiveJourneys({
         ...state,
@@ -649,7 +642,6 @@ function reducer(state: Session, action: Action): Session {
     case 'clear-home':
       return { ...state, home: null };
     case 'add-member': {
-      if (state.mode !== 'admin') return state;
       const name = action.name.trim();
       if (name.length < 1) return state;
       const member: Member = {
@@ -669,11 +661,11 @@ function reducer(state: Session, action: Action): Session {
       return {
         ...state,
         members: [...state.members, member],
-        notices: [notice('초대를 만들었습니다', `${member.name} 님은 자기 폰에서 코드를 수락한 뒤, 위치 공유를 따로 허용해야 지도에 나타납니다.`), ...state.notices],
+        notices: [notice('초대를 만들었습니다', `${member.name} 님은 자기 폰에서 초대를 수락한 뒤, 위치 공유를 허용하면 가족 지도에 나타납니다.`), ...state.notices],
       };
     }
     case 'remove-member': {
-      if (state.mode !== 'admin' || action.id === 'self') return state;
+      if (action.id === 'self') return state;
       const removed = state.members.find((member) => member.id === action.id);
       if (!removed) return state;
       const tracks = { ...state.tracks };
@@ -689,9 +681,8 @@ function reducer(state: Session, action: Action): Session {
       };
     }
     case 'accept-invite': {
-      if (state.mode !== 'managed') return state;
       const code = action.code.replace(/\D/g, '').slice(0, 6);
-      const label = action.label.trim().slice(0, 20) || '관리자';
+      const label = action.label.trim().slice(0, 20) || '가족';
       if (code.length < 4) return state;
       if (state.guardians.some((link) => link.code === code)) return state;
       const leaveAlert = state.pendingInvite === code || readInvite() === code ? state.pendingLeaveAlert : null;
@@ -708,23 +699,23 @@ function reducer(state: Session, action: Action): Session {
         ...(rosterName ? { rosterName } : {}),
         ...(adminName ? { adminName } : {}),
       };
-      const alertNote = leaveAlert ? ` 위치 공유를 허용한 뒤 집 반경 ${leaveAlert.radiusM}m를 나가면 관리자 화면에 사이렌이 울립니다. 이 폰에서는 울리지 않습니다.` : '';
+      const alertNote = leaveAlert ? ` 위치 공유를 허용한 뒤 집 반경 ${leaveAlert.radiusM}m를 나가면 가족 지도에 알림이 남습니다.` : '';
       return {
         ...state,
+        mode: null,
         guardians: [...state.guardians, link],
         pendingInvite: null,
         pendingLeaveAlert: null,
         pendingSyncToken: null,
-        notices: [notice('초대를 수락했습니다', `${label} 님의 가족으로 참여했습니다. 위치를 보내려면 다음 화면에서 따로 허용하세요.${alertNote}`), ...state.notices],
+        notices: [notice('초대를 수락했습니다', `${label} 님의 가족 방에 참여했습니다. 위치를 보내려면 위치 공유를 따로 허용하세요.${alertNote}`), ...state.notices],
       };
     }
     case 'set-guardian-share': {
-      if (state.mode !== 'managed') return state;
       const current = state.guardians.find((link) => link.code === action.code);
       if (!current || current.share === action.share) return state;
       const guardians = state.guardians.map((link) => (link.code === action.code ? { ...link, share: action.share } : link));
       const zoneNote = action.share === 'allowed' && current.leaveAlert
-        ? ` ${current.leaveAlert.label} 반경 ${current.leaveAlert.radiusM}m를 나가면 관리자 화면에만 사이렌이 울립니다.`
+        ? ` ${current.leaveAlert.label} 반경 ${current.leaveAlert.radiusM}m를 나가면 가족에게 알립니다.`
         : '';
       const body = action.share === 'allowed'
         ? `${current.label} 님에게 내 위치 공유를 허용했습니다. 끄기 전에는 이 폰에서 공유 상태가 유지됩니다.${zoneNote}`
@@ -736,7 +727,6 @@ function reducer(state: Session, action: Action): Session {
       };
     }
     case 'leave-guardian': {
-      if (state.mode !== 'managed') return state;
       const current = state.guardians.find((link) => link.id === action.id);
       if (!current) return state;
       return {
@@ -808,11 +798,12 @@ function reducer(state: Session, action: Action): Session {
       return archiveJourneys(base, action.now);
     }
     case 'set-share-self':
-      if (state.mode !== 'admin' || state.shareSelfWithFamily === action.share) return state;
+      if (state.shareSelfWithFamily === action.share) return state;
       return {
         ...state,
         shareSelfWithFamily: action.share,
-        notices: [notice(action.share ? '내 위치를 가족에게 공유합니다' : '내 위치 공유를 껐습니다', action.share ? '피관리자 지도에 내 핀이 나타납니다. 언제든 끌 수 있습니다.' : '피관리자 지도에서 내 핀이 곧 사라집니다.'), ...state.notices],
+        guardians: state.guardians.map((link) => ({ ...link, share: action.share ? 'allowed' as const : 'revoked' as const })),
+        notices: [notice(action.share ? '내 위치를 가족에게 공유합니다' : '내 위치 공유를 껐습니다', action.share ? '가족 지도에 내 핀이 나타납니다. 언제든 끌 수 있습니다.' : '가족 지도에서 내 핀이 곧 사라집니다.'), ...state.notices],
       };
     case 'set-keep-alive':
       if (state.backgroundKeepAlive === action.on) return state;
@@ -822,7 +813,7 @@ function reducer(state: Session, action: Action): Session {
       if (place.audience === 'family') return state;
       const target = resolveManagedTarget(state.members, place);
       const liveFix = place.sharing && place.lat != null && place.lng != null && Number.isFinite(place.lat) && Number.isFinite(place.lng);
-      if (target.create && (state.mode !== 'admin' || !liveFix)) return state;
+      if (target.create && !liveFix) return state;
       const members = target.create ? [...state.members, target.create] : state.members;
       const member = members.find((item) => item.id === target.id);
       if (!member) return state;
@@ -906,8 +897,8 @@ function reducer(state: Session, action: Action): Session {
       }, now);
     }
     case 'set-room-family-places': {
-      const joinedRoom = state.guardians.some((link) => link.code === action.code);
-      if (state.mode !== 'managed' && !joinedRoom) return state;
+      const joinedRoom = action.code === state.inviteCode || state.guardians.some((link) => link.code === action.code);
+      if (!joinedRoom) return state;
       const prefix = `family:${action.code}:`;
       const now = Date.now();
       const today = seoulDayKey(now);
@@ -940,6 +931,29 @@ function reducer(state: Session, action: Action): Session {
           tracks = moveKeyed(tracks, previous.id, item.id);
           visits = moveKeyed(visits, previous.id, item.id);
           journeys = moveKeyed(journeys, previous.id, item.id);
+        }
+        const roster = members.find((entry) => entry.id !== 'self' && entry.role !== 'admin-share' && (
+          (item.memberId !== '' && entry.publisherId === item.memberId)
+          || (entry.inviteCode === action.code && entry.name === item.name)
+        ));
+        if (roster) {
+          const keptPlace = carryPlace(roster, place.lat, place.lng);
+          members = members.map((entry) => (entry.id === roster.id
+            ? {
+                ...entry,
+                share: 'allowed',
+                lat: place.lat,
+                lng: place.lng,
+                accuracyM: Math.max(1, Math.round(place.accuracyM || 1)),
+                battery: item.battery ?? entry.battery,
+                charging: item.charging ?? entry.charging,
+                updatedAt: place.at,
+                ...(item.memberId ? { publisherId: item.memberId } : {}),
+                ...(item.photo ? { photo: item.photo } : {}),
+                ...(keptPlace ? { place: keptPlace } : { place: undefined }),
+              }
+            : entry));
+          continue;
         }
         const keptPlace = previous ? carryPlace(previous, place.lat, place.lng) : '';
         members = [...members, {
@@ -1114,9 +1128,6 @@ interface FamilyApi {
   state: Session;
   splashDone: () => void;
   login: (profile: Profile) => void;
-  chooseMode: (mode: AppMode) => void;
-  testSwitchMode: () => void;
-  reopenMode: () => void;
   closeMode: () => void;
   skipSurvey: () => void;
   pickSurvey: (id: string) => void;
@@ -1170,20 +1181,17 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
   }, [state.profile]);
 
   useEffect(() => {
-    const raw = JSON.stringify(state);
-    const key = storageKey(state.mode);
+    const raw = JSON.stringify({ ...state, mode: null });
     try {
       sessionStorage.setItem(STORAGE_KEY, raw);
-      localStorage.setItem(key, raw);
-      localStorage.setItem(`${key}:at`, String(Date.now()));
-    } catch {
-      /* 용량이 가득 차도 화면의 상태는 유지한다 */
-    }
-    if (!state.profile) {
+      localStorage.setItem(STORAGE_KEY, raw);
+      localStorage.setItem(`${STORAGE_KEY}:at`, String(Date.now()));
       localStorage.removeItem(`${STORAGE_KEY}:admin`);
       localStorage.removeItem(`${STORAGE_KEY}:managed`);
       localStorage.removeItem(`${STORAGE_KEY}:admin:at`);
       localStorage.removeItem(`${STORAGE_KEY}:managed:at`);
+    } catch {
+      /* 용량이 가득 차도 화면의 상태는 유지한다 */
     }
   }, [state]);
 
@@ -1191,9 +1199,6 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
     state,
     splashDone: () => dispatch({ type: 'splash-done' }),
     login: (profile) => dispatch({ type: 'login', profile }),
-    chooseMode: (mode) => dispatch({ type: 'choose-mode', mode }),
-    testSwitchMode: () => dispatch({ type: 'test-switch-mode' }),
-    reopenMode: () => dispatch({ type: 'reopen-mode' }),
     closeMode: () => dispatch({ type: 'close-mode' }),
     skipSurvey: () => dispatch({ type: 'skip-survey' }),
     pickSurvey: (id) => dispatch({ type: 'pick-survey', id }),
