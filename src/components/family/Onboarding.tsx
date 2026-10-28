@@ -436,7 +436,7 @@ function Permissions({
             />
           </div>
           <p className="mt-3 text-center text-sm font-semibold leading-6 text-slate-600">
-            항상 허용을 누르면 방법을 먼저 보여 줍니다. 그다음 위치 권한 화면에서 직접 고릅니다.
+            항상 허용을 누르면 「위치 액세스 권한」 화면이 바로 열립니다. 거기서 맨 위의 항상 허용을 고릅니다.
           </p>
           <p className="mt-2 text-center text-xs leading-5 text-slate-500">
             {draft.notifications === 'granted'
@@ -465,8 +465,25 @@ function Permissions({
               label="항상 허용"
               onClick={() => {
                 setAskedAlways(true);
-                setAlwaysGuide(true);
+                setBusy(true);
+                void askAlwaysLocation(draft.accuracy === 'precise').then((result) => {
+                  setBusy(false);
+                  if (result.location === 'unavailable') {
+                    setNote(result.note);
+                    return;
+                  }
+                  setNote(result.note);
+                  const locationMode = result.location === 'always' ? 'always' as const : result.location === 'while-using' ? 'while-using' as const : 'denied' as const;
+                  const next = { ...draft, locationMode };
+                  setDraft(next);
+                  setStep('motion');
+                });
               }}
+            />
+            <TextButton
+              disabled={busy}
+              label="방법 보기"
+              onClick={() => setAlwaysGuide(true)}
             />
             <TextButton
               disabled={busy}

@@ -19,6 +19,21 @@ test('always-allow opens the location radio, then the app permission list, then 
   assert.deepEqual(alwaysAllowScreens(), ['location-radio', 'app-permissions', 'app-details']);
   assert.equal(BATTERY_POPUP_ACTION, 'android.settings.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS');
   assert.equal(BATTERY_POPUP_ACTION.includes('IGNORE_BATTERY_OPTIMIZATION_SETTINGS'), false);
+  const plugin = readFileSync(new URL('../../android/app/src/main/java/kr/co/umap/tracker/UmapLocationPlugin.java', import.meta.url), 'utf8');
+  const open = plugin.slice(plugin.indexOf('private boolean openAlwaysSettings'), plugin.indexOf('private void noteOpened'));
+  assert.ok(open.indexOf('openLocationRadio') < open.indexOf('openAppPermissions'));
+  assert.ok(open.indexOf('openAppPermissions') < open.indexOf('openAppDetails'));
+  const radio = plugin.slice(plugin.indexOf('private boolean openLocationRadio'), plugin.indexOf('private boolean openAppPermissions'));
+  assert.ok(radio.indexOf('com.samsung.android.permissioncontroller') < radio.indexOf('startExplicit'));
+  const intent = plugin.slice(plugin.indexOf('private Intent locationRadioIntent'), plugin.indexOf('private Intent appPermissionsIntent'));
+  assert.match(intent, /PERMISSION_GROUP_NAME/);
+  assert.match(intent, /EXTRA_APP_PACKAGE/);
+  assert.equal(intent.includes('ACCESS_FINE_LOCATION'), false);
+  assert.match(plugin, /android.permission-group.LOCATION/);
+  assert.match(plugin, /ManageAppPermissionActivity/);
+  const resume = plugin.slice(plugin.indexOf('protected void handleOnResume'), plugin.indexOf('public void openBattery'));
+  assert.equal(resume.includes('advanceFallback'), false);
+  assert.ok(resume.indexOf('scheduleBounceConfirm') < resume.indexOf('resolveAlways'));
 });
 
 test('keep-alive notification is asked at entry until allowed, and started only after an explicit tap', () => {

@@ -4,6 +4,7 @@ export function AlwaysAllowNotice({
   locationMode,
   keepAlive,
   native,
+  onOpenSettings,
   onShowGuide,
   onBattery,
   onStart,
@@ -12,6 +13,7 @@ export function AlwaysAllowNotice({
   locationMode: PermissionState['locationMode'];
   keepAlive: boolean;
   native: boolean;
+  onOpenSettings: () => void;
   onShowGuide: () => void;
   onBattery: () => void;
   onStart: () => void;
@@ -24,7 +26,7 @@ export function AlwaysAllowNotice({
         <p className="text-xs font-bold text-slate-700">{live ? '위치 유지 켜짐' : '위치 유지'}</p>
         <div className="flex flex-wrap justify-end gap-2">
           {!live && (
-            <button type="button" onClick={onShowGuide} className="rounded-full bg-white px-3 py-1.5 text-[11px] font-bold text-slate-700">
+            <button type="button" onClick={onOpenSettings} className="rounded-full bg-white px-3 py-1.5 text-[11px] font-bold text-slate-700">
               {native ? '항상 허용' : '위치 허용'}
             </button>
           )}

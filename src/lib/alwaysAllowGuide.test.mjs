@@ -8,8 +8,10 @@ test('always-allow guide names the closed-app reason and the OEM wording', () =>
   assert.match(why, /앱을 닫아도/);
   assert.match(why, /화면을 끈 뒤/);
   assert.equal(steps.length, 5);
-  assert.match(steps[0], /위치 권한 열기/);
+  assert.match(steps[0], /위치 액세스 권한/);
   assert.match(steps[1], /항상 허용/);
+  assert.match(steps[1], /앱 사용 중에만 허용/);
+  assert.match(steps[1], /항상 확인 또는 공유 시 허용/);
   assert.match(steps[1], /앱을 사용하지 않을 때도 허용/);
   assert.match(steps[2], /위치/);
   assert.match(steps[3], /배터리 제한 없음/);

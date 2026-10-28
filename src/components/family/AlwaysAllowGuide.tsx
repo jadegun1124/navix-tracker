@@ -41,7 +41,7 @@ export function AlwaysAllowGuide({
         )}
         {note && <p className="mt-3 text-sm font-semibold leading-6 text-amber-800">{note}</p>}
         <button type="button" disabled={busy} onClick={onOpenSettings} className="mt-5 w-full rounded-full bg-[#0084FF] py-3.5 text-base font-black text-white disabled:opacity-40">
-          {busy ? '여는 중…' : native ? '위치 권한 열기' : '위치 허용 창 열기'}
+          {busy ? '여는 중…' : native ? '위치 액세스 권한 열기' : '위치 허용 창 열기'}
         </button>
         {native && (
           <button type="button" disabled={busy} onClick={onBattery} className="mt-2 w-full rounded-full bg-slate-100 py-3.5 text-base font-bold text-slate-800 disabled:opacity-40">
