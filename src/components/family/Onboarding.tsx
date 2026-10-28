@@ -436,7 +436,7 @@ function Permissions({
             />
           </div>
           <p className="mt-3 text-center text-sm font-semibold leading-6 text-slate-600">
-            항상 허용을 누르면 「위치 액세스 권한」 화면이 바로 열립니다. 거기서 맨 위의 항상 허용을 고릅니다.
+            항상 허용을 누르면 「위치 액세스 권한」 화면이 바로 열립니다. 거기서 맨 위의 항상 허용을 고르고, 「정확한 위치 사용」을 직접 켭니다.
           </p>
           <p className="mt-2 text-center text-xs leading-5 text-slate-500">
             {draft.notifications === 'granted'
