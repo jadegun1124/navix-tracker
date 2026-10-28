@@ -90,35 +90,37 @@ jobs:
         run: |
           mkdir -p output
           find android/ -name "*.apk" -ls
-          find android/ -name "*.apk" -exec cp {} output/umap-v1.11.0-tracker.apk \;
+          find android/ -name "*.apk" -exec cp {} output/umap-v1.12.0-tracker.apk \;
           echo "Output directory contents:"
           ls -lh output/
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: umap-v1.11.0-tracker-apk
-          path: output/umap-v1.11.0-tracker.apk
+          name: umap-v1.12.0-tracker-apk
+          path: output/umap-v1.12.0-tracker.apk
           retention-days: 30
 
       - name: Create or Update GitHub Release with APK
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.11.0
-          name: 'Umap Android APK v1.11.0'
+          tag_name: v1.12.0
+          name: 'Umap Android APK v1.12.0'
           make_latest: true
           body: |
-            ### Umap 안드로이드 앱 1.11.0
+            ### Umap 안드로이드 앱 1.12.0
             - 회사 홈 (GitHub Pages): https://jadegun1124.github.io/umap/
             - 이 파일: GitHub Releases APK. Google Play에는 없습니다.
-            - 다운로드: https://github.com/jadegun1124/umap/releases/download/v1.11.0/umap-v1.11.0-tracker.apk
+            - 다운로드: https://github.com/jadegun1124/umap/releases/download/v1.12.0/umap-v1.12.0-tracker.apk
             - 표시 이름: Umap
             - 패키지: `kr.co.umap.tracker`
-            - versionName: 1.11.0
-            - versionCode: 12
-            - 걷는 경로는 약 4m마다 점을 남깁니다. 화면에서 선을 펴는 거리는 1.8m로 고정하고, 32m보다 긴 현에는 실제로 걷던 중간 점을 다시 넣습니다. 머무름 중 정확도 약 2배(26–44m) 안의 흔들림과 갔다가 바로 돌아오는 스파이크는 선에 잇지 않습니다. 실시간 핀은 체류 반경 밖이면 그 위치로 이동합니다. 유료 도로 스냅은 쓰지 않습니다.
+            - versionName: 1.12.0
+            - versionCode: 13
+            - 걷는 경로는 약 2.5m마다 점을 남깁니다. 화면에서 선을 펴는 거리는 0.85m이고, 14m보다 긴 현에는 실제로 걷던 중간 점을 다시 넣습니다. 그려지는 실선은 그 점 위에서만 한 번 둥글게 잇습니다. 머무름 중 흔들림과 갔다가 바로 돌아오는 스파이크는 선에 잇지 않습니다. 유료 도로 스냅은 쓰지 않습니다.
             - 이어진 걸음은 실선입니다. 점선은 48m 이상 비고 그 사이가 20초 이상일 때만 그립니다. 빈 구간을 도로 모양으로 채우지 않습니다.
-            - 위치 유지를 켠 동안 GPS는 이동 중 5초, 머무름이 이어지면 30초, 1분, 더 오래 멈추면 2분입니다. 다시 걸으면 5초로 돌아옵니다. 보통 걸음이면 5초 점이 약 6m라 4m 기준이 그 점을 남깁니다.
+            - 위치 유지는 고주기 GPS가 아닙니다. 걸음이 확인된 동안만 GPS 2.5초입니다. 약 45초 동안 12m 안쪽으로 머물면 2분, 7분 넘게 머물면 5분입니다. 시작과 프로세스 재시작도 2분입니다. 같은 설정으로 앱이 다시 보여도 GNSS를 2.5초로 다시 열지 않습니다. GPS가 켜져 있으면 네트워크 위치는 같이 요청하지 않습니다.
+            - 가족 서버는 이동 중 8초 또는 25m, 머무름 중 2분에 한 번만 올립니다. 이 폰의 궤적은 받은 점마다 잇습니다.
+            - 한곳에서 7분 머물면 그 이동을 기록 카드로 남기고 오늘의 실시간 선에서는 뺍니다. 80m 미만이거나 1분 미만은 카드로 만들지 않습니다. 기록은 이 폰에만 30일 남고 서버로 보내지 않습니다.
             - 가족 카드에 마지막 위치를 「방금 업데이트」 또는 「3분 전 업데이트」로 보여 줍니다.
             - 위치 공유 중에도 알림 목록에 Umap 상시 카드가 나오지 않습니다. 1.6.0의 빈 포그라운드 서비스 알림을 뺐습니다.
             - 앱을 열면 예전 채널 `umap_location`, `umap_location_quiet`, `umap_alert_watch` 를 지웁니다.
@@ -131,7 +133,7 @@ jobs:
             - 머무름 중 정확도 반경 안의 위치 흔들림은 이동 경로에 잇지 않습니다.
             - iOS 앱은 App Store / TestFlight에 없습니다.
             - 마이크, 문자, 주변 소리, 원격 경보음은 요청하지 않습니다.
-            - 이전 파일: https://github.com/jadegun1124/umap/releases/tag/v1.10.0
-          files: output/umap-v1.11.0-tracker.apk
+            - 이전 파일: https://github.com/jadegun1124/umap/releases/tag/v1.11.0
+          files: output/umap-v1.12.0-tracker.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

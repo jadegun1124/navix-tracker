@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Bell, Copy, Home, LocateFixed, MapPin, Minus, Plus, Route, UserPlus, X } from 'lucide-react';
 import { buildInviteLink, formatClock, hasLocation, haversineMeters, shouldAlertLeave } from '../../lib/geo';
 import { KEEP_PERMISSION_ASKED_KEY, KEEP_START_ASKED_KEY, keepEntryPrompt, markSessionFlag, readSessionFlag } from '../../lib/systemSettings.mjs';
-import { buildDayRecord, collapseStayTrail, displayCoordinate, formatDurationMs, formatFixAge, historyDayKeys, historyDayLabel, modeLabel, seoulDayEndMs, seoulDayKey, visibleTrail } from '../../lib/tracking.mjs';
+import { displayCoordinate, formatFixAge, formatJourneyDistance, formatJourneyWhen, historyDayKeys, historyDayLabel, liveTrailPoints, previewOpenJourney, seoulDayEndMs, seoulDayKey, visibleTrail } from '../../lib/tracking.mjs';
 import { ackFamilyAlert, isFamilyAlertAcked, publishFamilyAlert, readFamilyAlert, subscribeFamilyAlerts, type FamilyAlert } from '../../services/familyAlert';
 import { readSharedPlaces, subscribeSharedPlaces } from '../../services/familyShare';
 import { currentSyncPhase, familySyncConfigured, familySyncUrl, registerAdminPush, splitSyncToken, startAdminRemoteSync, startSyncMonitor, subscribeSyncPhase, syncTokenFor, type SyncPhase } from '../../services/familySync';
@@ -12,6 +12,7 @@ import { DEFAULT_CENTER, type GuardianLink, type HomeZone, type Member } from '.
 import { AlwaysAllowNotice } from './AlwaysAllowNotice';
 import { InviteQrImage, InviteQrScan } from './InviteQr';
 import { StreetMap, type StreetMapHandle } from './StreetMap';
+import { JourneyCards } from './JourneyCards';
 import { TodayRecord } from './TodayRecord';
 import { askAlwaysLocation, askBattery, askNotifications } from '../../services/systemPermissions';
 import { useFamilyTracking } from './useFamilyTracking';
@@ -54,6 +55,7 @@ export function FamilyMapScreen() {
   const [keepNote, setKeepNote] = useState<string | null>(null);
   const [alertsOpen, setAlertsOpen] = useState(false);
   const [historyDay, setHistoryDay] = useState(() => seoulDayKey(Date.now()));
+  const [pickedJourneyId, setPickedJourneyId] = useState<string | null>(null);
 
   useEffect(() => subscribeSyncPhase(setSyncPhase), []);
   useEffect(() => startSyncMonitor(), []);
@@ -61,6 +63,9 @@ export function FamilyMapScreen() {
     const timer = window.setInterval(() => setNow(Date.now()), 15_000);
     return () => window.clearInterval(timer);
   }, []);
+  useEffect(() => {
+    familyRef.current.closeJourneys(now);
+  }, [now]);
 
   useEffect(() => {
     if (state.mode !== 'admin') return;
@@ -229,7 +234,10 @@ export function FamilyMapScreen() {
     return state.mode === 'admin' && member.share === 'allowed' && hasLocation(member);
   }).map((member) => {
     if (!hasLocation(member)) return member;
-    const todayPoints = (state.tracks[member.id] ?? []).filter((point) => seoulDayKey(point.at) === liveDay);
+    const todayPoints = liveTrailPoints(
+      (state.tracks[member.id] ?? []).filter((point) => seoulDayKey(point.at) === liveDay),
+      now,
+    );
     const stable = displayCoordinate(todayPoints, {
       lat: member.lat,
       lng: member.lng,
@@ -262,27 +270,49 @@ export function FamilyMapScreen() {
     () => memberPoints.filter((point) => seoulDayKey(point.at) === pathDay),
     [memberPoints, pathDay],
   );
+  const dayNow = pathDay === liveDay ? now : seoulDayEndMs(pathDay);
+  const liveLine = useMemo(() => liveTrailPoints(dayPoints, dayNow), [dayNow, dayPoints]);
+  const memberJourneys = selected ? state.journeys[selected.id] ?? [] : [];
+  const dayJourneys = useMemo(
+    () => memberJourneys.filter((journey) => seoulDayKey(journey.endedAt) === pathDay).slice().sort((a, b) => b.startedAt - a.startedAt),
+    [memberJourneys, pathDay],
+  );
+  const openJourney = useMemo(
+    () => (pathDay === liveDay ? previewOpenJourney(dayPoints, now) : null),
+    [dayPoints, liveDay, now, pathDay],
+  );
+  useEffect(() => {
+    setPickedJourneyId(null);
+  }, [pathDay, selected?.id]);
+  const activeJourneyId = pickedJourneyId ?? (openJourney && pathDay === liveDay ? 'open' : dayJourneys[0]?.id ?? null);
+  const activeJourney = activeJourneyId && activeJourneyId !== 'open'
+    ? dayJourneys.find((journey) => journey.id === activeJourneyId) ?? null
+    : null;
+  const historyPoints = activeJourney ? activeJourney.points : liveLine;
+  const mapPoints = state.tab === 'history' ? historyPoints : liveLine;
   const showPath = !!selected && (state.tab === 'history' || showTrail) && (selected.id === 'self' || selected.share === 'allowed' || selected.role === 'admin-share');
-  const trail = useMemo(() => (showPath ? visibleTrail(dayPoints) : []), [dayPoints, showPath]);
-  const dayRecord = buildDayRecord(collapseStayTrail(dayPoints), pathDay === liveDay ? now : seoulDayEndMs(pathDay));
   const dayVisits = useMemo(() => {
     const list = selected ? state.visits[selected.id] ?? [] : [];
     return list.filter((visit) => seoulDayKey(visit.arrivedAt) === pathDay);
   }, [pathDay, selected, state.visits]);
+  const todayMoveCount = dayJourneys.length + (openJourney ? 1 : 0);
   const unreadAlerts = state.notices.some((item) => !item.read);
   useEffect(() => {
-    if (state.tab !== 'history' || trail.length === 0) return;
-    const points = trail;
+    if (state.tab !== 'history' || mapPoints.length === 0) return;
+    const points = mapPoints;
     const timer = window.setTimeout(() => mapRef.current?.fit(points), 80);
     return () => window.clearTimeout(timer);
-  }, [historyDay, selected?.id, state.tab, trail]);
+  }, [activeJourneyId, historyDay, selected?.id, state.tab]);
   const missingSyncKey = state.mode === 'managed' && state.guardians.some((link) => (link.share === 'allowed' || link.share === 'revoked') && !link.syncToken);
   const syncBanner = syncBannerText(syncPhase, missingSyncKey);
   const remoteLive = syncPhase === 'live';
 
   const focusMember = (member: Member, fitTrail: boolean) => {
     setSelectedId(member.id);
-    const points = visibleTrail(state.tracks[member.id] ?? []);
+    const points = visibleTrail(liveTrailPoints(
+      (state.tracks[member.id] ?? []).filter((point) => seoulDayKey(point.at) === liveDay),
+      now,
+    ));
     if (fitTrail && showTrail && points.length >= 2) mapRef.current?.fit(points);
     else if (hasLocation(member)) mapRef.current?.panTo(member.lat, member.lng);
   };
@@ -297,7 +327,7 @@ export function FamilyMapScreen() {
             zoom={16}
             members={visibleMembers}
             home={draftHome ?? (showZone ? state.home : null)}
-            trail={showPath ? dayPoints : []}
+            trail={showPath ? mapPoints : []}
             trailColor="#0084FF"
             selectedId={selected?.id}
             onSelect={(id) => {
@@ -326,7 +356,7 @@ export function FamilyMapScreen() {
                 setShowTrail((value) => {
                   const next = !value;
                   if (next && selected) {
-                    const points = visibleTrail(state.tracks[selected.id] ?? []);
+                    const points = visibleTrail(liveLine);
                     if (points.length >= 2) mapRef.current?.fit(points);
                   }
                   return next;
@@ -418,7 +448,7 @@ export function FamilyMapScreen() {
                   }}
                   className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-bold text-slate-700"
                 >
-                  오늘 이동{dayRecord.segments.length > 0 ? ` ${dayRecord.segments.length}` : ''}
+                  오늘 이동{todayMoveCount > 0 ? ` ${todayMoveCount}` : ''}
                 </button>
                 {state.mode === 'admin' && (
                   <button
@@ -471,7 +501,7 @@ export function FamilyMapScreen() {
                   key={member.id}
                   member={member}
                   now={now}
-                  trip={member.id === selected?.id && pathDay === liveDay && dayRecord.segments.length > 0 ? `${modeLabel(dayRecord.segments[dayRecord.segments.length - 1].mode)} · ${formatDurationMs(dayRecord.segments[dayRecord.segments.length - 1].durationMs)}` : undefined}
+                  trip={member.id === selected?.id ? (openJourney ? `이동 중 · ${formatJourneyDistance(openJourney.distanceM)}` : dayJourneys[0] ? `${formatJourneyWhen(dayJourneys[0].startedAt, dayJourneys[0].endedAt)} · ${formatJourneyDistance(dayJourneys[0].distanceM)}` : undefined) : undefined}
                   home={state.mode === 'admin' ? state.home : null}
                   selected={member.id === selected?.id}
                   onSelect={() => focusMember(member, true)}
@@ -539,8 +569,14 @@ export function FamilyMapScreen() {
                 ))}
               </div>
             )}
-            <div className="mt-3">
-              <TodayRecord segments={dayRecord.segments} stops={dayRecord.stops} visits={dayVisits} />
+            <div className="mt-3 space-y-3">
+              <JourneyCards
+                journeys={dayJourneys}
+                open={openJourney}
+                selectedId={activeJourneyId}
+                onSelect={setPickedJourneyId}
+              />
+              <TodayRecord visits={dayVisits} />
             </div>
           </section>
         )}
@@ -562,7 +598,7 @@ export function FamilyMapScreen() {
               가족 위치와 배터리는 초대 동기화 키로 위치 서버에 올라가고, 관리자 폰이 그 서버에서 받아 지도에 표시합니다. 예시 좌표나 하드코딩된 팝업이 아닙니다. 알림을 허용하면 앱을 닫아도 SOS가 푸시로 옵니다. 전화번호로는 위치를 찾지 않습니다.
             </p>
             <p className="mt-3 text-xs leading-5 text-slate-400">
-              항상 허용을 누르면 이 앱의 위치 권한 화면이 바로 열립니다. 배터리 제한 없음을 누르면 시스템 팝업이 바로 열립니다. Umap은 그 스위치를 대신 바꾸지 않습니다. 위치 유지는 사용자가 켠 뒤에만 백그라운드에서 보냅니다. 알림 목록에 Umap 카드는 나오지 않습니다. 배터리 제한 없음을 켜 두면 화면이 꺼져도 위치 간격을 유지합니다.
+              항상 허용을 누르면 이 앱의 위치 권한 화면이 바로 열립니다. 배터리 제한 없음을 누르면 시스템 팝업이 바로 열립니다. Umap은 그 스위치를 대신 바꾸지 않습니다. 위치 유지는 사용자가 켠 뒤에만 백그라운드에서 보냅니다. 걷는 동안만 촘촘히 받고, 머물면 2분·5분으로 줄입니다. 알림 목록에 Umap 카드는 나오지 않습니다.
             </p>
             <div className="mt-4 space-y-2">
               <button type="button" onClick={family.reopenMode} className="w-full rounded-full bg-slate-100 py-3 font-bold">
@@ -1180,7 +1216,7 @@ function KeepNoticeSheet({
         <p className="mt-2 text-sm leading-6 text-slate-600">
           {mode === 'permission'
             ? '알림 권한은 SOS와 집 반경 알림에 씁니다. 허용을 누르면 알림 창이 열립니다. 위치 공유 중에는 알림 목록에 Umap 카드가 나오지 않습니다. 앱이 혼자 켜지 않습니다. 전화번호는 쓰지 않습니다.'
-            : '켜면 백그라운드에서 위치를 보냅니다. 알림 목록에 Umap 카드는 나오지 않습니다. 끄기는 우리 가족에서 할 수 있습니다. 배터리 제한 없음을 켜 두면 화면이 꺼져도 간격을 유지합니다. 앱이 혼자 켜지 않습니다.'}
+            : '켜면 앱을 닫아도 위치를 보냅니다. 걷는 동안만 촘촘히 받고, 한곳에 머물면 2분에서 5분으로 줄입니다. 알림 목록에 Umap 카드는 나오지 않습니다. 배터리 제한이 없으면 그 간격을 더 잘 지킵니다. 앱이 혼자 켜지 않습니다.'}
         </p>
         {note && <p className="mt-3 text-sm leading-6 text-amber-800">{note}</p>}
         <button type="button" disabled={busy} onClick={onPrimary} className="mt-4 w-full rounded-full bg-[#0084FF] py-3.5 font-bold text-white disabled:opacity-40">

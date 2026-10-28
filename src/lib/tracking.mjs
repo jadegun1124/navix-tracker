@@ -26,7 +26,8 @@
 export const STOP_RADIUS_M = 50;
 export const STOP_MIN_MS = 3 * 60 * 1000;
 export const STRIDE_M = 0.75;
-export const TRAIL_POINT_CAP = 1500;
+/** Dense 2.5s walk samples. About two and a half hours of vertices before the oldest of that day drops. */
+export const TRAIL_POINT_CAP = 4000;
 /** Today plus this many Seoul calendar days back. 30 → 오늘부터 30일 전. */
 export const HISTORY_DAYS = 30;
 export const VISIT_DAY_CAP = 40;
@@ -56,18 +57,18 @@ export const TRAIL_STILL_CONFIRM_M = 80;
 export const TRAIL_RELOCATION_M = 120;
 /**
  * Display simplify only drops wobble under this many meters.
- * It does not grow with the accuracy bubble. At ±11–19m the old 0.45× accuracy
- * epsilon reached ~7m and turned a walked bend into one chord.
+ * It does not grow with the accuracy bubble. A tighter epsilon keeps the
+ * denser 2.5m walk samples, so a building corner stays a curve.
  */
-const TRAIL_SIMPLIFY_M = 1.8;
+const TRAIL_SIMPLIFY_M = 0.85;
 /** A drawn segment longer than this gets a walked sample back when it still bows off the chord. */
-const TRAIL_CHORD_BREAK_M = 32;
+const TRAIL_CHORD_BREAK_M = 14;
 /**
  * While moving, keep a vertex about this often.
- * GPS while moving is 5s. At 1.0–1.4 m/s that fix is about 5–7m, so a 4m
- * gate keeps the sample. The old 8m gate skipped it and the bend became a chord.
+ * GPS while moving is 2.5s. At 1.0–1.4 m/s that fix is about 2.5–3.5m, so a
+ * 2.5m gate keeps the sample and a bend does not collapse into a long chord.
  */
-const TRAIL_WALK_VERTEX_M = 4;
+const TRAIL_WALK_VERTEX_M = 2.5;
 /** Reported-still step that is a calm walk, not a courtyard hop inside the accuracy bubble. */
 const TRAIL_STILL_STEP_M = 22;
 const TRAIL_STILL_STEP_MS = 12_000;
@@ -87,6 +88,22 @@ const TRAIL_SPUR_WINDOW_MS = 180_000;
  */
 export const TRAIL_GAP_M = 48;
 export const TRAIL_GAP_MS = 20_000;
+/**
+ * Close the in-progress trip after the phone has lingered this long.
+ * 7 minutes sits in the 5–10 minute band. The linger is the same 50m stay
+ * cluster as a stop, and it must already have been observed for STOP_MIN_MS
+ * before the wall clock can finish the wait. A speed reading alone does not close it.
+ */
+export const JOURNEY_STAY_MS = 7 * 60 * 1000;
+/** Latest stay fix may be this old. A 2 minute still sample is still fresh enough to close the 7 minute wait. */
+export const JOURNEY_STAY_FRESH_MS = 150 * 1000;
+/** Shorter than this is courtyard noise, not a card in 기록. */
+export const JOURNEY_MIN_DISTANCE_M = 80;
+export const JOURNEY_MIN_DURATION_MS = 60 * 1000;
+export const JOURNEY_POINT_CAP = 240;
+export const JOURNEY_DAY_CAP = 6;
+/** Leave a stay bubble only after the step is clearly a walk, not ±4m jitter. */
+const TRAIL_DEPART_STAY_M = 6;
 
 const MODE_LABELS = {
   walk: '도보',
@@ -257,18 +274,35 @@ function stillSample(point) {
   return point?.staying === true || (speed != null && speed < TRAIL_STAY_SPEED_MPS);
 }
 
+function stepPace(last, point) {
+  if (!last || !point) return null;
+  const moved = haversineMeters(last, point);
+  const dt = point.at - last.at;
+  if (!Number.isFinite(moved) || !Number.isFinite(dt) || dt <= 0) return null;
+  return { moved, dt, speed: moved / (dt / 1000) };
+}
+
+function walkPace(speed) {
+  return speed >= 0.75 && speed <= 2.8;
+}
+
 /**
  * Meters the next sample must clear before it is a new vertex.
- * Moving, or a stay flag that still has a walking GPS speed: a fixed 4m.
+ * A reported walk, or a 2.5s step whose own pace is a walk: 2.5m.
  * Accuracy must not widen this, or a ±19m fix skips the bend.
- * Still, with no walking speed: about 2× accuracy (26–44m) so courtyard
- * multipath inside the bubble is not a vertex.
+ * A stay flag without that pace: about 2× accuracy (26–44m), unless the
+ * phone has already stepped 6m at a walking pace. Courtyard jitter stays put.
  */
 export function trailMoveGate(last, point) {
   const walkingSpeed = speedShowsMoving(point);
   if (walkingSpeed && point?.staying !== true) return TRAIL_WALK_VERTEX_M;
   if (!stillSample(point) && point?.staying !== true) return TRAIL_WALK_VERTEX_M;
   if (point?.staying === true && walkingSpeed) return TRAIL_WALK_VERTEX_M;
+  const pace = stepPace(last, point);
+  if (pace && walkPace(pace.speed)) {
+    if (point?.staying !== true && pace.moved >= TRAIL_WALK_VERTEX_M && pace.dt >= 1_200 && pace.dt <= 8_000) return TRAIL_WALK_VERTEX_M;
+    if (point?.staying === true && pace.moved >= TRAIL_DEPART_STAY_M && pace.dt >= 1_500 && pace.dt <= 12_000) return TRAIL_WALK_VERTEX_M;
+  }
   const accuracy = Math.max(positiveMeters(point?.accuracyM), positiveMeters(last?.accuracyM));
   return Math.max(26, Math.min(44, accuracy > 0 ? accuracy * 2.05 : 32));
 }
@@ -307,8 +341,11 @@ export function trailDecision(last, point) {
       if (!paced) return 'snap';
     } else if (!paced) return 'snap';
   } else if (stillSample(point) && moved <= TRAIL_RELOCATION_M) {
-    const paced = implied >= 0.7 && implied <= TRAIL_STILL_PACE_MAX_MPS && moved >= TRAIL_STILL_STEP_M && dt >= TRAIL_STILL_STEP_MS;
-    if (!paced) return 'snap';
+    const reportedStillWalk = point?.staying !== true && walkPace(implied) && moved >= TRAIL_WALK_VERTEX_M && dt >= 1_200 && dt <= 8_000;
+    if (!reportedStillWalk) {
+      const paced = implied >= 0.7 && implied <= TRAIL_STILL_PACE_MAX_MPS && moved >= TRAIL_STILL_STEP_M && dt >= TRAIL_STILL_STEP_MS;
+      if (!paced) return 'snap';
+    }
   }
   return 'keep';
 }
@@ -497,7 +534,7 @@ function sampledTrail(points) {
   for (const point of collapsed) {
     if (!point || point.stayEnd) continue;
     const prev = drawn[drawn.length - 1];
-    if (prev && haversineMeters(prev, point) < 3) continue;
+    if (prev && haversineMeters(prev, point) < 1.5) continue;
     drawn.push(point);
   }
   return drawn;
@@ -507,6 +544,41 @@ function simplifyDrawn(drawn) {
   if (!Array.isArray(drawn) || drawn.length < 3) return drawn;
   const simplified = douglasPeucker(drawn, displaySimplifyMeters());
   return smoothShallowBends(restoreWalkVertices(drawn, simplified));
+}
+
+/**
+ * One Chaikin pass. New vertices stay on the sampled segments, so the line
+ * rounds without drawing a road the GPS did not walk.
+ */
+function roundWalk(points) {
+  if (!Array.isArray(points) || points.length < 3) return points;
+  const output = [points[0]];
+  for (let index = 0; index < points.length - 1; index += 1) {
+    const start = points[index];
+    const end = points[index + 1];
+    if (haversineMeters(start, end) >= TRAIL_GAP_M) {
+      output.push(end);
+      continue;
+    }
+    if (index > 0) {
+      output.push({
+        ...start,
+        lat: start.lat * 0.75 + end.lat * 0.25,
+        lng: start.lng * 0.75 + end.lng * 0.25,
+      });
+    }
+    if (index < points.length - 2) {
+      output.push({
+        ...end,
+        lat: start.lat * 0.25 + end.lat * 0.75,
+        lng: start.lng * 0.25 + end.lng * 0.75,
+        at: end.at,
+      });
+    } else {
+      output.push(end);
+    }
+  }
+  return output;
 }
 
 /**
@@ -532,7 +604,7 @@ export function trailDrawParts(points) {
   const parts = [];
   let run = [sampled[0]];
   const flushRun = () => {
-    if (run.length >= 2) parts.push({ points: simplifyDrawn(run), dashed: false });
+    if (run.length >= 2) parts.push({ points: roundWalk(simplifyDrawn(run)), dashed: false });
     run = [];
   };
   for (let index = 1; index < sampled.length; index += 1) {
@@ -970,4 +1042,308 @@ export function buildDayRecord(points, now) {
     if (segment) segments.push(segment);
   }
   return { stops, segments };
+}
+
+function orderedTrail(points) {
+  const list = [];
+  for (const point of Array.isArray(points) ? points : []) {
+    if (!point || !Number.isFinite(point.lat) || !Number.isFinite(point.lng) || !Number.isFinite(point.at)) continue;
+    list.push(point);
+  }
+  for (let index = 1; index < list.length; index += 1) {
+    if (list[index].at < list[index - 1].at) return list.slice().sort((left, right) => left.at - right.at);
+  }
+  return list;
+}
+
+function stayDwell(startAt, endAt, open, now) {
+  const observed = endAt - startAt;
+  if (!open) return Math.max(0, observed);
+  if (observed >= JOURNEY_STAY_MS) return observed;
+  if (!Number.isFinite(now) || now < endAt) return Math.max(0, observed);
+  if (now - endAt > JOURNEY_STAY_FRESH_MS) return Math.max(0, observed);
+  if (observed < STOP_MIN_MS) return Math.max(0, observed);
+  return Math.max(0, now - startAt);
+}
+
+/**
+ * A stay is a run that remains inside STOP_RADIUS_M of its own anchor.
+ * The anchor slides forward so the last block of the walk is not swallowed
+ * into the stay. Speed alone never opens or closes the run.
+ */
+function findClosingStays(points, now) {
+  const stays = [];
+  let index = 0;
+  while (index < points.length) {
+    const anchor = points[index];
+    let end = index;
+    while (end + 1 < points.length && haversineMeters(anchor, points[end + 1]) <= STOP_RADIUS_M) end += 1;
+    const open = end === points.length - 1;
+    if (end > index && stayDwell(anchor.at, points[end].at, open, now) >= JOURNEY_STAY_MS) {
+      let start = index;
+      while (start < end) {
+        const next = start + 1;
+        let near = true;
+        for (let cursor = next + 1; cursor <= end; cursor += 1) {
+          if (haversineMeters(points[next], points[cursor]) > STOP_RADIUS_M) {
+            near = false;
+            break;
+          }
+        }
+        if (!near || stayDwell(points[next].at, points[end].at, open, now) < JOURNEY_STAY_MS) break;
+        start = next;
+      }
+      stays.push({ startAt: points[start].at, endAt: points[end].at });
+      index = end + 1;
+    } else {
+      index += 1;
+    }
+  }
+  return stays;
+}
+
+function compactJourneyPoints(points) {
+  const sampled = [];
+  for (const point of points) {
+    if (!point || point.stayEnd) continue;
+    const prev = sampled[sampled.length - 1];
+    if (prev && haversineMeters(prev, point) < 1.5) continue;
+    sampled.push(point);
+  }
+  let current = sampled.length >= 2 ? sampled : points.filter((point) => point && !point.stayEnd);
+  let epsilon = 2;
+  while (current.length > JOURNEY_POINT_CAP && epsilon <= 64) {
+    current = douglasPeucker(current, epsilon);
+    epsilon *= 2;
+  }
+  if (current.length > JOURNEY_POINT_CAP) {
+    const step = Math.ceil(current.length / JOURNEY_POINT_CAP);
+    const capped = [];
+    for (let index = 0; index < current.length; index += step) capped.push(current[index]);
+    const last = current[current.length - 1];
+    if (capped[capped.length - 1] !== last) capped.push(last);
+    current = capped;
+  }
+  return current.map((point) => ({
+    lat: Number(point.lat.toFixed(6)),
+    lng: Number(point.lng.toFixed(6)),
+    at: point.at,
+  }));
+}
+
+function buildClosedJourney(points, departAt, arriveAt) {
+  const path = [];
+  for (const point of points) {
+    if (!point || point.stayEnd) continue;
+    if (point.at < departAt || point.at > arriveAt) continue;
+    path.push(point);
+  }
+  if (path.length < 2) return null;
+  const distanceM = pathDistance(path);
+  const durationMs = arriveAt - departAt;
+  if (distanceM < JOURNEY_MIN_DISTANCE_M || durationMs < JOURNEY_MIN_DURATION_MS) return null;
+  const start = path[0];
+  const end = path[path.length - 1];
+  return {
+    id: `${start.at}:${arriveAt}:${start.lat.toFixed(4)}:${start.lng.toFixed(4)}`,
+    startedAt: start.at,
+    endedAt: arriveAt,
+    distanceM: Math.round(distanceM),
+    points: compactJourneyPoints(path),
+    start: { lat: Number(start.lat.toFixed(6)), lng: Number(start.lng.toFixed(6)), label: null },
+    end: { lat: Number(end.lat.toFixed(6)), lng: Number(end.lng.toFixed(6)), label: null },
+  };
+}
+
+/**
+ * Split a trail at stays that have lasted JOURNEY_STAY_MS.
+ * Journeys are the walks between those stays. Remaining is the open stay
+ * and anything after it, which is the live map line.
+ * A stay under 7 minutes, or a walk under JOURNEY_MIN_DISTANCE_M, does not
+ * become a card. The short walk still leaves the live line once a real stay closes.
+ */
+export function splitClosedJourneys(points, now) {
+  const source = Array.isArray(points) ? points : [];
+  const sorted = orderedTrail(source);
+  if (sorted.length < 2) return { journeys: [], remaining: source };
+  const closing = findClosingStays(sorted, now);
+  if (closing.length === 0) return { journeys: [], remaining: source };
+  const journeys = [];
+  let departAt = sorted[0].at;
+  for (const cluster of closing) {
+    if (cluster.startAt > departAt) {
+      const journey = buildClosedJourney(sorted, departAt, cluster.startAt);
+      if (journey) journeys.push(journey);
+    }
+    departAt = cluster.endAt;
+  }
+  const remainFrom = closing[closing.length - 1].startAt;
+  let cut = 0;
+  while (cut < sorted.length && sorted[cut].at < remainFrom) cut += 1;
+  if (journeys.length === 0 && cut <= 0) return { journeys: [], remaining: source };
+  return { journeys, remaining: cut <= 0 ? sorted : sorted.slice(cut) };
+}
+
+/** In-progress line for the family map. Finished stays are not on this overlay. */
+export function liveTrailPoints(points, now) {
+  return splitClosedJourneys(points, now).remaining;
+}
+
+/** Today's walk that has not closed yet. Too-short noise stays off the 기록 list. */
+export function previewOpenJourney(points, now) {
+  const path = liveTrailPoints(points, now).filter((point) => point && !point.stayEnd && Number.isFinite(point.lat) && Number.isFinite(point.lng) && Number.isFinite(point.at));
+  if (path.length < 2) return null;
+  const origin = path[0];
+  let depart = origin;
+  for (const point of path) {
+    if (haversineMeters(origin, point) <= STOP_RADIUS_M) depart = point;
+    else break;
+  }
+  const moving = path.filter((point) => point.at >= depart.at);
+  if (moving.length < 2) return null;
+  const distanceM = pathDistance(moving);
+  const endedAt = moving[moving.length - 1].at;
+  const durationMs = Math.max(0, endedAt - depart.at);
+  if (distanceM < JOURNEY_MIN_DISTANCE_M || durationMs < JOURNEY_MIN_DURATION_MS) return null;
+  const end = moving[moving.length - 1];
+  return {
+    id: `open:${depart.at}`,
+    startedAt: depart.at,
+    endedAt,
+    distanceM: Math.round(distanceM),
+    points: compactJourneyPoints(moving),
+    start: { lat: Number(depart.lat.toFixed(6)), lng: Number(depart.lng.toFixed(6)), label: null },
+    end: { lat: Number(end.lat.toFixed(6)), lng: Number(end.lng.toFixed(6)), label: null },
+    open: true,
+  };
+}
+
+export function formatJourneyWhen(startedAt, endedAt) {
+  if (!Number.isFinite(startedAt) || !Number.isFinite(endedAt)) return '';
+  const fmt = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Seoul',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  });
+  return `${fmt.format(startedAt)}–${fmt.format(endedAt)}`;
+}
+
+export function formatJourneyDistance(meters) {
+  if (!Number.isFinite(meters) || meters < 0) return '0m';
+  if (meters < 1000) return `${Math.round(meters)}m`;
+  return `${(meters / 1000).toFixed(1)}km`;
+}
+
+export function labelJourneyPlace(place, spots) {
+  if (!place || !Number.isFinite(place.lat) || !Number.isFinite(place.lng)) return place;
+  if (place.label) return place;
+  let best = null;
+  let bestDistance = Infinity;
+  for (const spot of Array.isArray(spots) ? spots : []) {
+    if (!spot || typeof spot.label !== 'string' || !spot.label.trim()) continue;
+    if (!Number.isFinite(spot.lat) || !Number.isFinite(spot.lng)) continue;
+    const distance = haversineMeters(place, spot);
+    const radius = Number.isFinite(spot.radiusM) && spot.radiusM > 0 ? spot.radiusM : 80;
+    if (distance <= radius && distance < bestDistance) {
+      bestDistance = distance;
+      best = spot.label.trim().slice(0, 120);
+    }
+  }
+  return best ? { ...place, label: best } : place;
+}
+
+function journeySame(left, right) {
+  return !!left && !!right
+    && left.id === right.id
+    && left.distanceM === right.distanceM
+    && left.startedAt === right.startedAt
+    && left.endedAt === right.endedAt
+    && left.start?.label === right.start?.label
+    && left.end?.label === right.end?.label
+    && left.points?.length === right.points?.length;
+}
+
+export function mergeJourneyLists(existing, incoming) {
+  const base = Array.isArray(existing) ? existing : [];
+  const extra = Array.isArray(incoming) ? incoming : [];
+  if (extra.length === 0) return base;
+  const map = new Map();
+  for (const journey of base) if (journey?.id) map.set(journey.id, journey);
+  let changed = false;
+  for (const journey of extra) {
+    if (!journey?.id) continue;
+    const prev = map.get(journey.id);
+    if (!prev) {
+      map.set(journey.id, journey);
+      changed = true;
+      continue;
+    }
+    const startLabel = prev.start?.label || journey.start?.label || null;
+    const endLabel = prev.end?.label || journey.end?.label || null;
+    const richer = (journey.distanceM || 0) > (prev.distanceM || 0) + 20;
+    const next = richer
+      ? { ...journey, start: { ...journey.start, label: startLabel }, end: { ...journey.end, label: endLabel } }
+      : { ...prev, start: { ...prev.start, label: startLabel }, end: { ...prev.end, label: endLabel } };
+    if (!journeySame(prev, next)) {
+      map.set(journey.id, next);
+      changed = true;
+    }
+  }
+  if (!changed) return base;
+  return [...map.values()].sort((left, right) => left.startedAt - right.startedAt);
+}
+
+export function trimJourneyList(list, now) {
+  if (!Array.isArray(list) || list.length === 0) return [];
+  const today = seoulDayKey(now);
+  const oldest = oldestHistoryDay(now);
+  const byDay = new Map();
+  let dropped = false;
+  for (const journey of list) {
+    if (!journey || typeof journey.id !== 'string' || !Number.isFinite(journey.endedAt)) {
+      dropped = true;
+      continue;
+    }
+    const day = seoulDayKey(journey.endedAt);
+    if (!day || day < oldest || day > today) {
+      dropped = true;
+      continue;
+    }
+    const bucket = byDay.get(day);
+    if (bucket) bucket.push(journey);
+    else byDay.set(day, [journey]);
+  }
+  const kept = [];
+  for (const day of [...byDay.keys()].sort()) {
+    const bucket = byDay.get(day).slice().sort((left, right) => left.startedAt - right.startedAt);
+    const slice = bucket.length > JOURNEY_DAY_CAP ? bucket.slice(-JOURNEY_DAY_CAP) : bucket;
+    if (slice.length !== bucket.length) dropped = true;
+    kept.push(...slice);
+  }
+  if (!dropped && sameList(list, kept)) return list;
+  return kept;
+}
+
+export function journeysWithinHistory(journeys, now) {
+  if (!journeys || typeof journeys !== 'object') return {};
+  let changed = false;
+  const next = {};
+  const ids = Object.keys(journeys);
+  for (const id of ids) {
+    const list = journeys[id];
+    if (!Array.isArray(list)) {
+      changed = true;
+      continue;
+    }
+    const trimmed = trimJourneyList(list, now);
+    if (trimmed.length === 0) {
+      if (list.length > 0) changed = true;
+      continue;
+    }
+    next[id] = trimmed;
+    if (trimmed !== list) changed = true;
+  }
+  if (!changed && Object.keys(next).length === ids.length) return journeys;
+  return next;
 }

@@ -2,7 +2,7 @@ import React, { createContext, useContext, useEffect, useReducer } from 'react';
 import { hasLocation } from '../../lib/geo';
 import { resolveManagedTarget } from '../../lib/managedPlace.mjs';
 import { localProfile } from '../../lib/localProfile.mjs';
-import { HISTORY_DAYS, TRAIL_POINT_CAP, isWithinHistory, seoulDayKey, settleTrailPoint, tracksWithinHistory, visitsWithinHistory } from '../../lib/tracking.mjs';
+import { HISTORY_DAYS, JOURNEY_POINT_CAP, TRAIL_POINT_CAP, isWithinHistory, journeysWithinHistory, labelJourneyPlace, mergeJourneyLists, seoulDayKey, settleTrailPoint, splitClosedJourneys, tracksWithinHistory, trimJourneyList, visitsWithinHistory, type JourneyRecord } from '../../lib/tracking.mjs';
 import type { DayStop } from '../../lib/tracking.mjs';
 import type { SharedPlace } from '../../services/familyShare';
 import { umapLocation } from '../../services/umapLocation';
@@ -15,6 +15,7 @@ import {
   type FamilyTab,
   type GuardianLink,
   type HomeZone,
+  type Journey,
   type LeaveAlert,
   type Member,
   type PermissionState,
@@ -114,6 +115,7 @@ function fresh(stage: Stage = 'splash'): Session {
     tracks: {},
     trailDay: seoulDayKey(Date.now()),
     visits: {},
+    journeys: {},
     shareSelfWithFamily: false,
     backgroundKeepAlive: false,
     home: null,
@@ -236,6 +238,75 @@ function cleanVisits(value: unknown): Record<string, Visit[]> {
   return visits;
 }
 
+function cleanJourneys(value: unknown): Record<string, Journey[]> {
+  if (!value || typeof value !== 'object') return {};
+  const journeys: Record<string, Journey[]> = {};
+  for (const [id, list] of Object.entries(value as Record<string, unknown>)) {
+    if (!Array.isArray(list)) continue;
+    const clean: Journey[] = [];
+    for (const item of list) {
+      if (!item || typeof item !== 'object') continue;
+      const journey = item as Journey;
+      if (typeof journey.id !== 'string' || !Number.isFinite(journey.startedAt) || !Number.isFinite(journey.endedAt)) continue;
+      if (!journey.start || !journey.end || !Number.isFinite(journey.start.lat) || !Number.isFinite(journey.start.lng) || !Number.isFinite(journey.end.lat) || !Number.isFinite(journey.end.lng)) continue;
+      const points = Array.isArray(journey.points) ? journey.points.filter(isPoint).slice(-JOURNEY_POINT_CAP) : [];
+      if (points.length < 2) continue;
+      const placeLabel = (label: unknown) => (typeof label === 'string' && label.trim() ? label.trim().slice(0, 120) : null);
+      clean.push({
+        id: journey.id.slice(0, 160),
+        startedAt: journey.startedAt,
+        endedAt: journey.endedAt,
+        distanceM: Number.isFinite(journey.distanceM) ? Math.max(0, Math.round(journey.distanceM)) : 0,
+        points,
+        start: { lat: journey.start.lat, lng: journey.start.lng, label: placeLabel(journey.start.label) },
+        end: { lat: journey.end.lat, lng: journey.end.lng, label: placeLabel(journey.end.label) },
+      });
+    }
+    if (clean.length > 0) journeys[id] = clean.slice(-80);
+  }
+  return journeys;
+}
+
+function knownSpots(state: Session, memberId: string) {
+  const spots: { lat: number; lng: number; label: string; radiusM: number }[] = [];
+  if (state.home && Number.isFinite(state.home.lat) && Number.isFinite(state.home.lng)) {
+    spots.push({ lat: state.home.lat, lng: state.home.lng, label: state.home.label || '우리 집', radiusM: state.home.radiusM });
+  }
+  for (const visit of state.visits[memberId] ?? []) {
+    if (visit.label) spots.push({ lat: visit.lat, lng: visit.lng, label: visit.label, radiusM: 120 });
+  }
+  return spots;
+}
+
+function archiveJourneys(state: Session, now: number): Session {
+  const tracks = tracksWithinHistory(state.tracks, now);
+  let journeys = journeysWithinHistory(state.journeys ?? {}, now);
+  for (const [id, points] of Object.entries(tracks)) {
+    const split = splitClosedJourneys(points, now);
+    if (split.journeys.length === 0) continue;
+    const spots = knownSpots({ ...state, journeys }, id);
+    const labeled = split.journeys.map((journey: JourneyRecord) => ({
+      ...journey,
+      start: labelJourneyPlace(journey.start, spots),
+      end: labelJourneyPlace(journey.end, spots),
+    }));
+    const merged = trimJourneyList(mergeJourneyLists(journeys[id], labeled), now);
+    const current = journeys[id] ?? [];
+    if (merged === current) continue;
+    const next = { ...journeys };
+    if (merged.length === 0) delete next[id];
+    else next[id] = merged;
+    journeys = next;
+  }
+  if (tracks === state.tracks && journeys === (state.journeys ?? {})) return state;
+  return {
+    ...state,
+    trailDay: seoulDayKey(now),
+    tracks,
+    journeys,
+  };
+}
+
 function visitsSame(current: Visit[], next: Visit[]): boolean {
   if (current.length !== next.length) return false;
   return current.every((visit, index) => {
@@ -313,8 +384,13 @@ function withoutDemo(session: Session): Session {
     const clean = points.filter((point) => !isSeedLocation(point.lat, point.lng));
     if (clean.length > 0) tracks[id] = clean;
   }
+  const journeys: Record<string, Journey[]> = {};
+  for (const [id, list] of Object.entries(session.journeys ?? {})) {
+    if (!kept.has(id) || !Array.isArray(list) || list.length === 0) continue;
+    journeys[id] = list;
+  }
   const mode = session.mode === 'admin' || session.mode === 'managed' ? session.mode : null;
-  return { ...session, profile, members, tracks, mode, guardians: cleanGuardians(session.guardians) };
+  return { ...session, profile, members, tracks, journeys, mode, guardians: cleanGuardians(session.guardians) };
 }
 
 function isSession(value: unknown): value is Session {
@@ -355,6 +431,7 @@ function load(): Session {
       pendingSyncToken: pendingSyncToken || cleanSyncToken(parsed.pendingSyncToken),
       trailDay: typeof parsed.trailDay === 'string' ? parsed.trailDay : '',
       visits: cleanVisits(parsed.visits),
+      journeys: cleanJourneys((parsed as Session).journeys),
       shareSelfWithFamily: parsed.shareSelfWithFamily === true,
       backgroundKeepAlive: parsed.backgroundKeepAlive === true,
       phoneVerified: false,
@@ -370,7 +447,7 @@ function load(): Session {
       : loaded.permissions.completed
         ? (loaded.mode ? 'map' : 'mode')
         : loaded.stage;
-    return {
+    return archiveJourneys({
       ...loaded,
       profile,
       phone: '',
@@ -379,7 +456,8 @@ function load(): Session {
       trailDay: seoulDayKey(now),
       tracks: tracksWithinHistory(loaded.tracks, now),
       visits: visitsWithinHistory(loaded.visits, now),
-    };
+      journeys: journeysWithinHistory(loaded.journeys ?? {}, now),
+    }, now);
   } catch {
     return { ...fresh(), pendingSyncToken };
   }
@@ -419,6 +497,8 @@ type Action =
   | { type: 'set-room-family-places'; code: string; places: SharedPlace[] }
   | { type: 'merge-visits'; memberId: string; stops: DayStop[] }
   | { type: 'set-visit-label'; memberId: string; id: string; label: string }
+  | { type: 'set-journey-label'; memberId: string; id: string; which: 'start' | 'end'; label: string }
+  | { type: 'close-journeys'; now: number }
   | { type: 'set-motion'; moving: boolean }
   | { type: 'notice'; notice: FamilyNotice }
   | { type: 'logout' }
@@ -488,13 +568,13 @@ function reducer(state: Session, action: Action): Session {
         '우리 집을 저장했습니다',
         `반경 ${action.home.radiusM}m입니다. 위치 공유를 허용한 피관리자가 이 원을 나가면 관리자 화면에 사이렌이 울립니다. 피관리자 폰에서는 울리지 않습니다.`,
       );
-      return {
+      return archiveJourneys({
         ...state,
         home: { ...action.home, alertPhone: '' },
         phone: state.phone,
         notices: [created, ...state.notices],
         tab: 'map',
-      };
+      }, Date.now());
     }
     case 'clear-home':
       return { ...state, home: null };
@@ -528,10 +608,13 @@ function reducer(state: Session, action: Action): Session {
       if (!removed) return state;
       const tracks = { ...state.tracks };
       delete tracks[action.id];
+      const journeys = { ...state.journeys };
+      delete journeys[action.id];
       return {
         ...state,
         members: state.members.filter((member) => member.id !== action.id),
         tracks,
+        journeys,
         notices: [notice('가족을 지웠습니다', `${removed.name} 님을 이 기기의 목록과 지도에서 뺐습니다.`), ...state.notices],
       };
     }
@@ -600,20 +683,18 @@ function reducer(state: Session, action: Action): Session {
       };
       const settled = settleTrailPoint(state.tracks.self, sample, at);
       if (settled.decision === 'drop') {
-        if (settled.points === state.tracks.self) return state;
-        return {
+        if (settled.points === state.tracks.self) return archiveJourneys(state, at);
+        return archiveJourneys({
           ...state,
-          trailDay: seoulDayKey(at),
           tracks: tracksWithinHistory({ ...state.tracks, self: settled.points }, at),
-        };
+        }, at);
       }
       const tracks = tracksWithinHistory(
         settled.points === state.tracks.self ? state.tracks : { ...state.tracks, self: settled.points },
         at,
       );
-      return {
+      return archiveJourneys({
         ...state,
-        trailDay: seoulDayKey(at),
         visits: visitsWithinHistory(state.visits, at),
         members: state.members.map((member) =>
           member.id === 'self'
@@ -627,7 +708,7 @@ function reducer(state: Session, action: Action): Session {
             : member,
         ),
         tracks,
-      };
+      }, at);
     }
     case 'set-battery': {
       const self = state.members.find((member) => member.id === 'self');
@@ -638,11 +719,9 @@ function reducer(state: Session, action: Action): Session {
       };
     }
     case 'roll-day': {
-      const trailDay = seoulDayKey(action.now);
-      const tracks = tracksWithinHistory(state.tracks, action.now);
       const visits = visitsWithinHistory(state.visits, action.now);
-      if (state.trailDay === trailDay && tracks === state.tracks && visits === state.visits) return state;
-      return { ...state, trailDay, tracks, visits };
+      const base = visits === state.visits ? state : { ...state, visits };
+      return archiveJourneys(base, action.now);
     }
     case 'set-share-self':
       if (state.mode !== 'admin' || state.shareSelfWithFamily === action.share) return state;
@@ -667,11 +746,12 @@ function reducer(state: Session, action: Action): Session {
       state = { ...state, members };
       if (!place.sharing) {
         if (member.share !== 'allowed' && !hasLocation(member)) return state;
-        const tracks = { ...state.tracks };
+        const archived = archiveJourneys(state, place.at || Date.now());
+        const tracks = { ...archived.tracks };
         delete tracks[member.id];
         return {
-          ...state,
-          members: state.members.map((item) => (item.id === member.id ? { ...item, share: 'revoked', lat: null, lng: null, updatedAt: place.at } : item)),
+          ...archived,
+          members: archived.members.map((item) => (item.id === member.id ? { ...item, share: 'revoked', lat: null, lng: null, updatedAt: place.at } : item)),
           tracks,
         };
       }
@@ -710,9 +790,8 @@ function reducer(state: Session, action: Action): Session {
         : keptTracks;
       const lat = settled.decision === 'drop' && hasLocation(member) ? member.lat : (settled.lat ?? place.lat);
       const lng = settled.decision === 'drop' && hasLocation(member) ? member.lng : (settled.lng ?? place.lng);
-      return {
+      return archiveJourneys({
         ...state,
-        trailDay: seoulDayKey(now),
         visits: visitsWithinHistory(state.visits, now),
         members: state.members.map((item) =>
           item.id === member.id
@@ -729,7 +808,7 @@ function reducer(state: Session, action: Action): Session {
             : item,
         ),
         tracks,
-      };
+      }, now);
     }
     case 'set-room-family-places': {
       if (state.mode !== 'managed') return state;
@@ -778,7 +857,7 @@ function reducer(state: Session, action: Action): Session {
       for (const member of current) {
         if (!members.some((item) => item.id === member.id)) delete tracks[member.id];
       }
-      return { ...state, members, tracks, visits, trailDay: today };
+      return archiveJourneys({ ...state, members, tracks, visits, trailDay: today }, now);
     }
     case 'merge-visits': {
       const now = Date.now();
@@ -819,6 +898,24 @@ function reducer(state: Session, action: Action): Session {
           [action.memberId]: list.map((visit) => (visit.id === action.id ? { ...visit, label: action.label, source: 'geocode' } : visit)),
         },
       };
+    }
+    case 'close-journeys':
+      return archiveJourneys(state, action.now);
+    case 'set-journey-label': {
+      const list = state.journeys[action.memberId];
+      if (!list) return state;
+      const label = action.label.trim().slice(0, 120);
+      if (!label) return state;
+      let changed = false;
+      const next = list.map((journey) => {
+        if (journey.id !== action.id) return journey;
+        const place = journey[action.which];
+        if (!place || place.label === label) return journey;
+        changed = true;
+        return { ...journey, [action.which]: { ...place, label } };
+      });
+      if (!changed) return state;
+      return { ...state, journeys: { ...state.journeys, [action.memberId]: next } };
     }
     case 'set-motion':
       return {
@@ -871,6 +968,8 @@ interface FamilyApi {
   setRoomFamilyPlaces: (code: string, places: SharedPlace[]) => void;
   mergeVisits: (memberId: string, stops: DayStop[]) => void;
   setVisitLabel: (memberId: string, id: string, label: string) => void;
+  closeJourneys: (now: number) => void;
+  setJourneyLabel: (memberId: string, id: string, which: 'start' | 'end', label: string) => void;
   setMotion: (moving: boolean) => void;
   pushNotice: (title: string, body: string) => void;
   logout: () => void;
@@ -890,9 +989,13 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const raw = JSON.stringify(state);
     const key = storageKey(state.mode);
-    sessionStorage.setItem(STORAGE_KEY, raw);
-    localStorage.setItem(key, raw);
-    localStorage.setItem(`${key}:at`, String(Date.now()));
+    try {
+      sessionStorage.setItem(STORAGE_KEY, raw);
+      localStorage.setItem(key, raw);
+      localStorage.setItem(`${key}:at`, String(Date.now()));
+    } catch {
+      /* 용량이 가득 차도 화면의 상태는 유지한다 */
+    }
     if (!state.profile) {
       localStorage.removeItem(`${STORAGE_KEY}:admin`);
       localStorage.removeItem(`${STORAGE_KEY}:managed`);
@@ -936,6 +1039,8 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
     setRoomFamilyPlaces: (code, places) => dispatch({ type: 'set-room-family-places', code, places }),
     mergeVisits: (memberId, stops) => dispatch({ type: 'merge-visits', memberId, stops }),
     setVisitLabel: (memberId, id, label) => dispatch({ type: 'set-visit-label', memberId, id, label }),
+    closeJourneys: (now) => dispatch({ type: 'close-journeys', now }),
+    setJourneyLabel: (memberId, id, which, label) => dispatch({ type: 'set-journey-label', memberId, id, which, label }),
     setMotion: (moving) => dispatch({ type: 'set-motion', moving }),
     pushNotice: (title, body) => dispatch({ type: 'notice', notice: notice(title, body) }),
     logout: () => dispatch({ type: 'logout' }),

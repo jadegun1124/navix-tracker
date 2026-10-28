@@ -21,6 +21,17 @@ export interface Visit {
   source: 'geocode' | 'coords';
 }
 
+export interface Journey {
+  id: string;
+  startedAt: number;
+  endedAt: number;
+  distanceM: number;
+  points: TrackPoint[];
+  start: { lat: number; lng: number; label: string | null };
+  end: { lat: number; lng: number; label: string | null };
+  open?: boolean;
+}
+
 export type AppMode = 'admin' | 'managed';
 export type ShareState = 'invited' | 'accepted' | 'allowed' | 'revoked';
 
@@ -98,6 +109,8 @@ export interface Session {
   tracks: Record<string, TrackPoint[]>;
   trailDay: string;
   visits: Record<string, Visit[]>;
+  /** Finished trips on this phone. Not uploaded. */
+  journeys: Record<string, Journey[]>;
   shareSelfWithFamily: boolean;
   backgroundKeepAlive: boolean;
   home: HomeZone | null;

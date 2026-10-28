@@ -46,6 +46,11 @@ export function AlwaysAllowNotice({
           )}
         </div>
       </div>
+      {live && (
+        <p className="mt-1 text-[11px] font-semibold leading-4 text-slate-500">
+          걷는 동안만 2–3초로 촘촘히 잇습니다. 머물면 2분, 7분이 넘으면 5분으로 줄입니다.
+        </p>
+      )}
       {note && <p className="mt-1 text-[11px] font-semibold leading-4 text-slate-500">{note}</p>}
     </div>
   );

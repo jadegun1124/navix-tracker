@@ -105,3 +105,50 @@ export function formatDurationMs(durationMs: number): string;
 export function formatFixAge(at: number, now?: number): string;
 export function formatDistanceM(meters: number): string;
 export function buildDayRecord(points: TrailSample[] | null | undefined, now: number): { stops: DayStop[]; segments: DaySegment[] };
+
+export const JOURNEY_STAY_MS: number;
+export const JOURNEY_STAY_FRESH_MS: number;
+export const JOURNEY_MIN_DISTANCE_M: number;
+export const JOURNEY_MIN_DURATION_MS: number;
+export const JOURNEY_POINT_CAP: number;
+export const JOURNEY_DAY_CAP: number;
+
+export interface JourneyPlace {
+  lat: number;
+  lng: number;
+  label: string | null;
+}
+
+export interface JourneyRecord {
+  id: string;
+  startedAt: number;
+  endedAt: number;
+  distanceM: number;
+  points: TrailSample[];
+  start: JourneyPlace;
+  end: JourneyPlace;
+  open?: boolean;
+}
+
+export interface JourneySpot {
+  lat: number;
+  lng: number;
+  label?: string | null;
+  radiusM?: number;
+}
+
+export function splitClosedJourneys(
+  points: TrailSample[] | null | undefined,
+  now: number,
+): { journeys: JourneyRecord[]; remaining: TrailSample[] };
+export function liveTrailPoints(points: TrailSample[] | null | undefined, now: number): TrailSample[];
+export function previewOpenJourney(points: TrailSample[] | null | undefined, now: number): JourneyRecord | null;
+export function formatJourneyWhen(startedAt: number, endedAt: number): string;
+export function formatJourneyDistance(meters: number): string;
+export function labelJourneyPlace<T extends JourneyPlace>(place: T, spots: JourneySpot[] | null | undefined): T;
+export function mergeJourneyLists(existing: JourneyRecord[] | null | undefined, incoming: JourneyRecord[] | null | undefined): JourneyRecord[];
+export function trimJourneyList(list: JourneyRecord[] | null | undefined, now: number): JourneyRecord[];
+export function journeysWithinHistory(
+  journeys: Record<string, JourneyRecord[]> | null | undefined,
+  now: number,
+): Record<string, JourneyRecord[]>;
