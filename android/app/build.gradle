@@ -18,8 +18,23 @@ android {
         sourceCompatibility JavaVersion.VERSION_21
         targetCompatibility JavaVersion.VERSION_21
     }
+    // Sideload-only key. Committed so every GitHub Actions runner signs
+    // kr.co.umap.tracker with the same certificate and APKs can update in place.
+    // This is not a Play App Signing key.
+    signingConfigs {
+        sideload {
+            storeFile file('umap-sideload.keystore')
+            storePassword 'umap-sideload'
+            keyAlias 'umap-sideload'
+            keyPassword 'umap-sideload'
+        }
+    }
     buildTypes {
+        debug {
+            signingConfig signingConfigs.sideload
+        }
         release {
+            signingConfig signingConfigs.sideload
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
