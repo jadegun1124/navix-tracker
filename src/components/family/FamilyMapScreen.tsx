@@ -12,7 +12,7 @@ import { DEFAULT_CENTER, type GuardianLink, type HomeZone, type Member } from '.
 import { AlwaysAllowNotice } from './AlwaysAllowNotice';
 import { InviteQrImage, InviteQrScan } from './InviteQr';
 import { StreetMap, type StreetMapHandle } from './StreetMap';
-import { JourneyCards } from './JourneyCards';
+import { JourneyCards, JourneyScrubber, playbackMark } from './JourneyCards';
 import { TodayRecord } from './TodayRecord';
 import { askAlwaysLocation, askBattery, askNotifications } from '../../services/systemPermissions';
 import { useFamilyTracking } from './useFamilyTracking';
@@ -56,6 +56,7 @@ export function FamilyMapScreen() {
   const [alertsOpen, setAlertsOpen] = useState(false);
   const [historyDay, setHistoryDay] = useState(() => seoulDayKey(Date.now()));
   const [pickedJourneyId, setPickedJourneyId] = useState<string | null>(null);
+  const [scrub, setScrub] = useState(0);
 
   useEffect(() => subscribeSyncPhase(setSyncPhase), []);
   useEffect(() => startSyncMonitor(), []);
@@ -283,8 +284,9 @@ export function FamilyMapScreen() {
   );
   useEffect(() => {
     setPickedJourneyId(null);
+    setScrub(0);
   }, [pathDay, selected?.id]);
-  const activeJourneyId = pickedJourneyId ?? (openJourney && pathDay === liveDay ? 'open' : dayJourneys[0]?.id ?? null);
+  const activeJourneyId = pickedJourneyId ?? dayJourneys[0]?.id ?? (openJourney ? 'open' : null);
   const activeJourney = activeJourneyId && activeJourneyId !== 'open'
     ? dayJourneys.find((journey) => journey.id === activeJourneyId) ?? null
     : null;
@@ -295,7 +297,11 @@ export function FamilyMapScreen() {
     const list = selected ? state.visits[selected.id] ?? [] : [];
     return list.filter((visit) => seoulDayKey(visit.arrivedAt) === pathDay);
   }, [pathDay, selected, state.visits]);
-  const todayMoveCount = dayJourneys.length + (openJourney ? 1 : 0);
+  const todayMoveCount = dayJourneys.length;
+  const playback = useMemo(() => {
+    if (state.tab !== 'history' || !activeJourney) return null;
+    return playbackMark(activeJourney.points, scrub / 1000);
+  }, [activeJourney, scrub, state.tab]);
   const unreadAlerts = state.notices.some((item) => !item.read);
   useEffect(() => {
     if (state.tab !== 'history' || mapPoints.length === 0) return;
@@ -329,6 +335,7 @@ export function FamilyMapScreen() {
             home={draftHome ?? (showZone ? state.home : null)}
             trail={showPath ? mapPoints : []}
             trailColor="#0084FF"
+            playback={playback}
             selectedId={selected?.id}
             onSelect={(id) => {
               const member = state.members.find((item) => item.id === id);
@@ -501,7 +508,7 @@ export function FamilyMapScreen() {
                   key={member.id}
                   member={member}
                   now={now}
-                  trip={member.id === selected?.id ? (openJourney ? `이동 중 · ${formatJourneyDistance(openJourney.distanceM)}` : dayJourneys[0] ? `${formatJourneyWhen(dayJourneys[0].startedAt, dayJourneys[0].endedAt)} · ${formatJourneyDistance(dayJourneys[0].distanceM)}` : undefined) : undefined}
+                  trip={member.id === selected?.id ? (openJourney ? `지금 · ${formatJourneyDistance(openJourney.distanceM)}` : dayJourneys[0] ? `${formatJourneyWhen(dayJourneys[0].startedAt, dayJourneys[0].endedAt)} · ${formatJourneyDistance(dayJourneys[0].distanceM)}` : undefined) : undefined}
                   home={state.mode === 'admin' ? state.home : null}
                   selected={member.id === selected?.id}
                   onSelect={() => focusMember(member, true)}
@@ -570,11 +577,22 @@ export function FamilyMapScreen() {
               </div>
             )}
             <div className="mt-3 space-y-3">
+              {activeJourney && playback && (
+                <JourneyScrubber
+                  journey={activeJourney}
+                  scrub={scrub}
+                  label={playback.label}
+                  onScrub={setScrub}
+                />
+              )}
               <JourneyCards
                 journeys={dayJourneys}
                 open={openJourney}
                 selectedId={activeJourneyId}
-                onSelect={setPickedJourneyId}
+                onSelect={(id) => {
+                  setPickedJourneyId(id);
+                  setScrub(0);
+                }}
               />
               <TodayRecord visits={dayVisits} />
             </div>

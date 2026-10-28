@@ -41,8 +41,9 @@ export const StreetMap = forwardRef<StreetMapHandle, {
   trail: TrackPoint[];
   trailColor: string;
   selectedId?: string;
+  playback?: { lat: number; lng: number; label: string } | null;
   onSelect: (id: string) => void;
-}>(function StreetMap({ center, zoom, members, home, trail, trailColor, selectedId, onSelect }, ref) {
+}>(function StreetMap({ center, zoom, members, home, trail, trailColor, selectedId, playback, onSelect }, ref) {
   const nodeRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
   const layersRef = useRef<L.LayerGroup | null>(null);
@@ -190,8 +191,35 @@ export const StreetMap = forwardRef<StreetMapHandle, {
         radius: 5,
         color: trailColor,
         weight: 2,
-        fillColor: '#ffffff',
+        fillColor: trailColor,
         fillOpacity: 1,
+      }).addTo(group);
+      const end = parts[parts.length - 1]?.points.at(-1) ?? trail[trail.length - 1];
+      if (end && (end.lat !== start.lat || end.lng !== start.lng)) {
+        L.circleMarker([end.lat, end.lng], {
+          radius: 6,
+          color: trailColor,
+          weight: 3,
+          fillColor: '#ffffff',
+          fillOpacity: 1,
+        }).addTo(group);
+      }
+    }
+
+    if (playback) {
+      const caption = escapeHtml(playback.label);
+      L.marker([playback.lat, playback.lng], {
+        interactive: false,
+        zIndexOffset: 900,
+        icon: L.divIcon({
+          className: 'umap-playback',
+          html: `<div style="display:flex;flex-direction:column;align-items:center;transform:translate(-50%,-100%)">
+            <span style="margin-bottom:4px;padding:3px 8px;border-radius:999px;background:#0f172a;color:#fff;font-size:11px;font-weight:800;white-space:nowrap;box-shadow:0 1px 4px rgba(15,23,42,.2)">${caption}</span>
+            <span style="width:16px;height:16px;border-radius:999px;background:#0084FF;border:3px solid #fff;box-shadow:0 2px 6px rgba(15,23,42,.28)"></span>
+          </div>`,
+          iconSize: [0, 0],
+          iconAnchor: [0, 0],
+        }),
       }).addTo(group);
     }
 
@@ -218,7 +246,7 @@ export const StreetMap = forwardRef<StreetMapHandle, {
       marker.on('click', () => onSelectRef.current(member.id));
       marker.addTo(group);
     }
-  }, [home, members, ready, selectedId, trail, trailColor]);
+  }, [home, members, playback, ready, selectedId, trail, trailColor]);
 
   const missingKey = !key;
 
