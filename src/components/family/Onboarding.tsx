@@ -3,6 +3,8 @@ import { Bell, BatteryCharging, ChevronLeft, Footprints, MapPin, Shield, UserRou
 import { localProfile } from '../../lib/localProfile.mjs';
 import { KEEP_PERMISSION_ASKED_KEY, markSessionFlag } from '../../lib/systemSettings.mjs';
 import { askAlwaysLocation, askBattery, askMotion, askNotifications, askWhileUsing } from '../../services/systemPermissions';
+import { umapLocationNative } from '../../services/umapLocation';
+import { AlwaysAllowGuide } from './AlwaysAllowGuide';
 import { REQUIRED_TERMS, type AppMode, type PermissionState, type Profile } from '../../types/family';
 import { useFamily } from './session';
 
@@ -344,6 +346,7 @@ function Permissions({
   const [draft, setDraft] = useState<PermissionState>({ ...initial, completed: false });
   const [busy, setBusy] = useState(false);
   const [askedAlways, setAskedAlways] = useState(false);
+  const [alwaysGuide, setAlwaysGuide] = useState(false);
   const [note, setNote] = useState<string | null>(null);
 
   const finish = (next: PermissionState, wantsBackground = false) => {
@@ -357,7 +360,7 @@ function Permissions({
   };
 
   return (
-    <div className="flex h-full flex-col bg-[#eef3f8]">
+    <div className="relative flex h-full flex-col bg-[#eef3f8]">
       <div className="flex items-center justify-between px-3 pt-3">
         <button type="button" onClick={onBack} className="p-2 text-slate-500" aria-label="이전">
           <ChevronLeft className="h-5 w-5" />
@@ -432,7 +435,10 @@ function Permissions({
               onClick={() => setDraft({ ...draft, accuracy: 'approximate' })}
             />
           </div>
-          <p className="mt-3 text-center text-xs leading-5 text-slate-500">
+          <p className="mt-3 text-center text-sm font-semibold leading-6 text-slate-600">
+            항상 허용을 누르면 방법을 먼저 보여 줍니다. 그다음 위치 권한 화면에서 직접 고릅니다.
+          </p>
+          <p className="mt-2 text-center text-xs leading-5 text-slate-500">
             {draft.notifications === 'granted'
               ? '알림을 허용했습니다. 항상 허용을 고른 뒤 지도에서 위치 유지를 켭니다. 알림 목록에 Umap 카드는 나오지 않습니다.'
               : draft.notifications === 'denied'
@@ -457,20 +463,9 @@ function Permissions({
             <TextButton
               disabled={busy}
               label="항상 허용"
-              onClick={async () => {
+              onClick={() => {
                 setAskedAlways(true);
-                setBusy(true);
-                const result = await askAlwaysLocation(draft.accuracy === 'precise');
-                setBusy(false);
-                if (result.location === 'unavailable') {
-                  setNote(result.note);
-                  return;
-                }
-                setNote(result.note);
-                const locationMode = result.location === 'always' ? 'always' as const : result.location === 'while-using' ? 'while-using' as const : 'denied' as const;
-                const next = { ...draft, locationMode };
-                setDraft(next);
-                setStep('motion');
+                setAlwaysGuide(true);
               }}
             />
             <TextButton
@@ -484,6 +479,38 @@ function Permissions({
             />
           </div>
         </div>
+      )}
+
+      {alwaysGuide && (
+        <AlwaysAllowGuide
+          native={umapLocationNative()}
+          busy={busy}
+          note={note}
+          onClose={() => setAlwaysGuide(false)}
+          onBattery={() => {
+            setBusy(true);
+            void askBattery().then((result) => {
+              setBusy(false);
+              setNote(result.note);
+            });
+          }}
+          onOpenSettings={() => {
+            setBusy(true);
+            void askAlwaysLocation(draft.accuracy === 'precise').then((result) => {
+              setBusy(false);
+              setAlwaysGuide(false);
+              if (result.location === 'unavailable') {
+                setNote(result.note);
+                return;
+              }
+              setNote(result.note);
+              const locationMode = result.location === 'always' ? 'always' as const : result.location === 'while-using' ? 'while-using' as const : 'denied' as const;
+              const next = { ...draft, locationMode };
+              setDraft(next);
+              setStep('motion');
+            });
+          }}
+        />
       )}
 
       {step === 'motion' && (

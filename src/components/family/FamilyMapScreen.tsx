@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Bell, ChevronLeft, ChevronRight, Copy, Home, LocateFixed, MapPin, Menu, Plus, Route, Settings, UserPlus, X } from 'lucide-react';
 import { looksLikePhone, localProfile } from '../../lib/localProfile.mjs';
 import { buildInviteLink, formatClock, hasLocation, haversineMeters, shouldAlertLeave } from '../../lib/geo';
-import { KEEP_PERMISSION_ASKED_KEY, KEEP_START_ASKED_KEY, keepEntryPrompt, markSessionFlag, readSessionFlag } from '../../lib/systemSettings.mjs';
+import { ALWAYS_GUIDE_DISMISSED_KEY, KEEP_PERMISSION_ASKED_KEY, KEEP_START_ASKED_KEY, keepEntryPrompt, markSessionFlag, readSessionFlag } from '../../lib/systemSettings.mjs';
 import { collapseDuplicateJourneys, displayCoordinate, historyDayKeys, historyDayLabel, liveTrailPoints, previewOpenJourney, seoulDayEndMs, seoulDayKey, visibleTrail } from '../../lib/tracking.mjs';
 import { ackFamilyAlert, isFamilyAlertAcked, publishFamilyAlert, readFamilyAlert, subscribeFamilyAlerts, type FamilyAlert } from '../../services/familyAlert';
 import { readSharedPlaces, subscribeSharedPlaces } from '../../services/familyShare';
@@ -10,6 +10,7 @@ import { currentSyncPhase, familySyncConfigured, familySyncUrl, fetchMyDirectThr
 import { umapLocation, umapLocationNative } from '../../services/umapLocation';
 import { sounds } from '../../utils/audio';
 import { DEFAULT_CENTER, type GuardianLink, type HomeZone, type Member } from '../../types/family';
+import { AlwaysAllowGuide, AlwaysAllowMapHint } from './AlwaysAllowGuide';
 import { AlwaysAllowNotice } from './AlwaysAllowNotice';
 import { InviteQrImage, InviteQrScan } from './InviteQr';
 import { StreetMap, type StreetMapHandle } from './StreetMap';
@@ -67,6 +68,9 @@ export function FamilyMapScreen() {
   const [playing, setPlaying] = useState(false);
   const [dm, setDm] = useState<DirectChatTarget | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [alwaysGuide, setAlwaysGuide] = useState(false);
+  const [guideBusy, setGuideBusy] = useState(false);
+  const [guideHintHidden, setGuideHintHidden] = useState(() => readSessionFlag(ALWAYS_GUIDE_DISMISSED_KEY));
   const [profileOpen, setProfileOpen] = useState(false);
   const [recordId, setRecordId] = useState<string | null>(null);
   const [managedSettings, setManagedSettings] = useState(false);
@@ -460,7 +464,24 @@ export function FamilyMapScreen() {
     setDm(null);
     if (hasLocation(member)) mapRef.current?.panTo(member.lat, member.lng);
   };
+  const openLocationSettings = () => {
+    setGuideBusy(true);
+    void askAlwaysLocation(state.permissions.accuracy === 'precise').then((result) => {
+      setGuideBusy(false);
+      setSettingsNote(result.note);
+      if (result.location === 'always' || result.location === 'while-using' || result.location === 'denied') {
+        family.finishPermissions({ ...state.permissions, locationMode: result.location, completed: true });
+      }
+    });
+  };
+  const openBatterySettings = () => {
+    void askBattery().then((result) => setSettingsNote(result.note));
+  };
   useEffect(() => consumeAndroidBack(() => {
+    if (alwaysGuide) {
+      setAlwaysGuide(false);
+      return true;
+    }
     if (confirm) {
       setConfirm(null);
       return true;
@@ -516,7 +537,7 @@ export function FamilyMapScreen() {
       return true;
     }
     return false;
-  }), [adminSettings, alertsOpen, confirm, dayPicker, detailId, dm, keepPrompt, managedSettings, menuOpen, placingHome, profileOpen, recordId, sheet]);
+  }), [adminSettings, alertsOpen, alwaysGuide, confirm, dayPicker, detailId, dm, keepPrompt, managedSettings, menuOpen, placingHome, profileOpen, recordId, sheet]);
   const people = state.mode === 'managed'
     ? state.members.filter((member) => member.id === 'self' || member.role === 'admin-share')
     : state.members.filter((member) => member.role !== 'guardian' && member.role !== 'admin-share');
@@ -576,6 +597,15 @@ export function FamilyMapScreen() {
             </div>
           )}
 
+          {state.permissions.locationMode !== 'always' && !guideHintHidden && !placingHome && (
+            <AlwaysAllowMapHint
+              onOpen={() => setAlwaysGuide(true)}
+              onDismiss={() => {
+                markSessionFlag(ALWAYS_GUIDE_DISMISSED_KEY);
+                setGuideHintHidden(true);
+              }}
+            />
+          )}
           <div className="absolute right-3 top-3 z-30 flex flex-col gap-2">
             <RoundButton label="안심존 표시" onClick={() => setShowZone((value) => !value)}>
               <Home className={`h-5 w-5 ${showZone ? 'text-[#0084FF]' : 'text-slate-400'}`} />
@@ -938,6 +968,7 @@ export function FamilyMapScreen() {
               setSheet('accept');
             }}
             onSettings={() => setManagedSettings(true)}
+            onAlwaysGuide={() => setAlwaysGuide(true)}
             onToggleShare={(link) => family.setGuardianShare(link.code, link.share === 'allowed' ? 'revoked' : 'allowed')}
           />
         ) : (
@@ -960,6 +991,7 @@ export function FamilyMapScreen() {
               setAlertsOpen(true);
             }}
             onSettings={() => setAdminSettings(true)}
+            onAlwaysGuide={() => setAlwaysGuide(true)}
             onToggleShare={() => family.setShareSelf(!state.shareSelfWithFamily)}
           />
         ))}
@@ -980,20 +1012,13 @@ export function FamilyMapScreen() {
             <p className="text-sm leading-6 text-slate-500">위치는 초대를 수락하고 공유를 허용한 뒤에만 나갑니다. 위치 유지를 켠 뒤에는 이 화면에서 끄지 않습니다.</p>
             <button
               type="button"
-              onClick={() => {
-                void askAlwaysLocation(state.permissions.accuracy === 'precise').then((result) => {
-                  setSettingsNote(result.note);
-                  if (result.location === 'always' || result.location === 'while-using' || result.location === 'denied') {
-                    family.finishPermissions({ ...state.permissions, locationMode: result.location, completed: true });
-                  }
-                });
-              }}
+              onClick={() => setAlwaysGuide(true)}
               className="mt-4 w-full rounded-full bg-slate-100 py-3 text-sm font-bold"
             >
               {tracking.native ? '항상 허용' : '위치 허용'}
             </button>
             {tracking.native && (
-              <button type="button" onClick={() => { void askBattery().then((result) => setSettingsNote(result.note)); }} className="mt-2 w-full rounded-full bg-slate-100 py-3 text-sm font-bold">
+              <button type="button" onClick={openBatterySettings} className="mt-2 w-full rounded-full bg-slate-100 py-3 text-sm font-bold">
                 배터리 제한 없음
               </button>
             )}
@@ -1053,17 +1078,8 @@ export function FamilyMapScreen() {
                 keepAlive={state.backgroundKeepAlive}
                 native={tracking.native}
                 note={settingsNote}
-                onOpenSettings={() => {
-                  void askAlwaysLocation(state.permissions.accuracy === 'precise').then((result) => {
-                    setSettingsNote(result.note);
-                    if (result.location === 'always' || result.location === 'while-using' || result.location === 'denied') {
-                      family.finishPermissions({ ...state.permissions, locationMode: result.location, completed: true });
-                    }
-                  });
-                }}
-                onBattery={() => {
-                  void askBattery().then((result) => setSettingsNote(result.note));
-                }}
+                onShowGuide={() => setAlwaysGuide(true)}
+                onBattery={openBatterySettings}
                 onStart={() => {
                   void (async () => {
                     const notifications = await askNotifications();
@@ -1091,7 +1107,7 @@ export function FamilyMapScreen() {
               가족 위치와 배터리는 초대 동기화 키로 위치 서버에 올라가고, 관리자 폰이 그 서버에서 받아 지도에 표시합니다. 예시 좌표나 하드코딩된 팝업이 아닙니다. 알림을 허용하면 앱을 닫아도 SOS가 푸시로 옵니다. 전화번호로는 위치를 찾지 않습니다.
             </p>
             <p className="mt-3 text-xs leading-5 text-slate-400">
-              항상 허용을 누르면 이 앱의 위치 권한 화면이 바로 열립니다. 배터리 제한 없음을 누르면 시스템 팝업이 바로 열립니다. Umap은 그 스위치를 대신 바꾸지 않습니다. 위치 유지는 사용자가 켠 뒤에만 백그라운드에서 보냅니다. 걷는 동안만 촘촘히 받고, 머물면 2분·5분으로 줄입니다. 알림 목록에 Umap 카드는 나오지 않습니다.
+              항상 허용을 누르면 방법을 먼저 보여 줍니다. 위치 권한 열기를 누르면 이 앱의 위치 권한 화면이 열립니다. 배터리 제한 없음을 누르면 시스템 팝업이 바로 열립니다. Umap은 그 스위치를 대신 바꾸지 않습니다. 위치 유지는 사용자가 켠 뒤에만 백그라운드에서 보냅니다. 걷는 동안만 촘촘히 받고, 머물면 2분·5분으로 줄입니다. 알림 목록에 Umap 카드는 나오지 않습니다.
             </p>
             <div className="mt-4 space-y-2">
               <button type="button" onClick={family.reopenMode} className="w-full rounded-full bg-slate-100 py-3 text-sm font-bold">
@@ -1126,6 +1142,16 @@ export function FamilyMapScreen() {
               else family.leaveGuardian(confirm.id);
               setConfirm(null);
             }}
+          />
+        )}
+        {alwaysGuide && (
+          <AlwaysAllowGuide
+            native={tracking.native}
+            busy={guideBusy}
+            note={settingsNote}
+            onOpenSettings={openLocationSettings}
+            onBattery={openBatterySettings}
+            onClose={() => setAlwaysGuide(false)}
           />
         )}
       </div>
@@ -1218,6 +1244,7 @@ function ManagedMenu({
   onAlerts,
   onInvite,
   onSettings,
+  onAlwaysGuide,
   onToggleShare,
 }: {
   name: string;
@@ -1231,6 +1258,7 @@ function ManagedMenu({
   onAlerts: () => void;
   onInvite: () => void;
   onSettings: () => void;
+  onAlwaysGuide: () => void;
   onToggleShare: (link: GuardianLink) => void;
 }) {
   return (
@@ -1255,6 +1283,7 @@ function ManagedMenu({
           <MenuRow icon={<Home className="h-4 w-4" />} label="우리 집 설정" hint={home ? `${home.label || '우리 집'} · 반경 ${home.radiusM}m` : '지도에서 집 위치를 정합니다'} onClick={onHome} />
           <MenuRow icon={<Bell className="h-4 w-4" />} label="알림" hint={alertHint} onClick={onAlerts} />
           <MenuRow icon={<UserPlus className="h-4 w-4" />} label="초대 수락" hint="관리자에게 받은 코드" onClick={onInvite} />
+          <MenuRow icon={<MapPin className="h-4 w-4" />} label="항상 허용 방법" hint="앱을 닫아도 위치를 보내기" onClick={onAlwaysGuide} />
         </div>
         {guardians.length > 0 && (
           <div className="mt-4 overflow-hidden rounded-2xl bg-white shadow-sm">
@@ -1299,6 +1328,7 @@ function AdminMenu({
   onHome,
   onAlerts,
   onSettings,
+  onAlwaysGuide,
   onToggleShare,
 }: {
   name: string;
@@ -1312,6 +1342,7 @@ function AdminMenu({
   onHome: () => void;
   onAlerts: () => void;
   onSettings: () => void;
+  onAlwaysGuide: () => void;
   onToggleShare: () => void;
 }) {
   return (
@@ -1335,6 +1366,7 @@ function AdminMenu({
         <div className="mt-4 overflow-hidden rounded-2xl bg-white shadow-sm">
           <MenuRow icon={<Home className="h-4 w-4" />} label="우리 집 설정" hint={home ? `${home.label || '우리 집'} · 반경 ${home.radiusM}m` : '지도에서 집 위치를 정합니다'} onClick={onHome} />
           <MenuRow icon={<Bell className="h-4 w-4" />} label="알림" hint={alertHint} onClick={onAlerts} />
+          <MenuRow icon={<MapPin className="h-4 w-4" />} label="항상 허용 방법" hint="앱을 닫아도 위치를 보내기" onClick={onAlwaysGuide} />
         </div>
         <div className="mt-4 overflow-hidden rounded-2xl bg-white shadow-sm">
           <button type="button" onClick={onToggleShare} className="flex w-full items-center gap-3 px-4 py-3.5 text-left">

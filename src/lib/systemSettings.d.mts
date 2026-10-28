@@ -11,6 +11,7 @@ export const BATTERY_POPUP_ACTION: string;
 export function alwaysAllowScreens(): Array<'location-radio' | 'app-permissions' | 'app-details'>;
 export const KEEP_PERMISSION_ASKED_KEY: string;
 export const KEEP_START_ASKED_KEY: string;
+export const ALWAYS_GUIDE_DISMISSED_KEY: string;
 export function readSessionFlag(key: string): boolean;
 export function markSessionFlag(key: string): void;
 export function keepEntryPrompt(input: {
