@@ -55,23 +55,38 @@ export const TRAIL_STILL_CONFIRM_M = 80;
  */
 export const TRAIL_RELOCATION_M = 120;
 /**
- * Display simplify only drops wobble of a few meters.
- * A block corner and a gentle street bend sit outside it, so the line is not one chord.
+ * Display simplify only drops wobble under this many meters.
+ * It does not grow with the accuracy bubble. At ±11–19m the old 0.45× accuracy
+ * epsilon reached ~7m and turned a walked bend into one chord.
  */
-const TRAIL_SIMPLIFY_MIN_M = 4;
-const TRAIL_SIMPLIFY_MAX_M = 7;
-/** A drawn segment longer than this gets a walked midpoint back so it cannot collapse to a chord. */
-const TRAIL_CHORD_BREAK_M = 75;
-/** While traveling, keep a vertex about this often. Shorter steps are sensor noise. */
-const TRAIL_WALK_VERTEX_M = 8;
-/** Reported-still step that is a calm walk, not a courtyard hop. */
-const TRAIL_STILL_STEP_M = 14;
-const TRAIL_STILL_STEP_MS = 8_000;
+const TRAIL_SIMPLIFY_M = 1.8;
+/** A drawn segment longer than this gets a walked sample back when it still bows off the chord. */
+const TRAIL_CHORD_BREAK_M = 32;
+/**
+ * While moving, keep a vertex about this often.
+ * GPS while moving is 5s. At 1.0–1.4 m/s that fix is about 5–7m, so a 4m
+ * gate keeps the sample. The old 8m gate skipped it and the bend became a chord.
+ */
+const TRAIL_WALK_VERTEX_M = 4;
+/** Reported-still step that is a calm walk, not a courtyard hop inside the accuracy bubble. */
+const TRAIL_STILL_STEP_M = 22;
+const TRAIL_STILL_STEP_MS = 12_000;
+const TRAIL_STILL_PACE_MIN_MPS = 0.85;
+const TRAIL_STILL_PACE_MAX_MPS = 2.4;
 /** A vertex this far off the shortcut, on a thin triangle, is courtyard multipath. */
-const TRAIL_SPUR_DEVIATION_M = 32;
+const TRAIL_SPUR_DEVIATION_M = 16;
+const TRAIL_SPUR_MIN_LEG_M = 16;
 const TRAIL_SPUR_RATIO = 1.62;
 const TRAIL_SPUR_MAX_LEG_M = 260;
 const TRAIL_SPUR_WINDOW_MS = 180_000;
+/**
+ * A dashed segment is a hole in the samples, not "the older part of the line".
+ * Continuous walk vertices are a few meters apart and stay solid.
+ * A chord this long, with time enough to have sampled the middle, is drawn dashed.
+ * Nothing is invented along that chord.
+ */
+export const TRAIL_GAP_M = 48;
+export const TRAIL_GAP_MS = 20_000;
 
 const MODE_LABELS = {
   walk: '도보',
@@ -150,7 +165,7 @@ function spikeDeviation(prev, tip, next) {
   const ab = haversineMeters(prev, tip);
   const bc = haversineMeters(tip, next);
   const ac = haversineMeters(prev, next);
-  if (ab < 18 || bc < 18 || Math.max(ab, bc) > TRAIL_SPUR_MAX_LEG_M) return 0;
+  if (ab < TRAIL_SPUR_MIN_LEG_M || bc < TRAIL_SPUR_MIN_LEG_M || Math.max(ab, bc) > TRAIL_SPUR_MAX_LEG_M) return 0;
   if (Math.abs(signedTurnDeg(prev, tip, next)) < 70) return 0;
   const dt = Number.isFinite(next.at) && Number.isFinite(prev.at) ? next.at - prev.at : 0;
   if (!Number.isFinite(dt) || dt < 0 || dt > TRAIL_SPUR_WINDOW_MS) return 0;
@@ -194,15 +209,8 @@ function removeMultipathSpurs(points) {
   });
 }
 
-function displaySimplifyMeters(points) {
-  const samples = [];
-  for (const point of points) {
-    const accuracy = positiveMeters(point?.accuracyM);
-    if (accuracy > 0) samples.push(accuracy);
-  }
-  samples.sort((left, right) => left - right);
-  const median = samples.length ? samples[Math.floor((samples.length - 1) / 2)] : TRAIL_SIMPLIFY_MIN_M;
-  return Math.min(TRAIL_SIMPLIFY_MAX_M, Math.max(TRAIL_SIMPLIFY_MIN_M, median * 0.45));
+function displaySimplifyMeters() {
+  return TRAIL_SIMPLIFY_M;
 }
 
 function douglasPeucker(points, epsilon) {
@@ -249,11 +257,20 @@ function stillSample(point) {
   return point?.staying === true || (speed != null && speed < TRAIL_STAY_SPEED_MPS);
 }
 
-/** Stay bubble while the speed says still. While moving, keep a vertex every few meters of a walk. */
+/**
+ * Meters the next sample must clear before it is a new vertex.
+ * Moving, or a stay flag that still has a walking GPS speed: a fixed 4m.
+ * Accuracy must not widen this, or a ±19m fix skips the bend.
+ * Still, with no walking speed: about 2× accuracy (26–44m) so courtyard
+ * multipath inside the bubble is not a vertex.
+ */
 export function trailMoveGate(last, point) {
+  const walkingSpeed = speedShowsMoving(point);
+  if (walkingSpeed && point?.staying !== true) return TRAIL_WALK_VERTEX_M;
+  if (!stillSample(point) && point?.staying !== true) return TRAIL_WALK_VERTEX_M;
+  if (point?.staying === true && walkingSpeed) return TRAIL_WALK_VERTEX_M;
   const accuracy = Math.max(positiveMeters(point?.accuracyM), positiveMeters(last?.accuracyM));
-  if (speedShowsMoving(point)) return Math.max(TRAIL_WALK_VERTEX_M, Math.min(12, accuracy > 0 ? accuracy * 0.55 : TRAIL_WALK_VERTEX_M));
-  return Math.max(TRAIL_WALK_VERTEX_M, Math.min(14, accuracy > 0 ? accuracy * 0.65 : 10));
+  return Math.max(26, Math.min(44, accuracy > 0 ? accuracy * 2.05 : 32));
 }
 
 /**
@@ -271,20 +288,27 @@ export function trailDecision(last, point) {
   const dt = point.at - last.at;
   if (!Number.isFinite(moved) || !Number.isFinite(dt) || dt < 0) return 'drop';
   if (moved === 0 && dt === 0) return 'drop';
-  if (moved <= trailMoveGate(last, point)) return 'snap';
   const implied = dt > 0 ? moved / (dt / 1000) : Infinity;
   if (implied > FIX_MAX_JUMP_MPS) return 'drop';
-  // Speed is missing on many walking fixes. Keep a calm step. A fast hop under a neighborhood
-  // move is courtyard multipath: the trail snaps, and the live pin still follows past the stay bubble.
-  if (stillSample(point) && moved <= TRAIL_RELOCATION_M) {
+  if (moved <= trailMoveGate(last, point)) return 'snap';
+  // A stay flag with a walking GPS speed still keeps 4m vertices.
+  // A fast hop inside the bubble is multipath that borrowed a speed reading.
+  // The live pin is not decided here: liveCoordinate follows anything outside staySnapGate.
+  if (point?.staying === true && speedShowsMoving(point) && moved <= staySnapGate(last, point)) {
+    const walkLike = implied >= 0.75 && implied <= 2.8 && dt >= 2_000;
+    if (!walkLike) return 'snap';
+  }
+  // Speed is missing on many walking fixes. Keep a calm step past the jitter gate.
+  // A fast hop under a neighborhood move snaps. The pin still follows past the stay bubble.
+  if (stillSample(point) && point?.staying === true && moved <= TRAIL_RELOCATION_M) {
     const bubble = staySnapGate(last, point);
+    const paced = implied >= TRAIL_STILL_PACE_MIN_MPS && implied <= TRAIL_STILL_PACE_MAX_MPS && moved >= TRAIL_STILL_STEP_M && dt >= TRAIL_STILL_STEP_MS;
     if (moved <= bubble) {
-      const calmWalk = implied >= 0.85 && implied <= 2 && moved >= TRAIL_STILL_STEP_M && dt >= TRAIL_STILL_STEP_MS;
-      if (!calmWalk) return 'snap';
-    } else {
-      const paced = implied >= 0.6 && implied <= 3.2 && moved >= TRAIL_STILL_STEP_M && dt >= 12_000;
       if (!paced) return 'snap';
-    }
+    } else if (!paced) return 'snap';
+  } else if (stillSample(point) && moved <= TRAIL_RELOCATION_M) {
+    const paced = implied >= 0.7 && implied <= TRAIL_STILL_PACE_MAX_MPS && moved >= TRAIL_STILL_STEP_M && dt >= TRAIL_STILL_STEP_MS;
+    if (!paced) return 'snap';
   }
   return 'keep';
 }
@@ -331,6 +355,48 @@ function drawnAnchor(points) {
   return null;
 }
 
+function previousVertex(points) {
+  if (!Array.isArray(points)) return null;
+  let seen = 0;
+  for (let index = points.length - 1; index >= 0; index -= 1) {
+    const point = points[index];
+    if (!point || point.stayEnd) continue;
+    seen += 1;
+    if (seen === 2) return point;
+  }
+  return null;
+}
+
+/** The newest vertex was a there-and-back spike once this sample is known. */
+function trailingSpur(points, point) {
+  const tip = drawnAnchor(points);
+  const prev = previousVertex(points);
+  if (!tip || !prev || !point || tip === point) return false;
+  if (spikeDeviation(prev, tip, point) > 0) return true;
+  if (speedShowsMoving(point) && point.staying !== true) return false;
+  if (!stillSample(point) && point.staying !== true) return false;
+  const turn = Math.abs(signedTurnDeg(prev, tip, point));
+  if (!Number.isFinite(turn) || turn < 120) return false;
+  if (haversineMeters(tip, point) > staySnapGate(tip, point)) return false;
+  return haversineMeters(prev, point) + 8 < haversineMeters(prev, tip);
+}
+
+function withoutVertex(points, vertex) {
+  const next = points.filter((point) => point !== vertex);
+  const anchors = next.filter((point) => point && !point.stayEnd);
+  return next.filter((point) => {
+    if (!point?.stayEnd) return true;
+    return anchors.some((anchor) => haversineMeters(anchor, point) <= 20);
+  });
+}
+
+function rememberStay(kept, anchor, point) {
+  if (!anchor || point.at - anchor.at < STOP_MIN_MS) return;
+  const last = kept[kept.length - 1];
+  if (last && last.stayEnd) kept[kept.length - 1] = { ...last, at: point.at, accuracyM: point.accuracyM ?? last.accuracyM };
+  else kept.push({ lat: anchor.lat, lng: anchor.lng, at: point.at, speedMps: 0, accuracyM: point.accuracyM, stayEnd: true });
+}
+
 /** Drop stay jitter and multipath spurs. A long stay keeps one extra timestamp at the same coordinate. */
 export function collapseStayTrail(points) {
   if (!Array.isArray(points) || points.length === 0) return [];
@@ -341,7 +407,7 @@ export function collapseStayTrail(points) {
       changed = true;
       continue;
     }
-    const anchor = drawnAnchor(kept);
+    let anchor = drawnAnchor(kept);
     if (!anchor) {
       if (point.stayEnd) {
         changed = true;
@@ -350,14 +416,22 @@ export function collapseStayTrail(points) {
       kept.push(point);
       continue;
     }
+    if (trailingSpur(kept, point)) {
+      const stripped = withoutVertex(kept, anchor);
+      kept.length = 0;
+      kept.push(...stripped);
+      changed = true;
+      anchor = drawnAnchor(kept);
+      if (!anchor) {
+        if (!point.stayEnd) kept.push(point);
+        else changed = true;
+        continue;
+      }
+    }
     const decision = trailDecision(anchor, point);
     if (decision === 'drop' || decision === 'snap') {
       changed = true;
-      if (decision === 'snap' && point.at - anchor.at >= STOP_MIN_MS) {
-        const last = kept[kept.length - 1];
-        if (last && last.stayEnd) kept[kept.length - 1] = { ...last, at: point.at, accuracyM: point.accuracyM ?? last.accuracyM };
-        else kept.push({ lat: anchor.lat, lng: anchor.lng, at: point.at, speedMps: 0, accuracyM: point.accuracyM, stayEnd: true });
-      }
+      if (decision === 'snap') rememberStay(kept, anchor, point);
       continue;
     }
     if (point.stayEnd) {
@@ -382,14 +456,13 @@ function restoreWalkVertices(source, simplified) {
     const startAt = source.indexOf(start);
     const endAt = source.indexOf(end);
     if (startAt >= 0 && endAt > startAt + 1 && haversineMeters(start, end) >= TRAIL_CHORD_BREAK_M) {
-      const midAt = startAt + Math.floor((endAt - startAt) / 2);
-      let best = source[midAt];
-      let bestDev = best ? perpendicularDistanceM(best, start, end) : 0;
+      let best = null;
+      let bestDev = TRAIL_SIMPLIFY_M;
       for (let cursor = startAt + 1; cursor < endAt; cursor += 1) {
         const candidate = source[cursor];
         if (!candidate) continue;
         const deviation = perpendicularDistanceM(candidate, start, end);
-        if (deviation > bestDev + 1) {
+        if (deviation > bestDev) {
           bestDev = deviation;
           best = candidate;
         }
@@ -401,20 +474,83 @@ function restoreWalkVertices(source, simplified) {
   return output;
 }
 
-/** Pull only a shallow GPS wobble toward its neighbors. A street corner stays put. */
+/** Pull only a sub-meter wobble on an almost straight step. A bend of a few meters stays put. */
 function smoothShallowBends(points) {
   if (!Array.isArray(points) || points.length < 3) return points;
   const next = points.map((point) => ({ ...point }));
   for (let index = 1; index < points.length - 1; index += 1) {
     const turn = Math.abs(signedTurnDeg(points[index - 1], points[index], points[index + 1]));
-    if (!Number.isFinite(turn) || turn >= 50) continue;
+    const deviation = perpendicularDistanceM(points[index], points[index - 1], points[index + 1]);
+    if (!Number.isFinite(turn) || turn >= 15 || deviation >= 2) continue;
     next[index] = {
       ...points[index],
-      lat: points[index].lat * 0.8 + (points[index - 1].lat + points[index + 1].lat) * 0.1,
-      lng: points[index].lng * 0.8 + (points[index - 1].lng + points[index + 1].lng) * 0.1,
+      lat: points[index].lat * 0.9 + (points[index - 1].lat + points[index + 1].lat) * 0.05,
+      lng: points[index].lng * 0.9 + (points[index - 1].lng + points[index + 1].lng) * 0.05,
     };
   }
   return next;
+}
+
+function sampledTrail(points) {
+  const collapsed = collapseStayTrail(points);
+  const drawn = [];
+  for (const point of collapsed) {
+    if (!point || point.stayEnd) continue;
+    const prev = drawn[drawn.length - 1];
+    if (prev && haversineMeters(prev, point) < 3) continue;
+    drawn.push(point);
+  }
+  return drawn;
+}
+
+function simplifyDrawn(drawn) {
+  if (!Array.isArray(drawn) || drawn.length < 3) return drawn;
+  const simplified = douglasPeucker(drawn, displaySimplifyMeters());
+  return smoothShallowBends(restoreWalkVertices(drawn, simplified));
+}
+
+/**
+ * True when the straight segment between two kept samples is a hole, not a walked step.
+ * Continuous vertices are a few meters apart and are not dashed.
+ * A long chord with time enough to have sampled the middle is dashed as-is.
+ */
+export function trailSegmentDashed(start, end) {
+  if (!start || !end) return false;
+  const moved = haversineMeters(start, end);
+  if (!Number.isFinite(moved) || moved < TRAIL_GAP_M) return false;
+  const dt = Number(end.at) - Number(start.at);
+  return !Number.isFinite(dt) || dt >= TRAIL_GAP_MS;
+}
+
+/**
+ * Solid runs are sampled walks, simplified only under TRAIL_SIMPLIFY_M.
+ * A dashed part is the raw chord across a sample hole. No road geometry is added.
+ */
+export function trailDrawParts(points) {
+  const sampled = sampledTrail(points);
+  if (sampled.length < 2) return [{ points: sampled, dashed: false }];
+  const parts = [];
+  let run = [sampled[0]];
+  const flushRun = () => {
+    if (run.length >= 2) parts.push({ points: simplifyDrawn(run), dashed: false });
+    run = [];
+  };
+  for (let index = 1; index < sampled.length; index += 1) {
+    const prev = sampled[index - 1];
+    const next = sampled[index];
+    if (trailSegmentDashed(prev, next)) {
+      flushRun();
+      parts.push({ points: [prev, next], dashed: true });
+      run = [next];
+    } else if (run.length === 0) {
+      run = [next];
+    } else {
+      run.push(next);
+    }
+  }
+  flushRun();
+  if (parts.length === 0) return [{ points: sampled, dashed: false }];
+  return parts;
 }
 
 /**
@@ -423,17 +559,7 @@ function smoothShallowBends(points) {
  * Walking corners stay. Douglas–Peucker runs only here so stored history can still rebuild a bend.
  */
 export function visibleTrail(points) {
-  const collapsed = collapseStayTrail(points);
-  const drawn = [];
-  for (const point of collapsed) {
-    if (!point || point.stayEnd) continue;
-    const prev = drawn[drawn.length - 1];
-    if (prev && haversineMeters(prev, point) < 5) continue;
-    drawn.push(point);
-  }
-  if (drawn.length < 3) return drawn;
-  const simplified = douglasPeucker(drawn, displaySimplifyMeters(drawn));
-  return smoothShallowBends(restoreWalkVertices(drawn, simplified));
+  return simplifyDrawn(sampledTrail(points));
 }
 
 /** Relative age of the last fix, so a row can say whether the pin is live. */
@@ -589,7 +715,11 @@ export function trimMemberPoints(points, now) {
 
 export function appendHistoryPoint(points, point, now) {
   const anchorNow = Number.isFinite(now) ? now : point?.at;
-  const base = collapseStayTrail(Array.isArray(points) ? points : []);
+  let base = collapseStayTrail(Array.isArray(points) ? points : []);
+  if (point && trailingSpur(base, point)) {
+    const tip = drawnAnchor(base);
+    if (tip) base = withoutVertex(base, tip);
+  }
   const anchor = drawnAnchor(base);
   const decision = trailDecision(anchor, point);
   if (decision === 'drop' || !point || !Number.isFinite(point.at)) {

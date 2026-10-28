@@ -21,6 +21,8 @@ import {
   trailDecision,
   formatFixAge,
   visibleTrail,
+  trailDrawParts,
+  trailSegmentDashed,
 } from './tracking.mjs';
 
 test('seoul day rolls at midnight KST, not UTC', () => {
@@ -208,7 +210,8 @@ test('admin, managed, and remote trails drop courtyard spikes and keep a block c
 test('a short step inside the walking gate is not a vertex, and a poor fix is dropped', () => {
   const t = 1_700_000_000_000;
   const origin = { lat: 37.5, lng: 127, at: t, accuracyM: 12, speedMps: 1.2, staying: false };
-  assert.equal(trailDecision(origin, { ...offset(origin, 6, 0, t + 10_000), speedMps: 1.2, staying: false }), 'snap');
+  assert.equal(trailDecision(origin, { ...offset(origin, 3, 0, t + 5_000), speedMps: 1.2, staying: false }), 'snap');
+  assert.equal(trailDecision(origin, { ...offset(origin, 6, 0, t + 5_000), speedMps: 1.2, staying: false, accuracyM: 19 }), 'keep');
   assert.equal(trailDecision(origin, { ...offset(origin, 15, 0, t + 10_000), speedMps: 1.2, staying: false }), 'keep');
   assert.equal(trailDecision(origin, { ...offset(origin, 70, 0, t + 10_000), accuracyM: 55, speedMps: 1.4, staying: false }), 'drop');
   const stayed = settleTrailPoint([origin], { ...origin, at: t + 4 * 60 * 1000 }, t + 4 * 60 * 1000);
@@ -279,7 +282,7 @@ test('a block walk keeps midpoints, stay jitter does not grow, a thin spur drops
   for (let index = 0; index <= 6; index += 1) paced.push(step(index * 18, 0, t + index * 14_000, 1.3, false));
   for (let index = 1; index <= 6; index += 1) paced.push(step(6 * 18, index * 18, t + (6 + index) * 14_000, 1.3, false));
   const pacedDrawn = visibleTrail(paced);
-  assert.ok(pacedDrawn.length >= 4);
+  assert.ok(pacedDrawn.length >= 3, `straight legs stay joined at the corner, got ${pacedDrawn.length}`);
   assert.ok(pacedDrawn.some((point) => northOf(point) > 70 && eastOf(point) < 25));
 
   const jitter = [step(0, 0, t)];
@@ -303,6 +306,78 @@ test('a block walk keeps midpoints, stay jitter does not grow, a thin spur drops
   assert.equal(moved.lat, far.lat);
   assert.equal(moved.lng, far.lng);
   assert.ok(visibleTrail(moved.points).length >= 2);
+});
+
+test('a 5s walk along a bend stays off the straight chord and a continuous run is solid', () => {
+  const t = 1_700_000_000_000;
+  const origin = { lat: 37.6312, lng: 127.0734, at: t, accuracyM: 15, speedMps: 1.2, staying: false };
+  const radius = 40;
+  const arcSteps = 11;
+  const points = [];
+  for (let index = 0; index <= arcSteps; index += 1) {
+    const theta = (Math.PI / 2) * (index / arcSteps);
+    const north = radius * Math.sin(theta);
+    const east = radius * (1 - Math.cos(theta));
+    points.push({
+      ...offset(origin, north, east, t + index * 5_000),
+      accuracyM: 15,
+      speedMps: 1.2,
+      staying: false,
+    });
+  }
+  let recorded = [points[0]];
+  for (const point of points.slice(1)) recorded = settleTrailPoint(recorded, point, point.at).points;
+  const northOf = (point) => (point.lat - origin.lat) * 111_320;
+  const eastOf = (point) => (point.lng - origin.lng) * (111_320 * Math.cos((origin.lat * Math.PI) / 180));
+  const drawn = visibleTrail(recorded);
+  assert.ok(drawn.length >= 4, `bend vertices ${drawn.length}`);
+  assert.ok(drawn.some((point) => {
+    const north = northOf(point);
+    const east = eastOf(point);
+    return north > 18 && east > 5 && north > east + 8;
+  }));
+  const parts = trailDrawParts(recorded);
+  assert.equal(parts.some((part) => part.dashed), false);
+  assert.ok(parts.some((part) => !part.dashed && part.points.length >= 2));
+  assert.equal(trailSegmentDashed(points[0], points[1]), false);
+  const hole = {
+    ...offset(origin, 0, 90, points[points.length - 1].at + 40_000),
+    accuracyM: 15,
+    speedMps: 1.2,
+    staying: false,
+  };
+  const withHole = settleTrailPoint(recorded, hole, hole.at).points;
+  assert.equal(trailDrawParts(withHole).some((part) => part.dashed), true);
+});
+
+test('stay multipath does not zigzag and a fix outside the stay bubble still moves the pin', () => {
+  const t = 1_700_000_000_000;
+  const origin = { lat: 37.631, lng: 127.074, at: t, accuracyM: 16, speedMps: 0, staying: true };
+  const hops = [[0, 0], [22, 16], [-6, 20], [18, -14], [4, 8], [-12, 18]];
+  const points = hops.map(([north, east], index) => ({
+    ...offset(origin, north, east, t + index * 6_000),
+    accuracyM: 16,
+    speedMps: 0,
+    staying: true,
+  }));
+  assert.equal(visibleTrail(points).length, 1);
+  let stayed = [points[0]];
+  for (const point of points.slice(1)) {
+    const settled = settleTrailPoint(stayed, point, point.at);
+    const north = Math.abs((settled.lat - origin.lat) * 111_320);
+    const east = Math.abs((settled.lng - origin.lng) * (111_320 * Math.cos((origin.lat * Math.PI) / 180)));
+    assert.ok(north < 12 && east < 12, `pin drifted ${north.toFixed(1)},${east.toFixed(1)}`);
+    stayed = settled.points;
+  }
+  assert.equal(visibleTrail(stayed).length, 1);
+  const bogus = { ...offset(origin, 30, 10, t + 3_000), accuracyM: 16, speedMps: 1.4, staying: true };
+  assert.equal(trailDecision(origin, bogus), 'snap');
+  assert.equal(liveCoordinate(origin, bogus).lat, origin.lat);
+  const left = { ...offset(origin, 70, 10, t + 8_000), accuracyM: 16, speedMps: 0, staying: true };
+  assert.equal(trailDecision(origin, left), 'snap');
+  const pin = liveCoordinate(origin, left);
+  assert.equal(pin.lat, left.lat);
+  assert.equal(pin.lng, left.lng);
 });
 
 test('fix age says when the pin last updated', () => {
