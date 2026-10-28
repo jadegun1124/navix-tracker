@@ -28,9 +28,14 @@ test('always-allow opens the location radio, then the app permission list, then 
   const intent = plugin.slice(plugin.indexOf('private Intent locationRadioIntent'), plugin.indexOf('private Intent appPermissionsIntent'));
   assert.match(intent, /PERMISSION_GROUP_NAME/);
   assert.match(intent, /EXTRA_APP_PACKAGE/);
+  assert.match(intent, /myUserHandle/);
   assert.equal(intent.includes('ACCESS_FINE_LOCATION'), false);
   assert.match(plugin, /android.permission-group.LOCATION/);
   assert.match(plugin, /ManageAppPermissionActivity/);
+  assert.ok(radio.indexOf('ManagePermissionsActivity') < radio.indexOf('com.google.android.permissioncontroller'));
+  const fallback = plugin.slice(plugin.indexOf('private void advanceFallback'), plugin.indexOf('private Intent locationRadioIntent'));
+  assert.ok(fallback.indexOf('hasWindowFocus') < fallback.indexOf('openAppDetails'));
+  assert.ok(fallback.indexOf('location-radio') < fallback.indexOf('openAppDetails'));
   const resume = plugin.slice(plugin.indexOf('protected void handleOnResume'), plugin.indexOf('public void openBattery'));
   assert.equal(resume.includes('advanceFallback'), false);
   assert.ok(resume.indexOf('scheduleBounceConfirm') < resume.indexOf('resolveAlways'));

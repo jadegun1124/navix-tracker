@@ -24,9 +24,10 @@ export function batteryAction(native) {
 
 // Android UmapLocationPlugin opens these in order. The location screen is
 // ACTION_MANAGE_APP_PERMISSION for android.permission-group.LOCATION
-// (위치 액세스 권한: 항상 허용 radios). Samsung's controller is tried first.
-// If that activity is missing, the app permission list opens, then app info.
-// Battery is the system popup, not the optimization list.
+// (위치 액세스 권한: 항상 허용 radios + 정확한 위치 사용). Samsung's
+// ManagePermissionsActivity is tried first. If that activity is missing, the
+// app permission list opens, then app info. A started location screen is not
+// replaced by APPLICATION_DETAILS_SETTINGS. Battery is the system popup.
 export const LOCATION_PERMISSION_ACTION = 'android.intent.action.MANAGE_APP_PERMISSION';
 export const LOCATION_PERMISSION_GROUP = 'android.permission-group.LOCATION';
 export const LOCATION_PERMISSION_LIST_ACTION = 'android.intent.action.MANAGE_APP_PERMISSIONS';
