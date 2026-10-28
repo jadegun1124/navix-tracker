@@ -10,12 +10,12 @@
 | :--- | :--- | :--- |
 | 회사 홈 | GitHub Pages | https://jadegun1124.github.io/umap/ |
 | 앱 화면 미리보기 | 같은 Pages의 `?app=1` | https://jadegun1124.github.io/umap/?app=1 |
-| 안드로이드 앱 | GitHub Releases APK v1.16.0 | https://github.com/jadegun1124/umap/releases/download/v1.16.0/umap-v1.16.0-tracker.apk |
-| 릴리스 페이지 | GitHub Releases | https://github.com/jadegun1124/umap/releases/tag/v1.16.0 |
+| 안드로이드 앱 | GitHub Releases APK v1.17.0 | https://github.com/jadegun1124/umap/releases/download/v1.17.0/umap-v1.17.0-tracker.apk |
+| 릴리스 페이지 | GitHub Releases | https://github.com/jadegun1124/umap/releases/tag/v1.17.0 |
 
 Google Play, App Store, TestFlight에는 올리지 않았습니다. iOS는 아이콘 에셋만 있고 설치 파일은 없습니다.
 
-`main`에 푸시하면 GitHub Actions가 회사 홈을 Pages에 배포하고, 같은 커밋으로 디버그 APK를 만들어 GitHub Release `v1.16.0`의 `umap-v1.16.0-tracker.apk`를 갱신합니다. 이전 빌드는 `v1.15.0`, `v1.14.0`, `v1.13.0`, `v1.12.0`, `v1.11.0`, `v1.10.0`, `v1.9.0`, `v1.8.0`, `v1.7.0`, `v1.6.0`, `v1.5.0`, `v1.4.0`, `v1.3.0`, `v1.2.0`, `v1.1.0`, `v1.0.0`에 남아 있습니다.
+`main`에 푸시하면 GitHub Actions가 회사 홈을 Pages에 배포하고, 같은 커밋으로 디버그 APK를 만들어 GitHub Release `v1.17.0`의 `umap-v1.17.0-tracker.apk`를 갱신합니다. 이전 빌드는 `v1.16.0`, `v1.15.0`, `v1.14.0`, `v1.13.0`, `v1.12.0`, `v1.11.0`, `v1.10.0`, `v1.9.0`, `v1.8.0`, `v1.7.0`, `v1.6.0`, `v1.5.0`, `v1.4.0`, `v1.3.0`, `v1.2.0`, `v1.1.0`, `v1.0.0`에 남아 있습니다.
 
 ## 화면
 
@@ -38,7 +38,7 @@ Google Play, App Store, TestFlight에는 올리지 않았습니다. iOS는 아�
 
 마이크, 문자, 주변 소리, 원격으로 소리를 울리는 기능은 없습니다. 전화번호만으로 다른 사람을 찾지 않습니다.
 
-항상 허용을 누르면 `ACTION_MANAGE_APP_PERMISSION`과 `android.permission-group.LOCATION`으로 「위치 액세스 권한」 화면을 바로 엽니다. 삼성 권한 컨트롤러를 먼저 고르고, 그 화면이 없으면 앱 권한 목록, 그다음 앱 정보로 갑니다. 번호 안내는 메뉴의 「항상 허용 방법」에 있습니다. 화면의 「항상 허용」을 고르고, 같은 화면의 「정확한 위치 사용」은 직접 켭니다. 「앱 사용 중에만 허용」이나 「항상 확인 또는 공유 시 허용」은 아닙니다. 어떤 폰은 「앱을 사용하지 않을 때도 허용」이라고 나옵니다. 그 화면을 열지 못하면 앱 권한 목록(위치, 알림, 신체 활동)으로 가고, 그것도 막히면 앱 정보로 갑니다. 앱은 OS 스위치를 대신 바꾸지 않습니다. 위치 유지는 사용자가 켠 뒤에만 시작합니다. 백그라운드에서 위치를 보내며, 알림 목록에 Umap 상시 카드는 나오지 않습니다. 배터리 제한 없음을 누르면 `ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` 팝업이 바로 열립니다.
+항상 허용을 누르면 `ACTION_MANAGE_APP_PERMISSION`과 `android.permission-group.LOCATION`으로 「위치 액세스 권한」 화면을 바로 엽니다. 삼성 권한 컨트롤러를 먼저 고르고, 그 화면이 없으면 앱 권한 목록, 그다음 앱 정보로 갑니다. 앱 안 안내는 세 줄입니다. 「항상 허용」 고르기, 「정확한 위치 사용」 켜기, 배터리 제한 없음. 앱은 OS 스위치를 대신 바꾸지 않습니다. 배터리 제한 없음을 누르면 `ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` 팝업이 바로 열립니다.
 
 ### 알림 목록
 
@@ -91,9 +91,9 @@ npm run dev
 
 ## 안드로이드 APK
 
-받는 곳: https://github.com/jadegun1124/umap/releases/download/v1.16.0/umap-v1.16.0-tracker.apk
+받는 곳: https://github.com/jadegun1124/umap/releases/download/v1.17.0/umap-v1.17.0-tracker.apk
 
-`main` 푸시마다 `Build Android APK (Umap)` 워크플로가 웹을 빌드하고 `dist` 를 안드로이드 에셋으로 복사한 뒤 `assembleDebug` 로 APK를 만듭니다. 결과 파일은 GitHub Release `v1.16.0`에 올립니다. 앱 `versionName`은 `1.16.0`, `versionCode`는 17입니다. Play 스토어 트랙은 없습니다.
+`main` 푸시마다 `Build Android APK (Umap)` 워크플로가 웹을 빌드하고 `dist` 를 안드로이드 에셋으로 복사한 뒤 `assembleDebug` 로 APK를 만듭니다. 결과 파일은 GitHub Release `v1.17.0`에 올립니다. 앱 `versionName`은 `1.17.0`, `versionCode`는 18입니다. Play 스토어 트랙은 없습니다.
 
 ## 데이터
 
