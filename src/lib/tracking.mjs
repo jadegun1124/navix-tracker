@@ -54,9 +54,19 @@ export const TRAIL_STILL_CONFIRM_M = 80;
  * neighborhood move such as Hagye to Junggye.
  */
 export const TRAIL_RELOCATION_M = 120;
-/** Drawn wobble inside about one accuracy bubble is removed. Block corners sit outside it. */
-const TRAIL_SIMPLIFY_MIN_M = 12;
-const TRAIL_SIMPLIFY_MAX_M = 22;
+/**
+ * Display simplify only drops wobble of a few meters.
+ * A block corner and a gentle street bend sit outside it, so the line is not one chord.
+ */
+const TRAIL_SIMPLIFY_MIN_M = 4;
+const TRAIL_SIMPLIFY_MAX_M = 7;
+/** A drawn segment longer than this gets a walked midpoint back so it cannot collapse to a chord. */
+const TRAIL_CHORD_BREAK_M = 75;
+/** While traveling, keep a vertex about this often. Shorter steps are sensor noise. */
+const TRAIL_WALK_VERTEX_M = 8;
+/** Reported-still step that is a calm walk, not a courtyard hop. */
+const TRAIL_STILL_STEP_M = 14;
+const TRAIL_STILL_STEP_MS = 8_000;
 /** A vertex this far off the shortcut, on a thin triangle, is courtyard multipath. */
 const TRAIL_SPUR_DEVIATION_M = 32;
 const TRAIL_SPUR_RATIO = 1.62;
@@ -192,7 +202,7 @@ function displaySimplifyMeters(points) {
   }
   samples.sort((left, right) => left - right);
   const median = samples.length ? samples[Math.floor((samples.length - 1) / 2)] : TRAIL_SIMPLIFY_MIN_M;
-  return Math.min(TRAIL_SIMPLIFY_MAX_M, Math.max(TRAIL_SIMPLIFY_MIN_M, median * 1.2));
+  return Math.min(TRAIL_SIMPLIFY_MAX_M, Math.max(TRAIL_SIMPLIFY_MIN_M, median * 0.45));
 }
 
 function douglasPeucker(points, epsilon) {
@@ -221,19 +231,36 @@ function douglasPeucker(points, epsilon) {
   return simplified.length >= 2 ? simplified : points;
 }
 
-/** Stay bubble while still. While moving, ignore steps inside ~1.35× the reported accuracy. */
+function pointSpeed(point) {
+  const speed = point?.speedMps;
+  return typeof speed === 'number' && Number.isFinite(speed) ? speed : null;
+}
+
+/** GPS speed at a walking pace or faster. The motion-sensor stay flag does not override this. */
+function speedShowsMoving(point) {
+  const speed = pointSpeed(point);
+  return speed != null && speed >= TRAIL_STAY_SPEED_MPS;
+}
+
+/** Still phone: stay flag, or a reported speed under a walk, and no GPS pace. */
+function stillSample(point) {
+  if (speedShowsMoving(point)) return false;
+  const speed = pointSpeed(point);
+  return point?.staying === true || (speed != null && speed < TRAIL_STAY_SPEED_MPS);
+}
+
+/** Stay bubble while the speed says still. While moving, keep a vertex every few meters of a walk. */
 export function trailMoveGate(last, point) {
   const accuracy = Math.max(positiveMeters(point?.accuracyM), positiveMeters(last?.accuracyM));
-  const speed = typeof point?.speedMps === 'number' && Number.isFinite(point.speedMps) ? point.speedMps : null;
-  const staying = point?.staying === true || (speed != null && speed < TRAIL_STAY_SPEED_MPS);
-  if (staying) return Math.max(STOP_RADIUS_M, accuracy * 2);
-  return Math.max(12, accuracy * 1.35);
+  if (speedShowsMoving(point)) return Math.max(TRAIL_WALK_VERTEX_M, Math.min(12, accuracy > 0 ? accuracy * 0.55 : TRAIL_WALK_VERTEX_M));
+  return Math.max(TRAIL_WALK_VERTEX_M, Math.min(14, accuracy > 0 ? accuracy * 0.65 : 10));
 }
 
 /**
- * keep: the coordinate is travel, or a relocation past courtyard multipath, and may extend the polyline.
- * snap: inside the stay bubble, or a short still-phone spike. Not a live-pin hold by itself.
+ * keep: the coordinate extends the walked line, or a relocation past courtyard multipath.
+ * snap: inside the step gate, or a still-phone spike. Not a live-pin hold by itself.
  * drop: the sample is too poor to use.
+ * A walk keeps intermediate corners. A stay does not grow a courtyard triangle.
  */
 export function trailDecision(last, point) {
   if (!point || !Number.isFinite(point.lat) || !Number.isFinite(point.lng) || !Number.isFinite(point.at)) return 'drop';
@@ -244,20 +271,21 @@ export function trailDecision(last, point) {
   const dt = point.at - last.at;
   if (!Number.isFinite(moved) || !Number.isFinite(dt) || dt < 0) return 'drop';
   if (moved === 0 && dt === 0) return 'drop';
-  const gate = trailMoveGate(last, point);
-  if (moved <= gate) return 'snap';
-  const speed = typeof point.speedMps === 'number' && Number.isFinite(point.speedMps) ? point.speedMps : null;
-  const reportedStill = point.staying === true || (speed != null && speed < TRAIL_STAY_SPEED_MPS);
-  // Precise fixes can still leap between towers. With no walking speed, a short leap is not a path.
-  const quiet = reportedStill || (speed == null && accuracy > 0 && accuracy <= 30 && moved < TRAIL_STILL_CONFIRM_M);
-  if (quiet && moved <= TRAIL_RELOCATION_M) {
-    const implied = dt > 0 ? moved / (dt / 1000) : Infinity;
-    // One courtyard hop often implies 3–8 m/s for a few seconds. A real departure holds walking pace.
-    const sustainedWalk = moved >= Math.max(TRAIL_STILL_CONFIRM_M, accuracy * 3) && dt >= 45_000 && implied >= 0.7 && implied <= 2.5;
-    if (!sustainedWalk) return 'snap';
-  }
+  if (moved <= trailMoveGate(last, point)) return 'snap';
   const implied = dt > 0 ? moved / (dt / 1000) : Infinity;
   if (implied > FIX_MAX_JUMP_MPS) return 'drop';
+  // Speed is missing on many walking fixes. Keep a calm step. A fast hop under a neighborhood
+  // move is courtyard multipath: the trail snaps, and the live pin still follows past the stay bubble.
+  if (stillSample(point) && moved <= TRAIL_RELOCATION_M) {
+    const bubble = staySnapGate(last, point);
+    if (moved <= bubble) {
+      const calmWalk = implied >= 0.85 && implied <= 2 && moved >= TRAIL_STILL_STEP_M && dt >= TRAIL_STILL_STEP_MS;
+      if (!calmWalk) return 'snap';
+    } else {
+      const paced = implied >= 0.6 && implied <= 3.2 && moved >= TRAIL_STILL_STEP_M && dt >= 12_000;
+      if (!paced) return 'snap';
+    }
+  }
   return 'keep';
 }
 
@@ -344,10 +372,55 @@ export function collapseStayTrail(points) {
   return kept;
 }
 
+/** Put a walked vertex back when simplify would leave one long chord. */
+function restoreWalkVertices(source, simplified) {
+  if (!Array.isArray(simplified) || simplified.length < 2 || !Array.isArray(source) || source.length < 3) return simplified;
+  const output = [simplified[0]];
+  for (let index = 0; index < simplified.length - 1; index += 1) {
+    const start = simplified[index];
+    const end = simplified[index + 1];
+    const startAt = source.indexOf(start);
+    const endAt = source.indexOf(end);
+    if (startAt >= 0 && endAt > startAt + 1 && haversineMeters(start, end) >= TRAIL_CHORD_BREAK_M) {
+      const midAt = startAt + Math.floor((endAt - startAt) / 2);
+      let best = source[midAt];
+      let bestDev = best ? perpendicularDistanceM(best, start, end) : 0;
+      for (let cursor = startAt + 1; cursor < endAt; cursor += 1) {
+        const candidate = source[cursor];
+        if (!candidate) continue;
+        const deviation = perpendicularDistanceM(candidate, start, end);
+        if (deviation > bestDev + 1) {
+          bestDev = deviation;
+          best = candidate;
+        }
+      }
+      if (best && output[output.length - 1] !== best) output.push(best);
+    }
+    output.push(end);
+  }
+  return output;
+}
+
+/** Pull only a shallow GPS wobble toward its neighbors. A street corner stays put. */
+function smoothShallowBends(points) {
+  if (!Array.isArray(points) || points.length < 3) return points;
+  const next = points.map((point) => ({ ...point }));
+  for (let index = 1; index < points.length - 1; index += 1) {
+    const turn = Math.abs(signedTurnDeg(points[index - 1], points[index], points[index + 1]));
+    if (!Number.isFinite(turn) || turn >= 50) continue;
+    next[index] = {
+      ...points[index],
+      lat: points[index].lat * 0.8 + (points[index - 1].lat + points[index + 1].lat) * 0.1,
+      lng: points[index].lng * 0.8 + (points[index - 1].lng + points[index + 1].lng) * 0.1,
+    };
+  }
+  return next;
+}
+
 /**
  * Polyline vertices for every member.
- * Stay markers, accuracy-bubble wiggles, and apartment multipath spikes are not drawn.
- * Douglas–Peucker runs only here so stored history can still rebuild a real corner.
+ * Stay markers, accuracy-bubble wiggles, and thin there-and-back spikes are not drawn.
+ * Walking corners stay. Douglas–Peucker runs only here so stored history can still rebuild a bend.
  */
 export function visibleTrail(points) {
   const collapsed = collapseStayTrail(points);
@@ -355,11 +428,25 @@ export function visibleTrail(points) {
   for (const point of collapsed) {
     if (!point || point.stayEnd) continue;
     const prev = drawn[drawn.length - 1];
-    if (prev && haversineMeters(prev, point) < 8) continue;
+    if (prev && haversineMeters(prev, point) < 5) continue;
     drawn.push(point);
   }
   if (drawn.length < 3) return drawn;
-  return douglasPeucker(drawn, displaySimplifyMeters(drawn));
+  const simplified = douglasPeucker(drawn, displaySimplifyMeters(drawn));
+  return smoothShallowBends(restoreWalkVertices(drawn, simplified));
+}
+
+/** Relative age of the last fix, so a row can say whether the pin is live. */
+export function formatFixAge(at, now = Date.now()) {
+  if (!Number.isFinite(at) || !Number.isFinite(now)) return '';
+  const delta = Math.max(0, now - at);
+  if (delta < 45_000) return '방금 업데이트';
+  const minutes = Math.floor(delta / 60_000);
+  if (minutes < 1) return '1분 전 업데이트';
+  if (minutes < 60) return `${minutes}분 전 업데이트`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}시간 전 업데이트`;
+  return `${Math.floor(hours / 24)}일 전 업데이트`;
 }
 
 export function displayCoordinate(points, point) {

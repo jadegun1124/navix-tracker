@@ -40,9 +40,10 @@ import org.json.JSONObject;
  *
  * Thresholds match src/lib/tracking.mjs: drop fixes older than 30s, precise
  * accuracy above 80m, later fixes worse than 40m, jumps faster than 350 m/s.
- * A fix inside the stay bubble (50m or accuracy×2) is reported at the last
- * stable pin. Anything farther is a relocation and is published as-is.
- * Sustained-walk filtering belongs to the trail sampler, not this pin.
+ * Coordinates are the real fix. The live pin's stay bubble is applied in JS.
+ * While the phone is moving, GPS is requested about every 3s and those fixes
+ * are published so a walked trail can follow the street. After a stay is
+ * clear, the request stretches to 30s, then 60s, then 2min.
  */
 public class LocationKeepService {
     public static final String ACTION_FIX = "kr.co.umap.tracker.LOCATION_FIX";
@@ -62,6 +63,21 @@ public class LocationKeepService {
     private static Location stableFix;
     private static Location lastPublished;
     private static long lastPublishedAt;
+    /** Walking trail samples. LocationManager treats this as the fastest interval. */
+    private static final long GPS_MOVING_MS = 3_000L;
+    /** First stay interval, then longer while the phone is clearly still. */
+    private static final long GPS_STILL_MS = 30_000L;
+    private static final long GPS_STILL_LONG_MS = 60_000L;
+    private static final long GPS_STILL_LONGER_MS = 120_000L;
+    private static final long STILL_LONG_AFTER_MS = 3 * 60_000L;
+    private static final long STILL_LONGER_AFTER_MS = 15 * 60_000L;
+    /** Drop a second provider's burst. 3s GPS fixes are not inside this window. */
+    private static final long SAMPLE_GAP_MS = 2_500L;
+    private static long requestedGpsMs = GPS_MOVING_MS;
+    private static long stillSinceMs = 0;
+    private static long lastSampleAt = 0;
+    private static Location motionAnchor;
+    private static Location lastSample;
 
     public static void attach(Context context) {
         appContext = context.getApplicationContext();
@@ -229,16 +245,18 @@ public class LocationKeepService {
             /* 이미 해제된 감시 */
         }
         boolean precise = config.optBoolean("precise", true);
+        long gpsMs = requestedGpsMs < GPS_MOVING_MS ? GPS_MOVING_MS : requestedGpsMs;
         try {
             if (precise && locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
-                locationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 5_000L, 0f, pending);
+                locationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, gpsMs, 0f, pending);
             }
         } catch (Exception ignored) {
             /* GPS 하드웨어가 없거나 권한이 없는 경우 */
         }
+        long networkMs = gpsMs >= GPS_STILL_MS ? gpsMs : (precise ? 15_000L : 20_000L);
         try {
             if (locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
-                locationManager.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, precise ? 15_000L : 20_000L, 0f, pending);
+                locationManager.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, networkMs, 0f, pending);
             }
         } catch (Exception ignored) {
             /* 네트워크 위치가 없는 기기 */
@@ -305,6 +323,11 @@ public class LocationKeepService {
         stableFix = null;
         lastPublished = null;
         lastPublishedAt = 0L;
+        requestedGpsMs = GPS_MOVING_MS;
+        stillSinceMs = 0L;
+        lastSampleAt = 0L;
+        motionAnchor = null;
+        lastSample = null;
         filterLoaded = true;
         prefs(context).edit().remove("stable").remove("last").remove("lastAt").apply();
     }
@@ -364,47 +387,96 @@ public class LocationKeepService {
                 if (speed > 350f) return null;
             }
         }
-        Location reported = location;
-        if (stableFix != null && isStayJitter(stableFix, location, accuracy)) {
-            reported = new Location(stableFix);
-            reported.setTime(fixAt);
-            reported.setAccuracy(accuracy);
-            if (location.hasSpeed()) reported.setSpeed(location.getSpeed());
-        } else {
-            stableFix = new Location(location);
-            if (stableFix.getTime() <= 0) stableFix.setTime(fixAt);
-            reported = stableFix;
+        stableFix = new Location(location);
+        if (stableFix.getTime() <= 0) stableFix.setTime(fixAt);
+        if (lastSample != null && lastSampleAt > 0) {
+            long sinceSample = now - lastSampleAt;
+            float jumped = lastSample.distanceTo(location);
+            boolean relocation = jumped > stayGate(lastSample, location);
+            if (sinceSample >= 0 && sinceSample < SAMPLE_GAP_MS && !relocation) {
+                rememberFilter(context);
+                return null;
+            }
         }
-        emit(reported, fixAt);
+        boolean moving = noteMovement(location, fixAt);
+        long want = gpsInterval(moving, now);
+        if (want != requestedGpsMs) {
+            requestedGpsMs = want;
+            registerUpdates(context, config);
+        }
+        lastSample = new Location(location);
+        lastSampleAt = now;
+        emit(location, fixAt);
         if (lastPublishedAt > 0) {
             long since = now - lastPublishedAt;
-            float moved = lastPublished == null ? 9999f : lastPublished.distanceTo(reported);
-            if (since < 5_000) {
-                rememberFilter(context);
-                return null;
-            }
-            if (since < 15_000 && moved < 30f) {
+            float moved = lastPublished == null ? 9999f : lastPublished.distanceTo(location);
+            long publishGap = moving ? SAMPLE_GAP_MS : requestedGpsMs;
+            if (since + 1_000L < publishGap && moved < (moving ? 8f : 30f)) {
                 rememberFilter(context);
                 return null;
             }
         }
-        lastPublished = new Location(reported);
+        lastPublished = new Location(location);
         lastPublishedAt = now;
         rememberFilter(context);
-        return new Location(reported);
+        return new Location(location);
     }
 
     /**
      * Same stay bubble as staySnapGate in src/lib/tracking.mjs.
-     * Admin and managed phones both upload through this path. A bus, subway,
-     * or sparse fix with speed 0 must not be replaced by the previous stay.
-     * Returning true republishes the anchor latitude and longitude.
+     * Used only to tell a real relocation from a second fix in the same second.
+     * The latitude sent onward is the GPS fix. JS holds the pin inside the bubble.
      */
-    private static boolean isStayJitter(Location anchor, Location next, float accuracy) {
-        float anchorAccuracy = Math.max(0f, anchor.getAccuracy());
-        float nextAccuracy = Math.max(0f, accuracy);
-        float gate = Math.max(50f, Math.max(anchorAccuracy, nextAccuracy) * 2f);
-        return anchor.distanceTo(next) <= gate;
+    private static float stayGate(Location anchor, Location next) {
+        float anchorAccuracy = anchor == null ? 0f : Math.max(0f, anchor.getAccuracy());
+        float nextAccuracy = next == null ? 0f : Math.max(0f, next.getAccuracy());
+        return Math.max(50f, Math.max(anchorAccuracy, nextAccuracy) * 2f);
+    }
+
+    /** True while the phone should stay on the 3s GPS stream. */
+    private static boolean noteMovement(Location fix, long fixAt) {
+        float speed = fix.hasSpeed() ? fix.getSpeed() : -1f;
+        float fromAnchor = motionAnchor == null ? 9999f : motionAnchor.distanceTo(fix);
+        if (speed >= 0.8f && (motionAnchor == null || speed >= 1.1f || fromAnchor >= 8f)) {
+            motionAnchor = new Location(fix);
+            motionAnchor.setTime(fixAt);
+            stillSinceMs = 0L;
+            return true;
+        }
+        if (motionAnchor == null) {
+            motionAnchor = new Location(fix);
+            motionAnchor.setTime(fixAt);
+            stillSinceMs = 0L;
+            return true;
+        }
+        long anchorAt = motionAnchor.getTime() > 0 ? motionAnchor.getTime() : fixAt;
+        long dt = fixAt - anchorAt;
+        if (dt < 0) dt = 0;
+        float moved = motionAnchor.distanceTo(fix);
+        if (moved >= 10f && dt >= 3_000L) {
+            float implied = moved / Math.max(0.001f, dt / 1000f);
+            if (implied >= 0.7f && implied <= 40f) {
+                motionAnchor = new Location(fix);
+                motionAnchor.setTime(fixAt);
+                stillSinceMs = 0L;
+                return true;
+            }
+        }
+        boolean littleDrift = moved < 12f && dt >= 20_000L;
+        boolean settled = moved <= stayGate(motionAnchor, fix) && dt >= 30_000L && (dt == 0 || moved / (dt / 1000f) < 0.7f);
+        if (littleDrift || settled) {
+            if (stillSinceMs == 0L) stillSinceMs = anchorAt;
+            return false;
+        }
+        return true;
+    }
+
+    private static long gpsInterval(boolean moving, long now) {
+        if (moving) return GPS_MOVING_MS;
+        long stillFor = stillSinceMs > 0L ? Math.max(0L, now - stillSinceMs) : 0L;
+        if (stillFor >= STILL_LONGER_AFTER_MS) return GPS_STILL_LONGER_MS;
+        if (stillFor >= STILL_LONG_AFTER_MS) return GPS_STILL_LONG_MS;
+        return GPS_STILL_MS;
     }
 
     private static void emit(Location location, long fixAt) {
