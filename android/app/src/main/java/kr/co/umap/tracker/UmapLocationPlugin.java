@@ -11,6 +11,7 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.PowerManager;
+import android.os.Process;
 import android.os.SystemClock;
 import android.provider.Settings;
 import androidx.appcompat.app.AppCompatActivity;
@@ -444,8 +445,17 @@ public class UmapLocationPlugin extends Plugin {
 
     private void advanceFallback() {
         clearBounce();
-        if ("location-radio".equals(openedScreen) && openAppPermissions()) {
-            noteOpened("app-permissions");
+        if (pendingAlways == null) return;
+        AppCompatActivity activity = getActivity();
+        // 위치 액세스 권한 is already showing. Do not cover it with app info.
+        if (activity != null && !activity.hasWindowFocus()) return;
+        // startActivity for the location radios already returned. A timer must
+        // not replace that page with APPLICATION_DETAILS_SETTINGS.
+        if ("location-radio".equals(openedScreen)) {
+            PluginCall call = pendingAlways;
+            pendingAlways = null;
+            leftForSettings = false;
+            if (call != null) resolveAlways(call, true);
             return;
         }
         if (!"app-details".equals(openedScreen) && openAppDetails()) {
@@ -465,6 +475,7 @@ public class UmapLocationPlugin extends Plugin {
         intent.putExtra(Intent.EXTRA_PACKAGE_NAME, pkg);
         intent.putExtra(Settings.EXTRA_APP_PACKAGE, pkg);
         intent.putExtra("android.intent.extra.PERMISSION_GROUP_NAME", LOCATION_GROUP);
+        intent.putExtra(Intent.EXTRA_USER, Process.myUserHandle());
         return intent;
     }
 
@@ -477,8 +488,26 @@ public class UmapLocationPlugin extends Plugin {
 
     private boolean openLocationRadio() {
         String pkg = getContext().getPackageName();
-        // Let the OEM permission controller pick the location-group activity.
-        // A guessed class can resolve and finish, which used to fall through to app info.
+        Intent template = locationRadioIntent(pkg);
+        // Samsung's ManagePermissionsActivity is the host of 위치 액세스 권한
+        // (항상 허용 / 앱 사용 중에만 / 정확한 위치 사용). Name it before any
+        // other controller. A loose setPackage match can hit a trampoline.
+        String[][] targets = new String[][] {
+            {"com.samsung.android.permissioncontroller", "com.android.permissioncontroller.permission.ui.ManagePermissionsActivity"},
+            {"com.samsung.android.permissioncontroller", "com.android.permissioncontroller.permission.ui.ManageAppPermissionActivity"},
+            {"com.samsung.android.permissioncontroller", "com.android.permissioncontroller.permission.ui.AppPermissionActivity"},
+            {"com.samsung.android.permissioncontroller", "com.samsung.android.permissioncontroller.permission.ui.AppPermissionActivity"},
+            {"com.samsung.android.permissioncontroller", "com.android.permissioncontroller.permission.ui.handheld.AppPermissionActivity"},
+            {"com.google.android.permissioncontroller", "com.android.permissioncontroller.permission.ui.ManagePermissionsActivity"},
+            {"com.google.android.permissioncontroller", "com.android.permissioncontroller.permission.ui.ManageAppPermissionActivity"},
+            {"com.google.android.permissioncontroller", "com.android.permissioncontroller.permission.ui.AppPermissionActivity"},
+            {"com.google.android.permissioncontroller", "com.android.permissioncontroller.permission.ui.handheld.AppPermissionActivity"},
+            {"com.android.permissioncontroller", "com.android.permissioncontroller.permission.ui.ManagePermissionsActivity"},
+            {"com.android.permissioncontroller", "com.android.permissioncontroller.permission.ui.ManageAppPermissionActivity"},
+            {"com.android.permissioncontroller", "com.android.permissioncontroller.permission.ui.AppPermissionActivity"},
+            {"com.android.permissioncontroller", "com.android.permissioncontroller.permission.ui.handheld.AppPermissionActivity"}
+        };
+        if (startExplicit(template, targets)) return true;
         String[] controllers = new String[] {
             "com.samsung.android.permissioncontroller",
             "com.google.android.permissioncontroller",
@@ -489,19 +518,6 @@ public class UmapLocationPlugin extends Plugin {
             intent.setPackage(controller);
             if (canStart(intent) && startExternal(intent)) return true;
         }
-        String[][] targets = new String[][] {
-            {"com.samsung.android.permissioncontroller", "com.android.permissioncontroller.permission.ui.ManageAppPermissionActivity"},
-            {"com.samsung.android.permissioncontroller", "com.android.permissioncontroller.permission.ui.AppPermissionActivity"},
-            {"com.samsung.android.permissioncontroller", "com.samsung.android.permissioncontroller.permission.ui.AppPermissionActivity"},
-            {"com.samsung.android.permissioncontroller", "com.android.permissioncontroller.permission.ui.handheld.AppPermissionActivity"},
-            {"com.google.android.permissioncontroller", "com.android.permissioncontroller.permission.ui.ManageAppPermissionActivity"},
-            {"com.google.android.permissioncontroller", "com.android.permissioncontroller.permission.ui.AppPermissionActivity"},
-            {"com.google.android.permissioncontroller", "com.android.permissioncontroller.permission.ui.handheld.AppPermissionActivity"},
-            {"com.android.permissioncontroller", "com.android.permissioncontroller.permission.ui.ManageAppPermissionActivity"},
-            {"com.android.permissioncontroller", "com.android.permissioncontroller.permission.ui.AppPermissionActivity"},
-            {"com.android.permissioncontroller", "com.android.permissioncontroller.permission.ui.handheld.AppPermissionActivity"}
-        };
-        if (startExplicit(locationRadioIntent(pkg), targets)) return true;
         Intent implicit = locationRadioIntent(pkg);
         return canStart(implicit) && startExternal(implicit);
     }
