@@ -14,6 +14,7 @@ declare global {
   }
 }
 
+// Node tests cover the same decision in androidBackCore.mjs.
 function decideAndroidBack(now: number, until: number, consumed: boolean): { action: 'consumed' | 'toast' | 'exit'; armedUntil: number } {
   if (consumed) return { action: 'consumed', armedUntil: until };
   if (now < until) return { action: 'exit', armedUntil: until };

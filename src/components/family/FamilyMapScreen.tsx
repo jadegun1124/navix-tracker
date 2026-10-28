@@ -22,7 +22,7 @@ import { TodayRecord } from './TodayRecord';
 import { askAlwaysLocation, askBattery, askNotifications } from '../../services/systemPermissions';
 import { useFamilyTracking } from './useFamilyTracking';
 import { useFamily } from './session';
-import { consumeAndroidBack } from '../../platform/androidBack';
+import { consumeAndroidBack } from '../../platform/androidExit';
 
 export function FamilyMapScreen() {
   const family = useFamily();

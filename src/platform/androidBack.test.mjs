@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { EXIT_CONFIRM_MS, EXIT_CONFIRM_TEXT, decideAndroidBack } from './androidBack.mjs';
+import { EXIT_CONFIRM_MS, EXIT_CONFIRM_TEXT, decideAndroidBack } from './androidBackCore.mjs';
 
 test('one back from the root map asks before exit', () => {
   const first = decideAndroidBack(1_000, 0, false);

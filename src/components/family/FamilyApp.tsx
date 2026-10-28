@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { bindAndroidBack } from '../../platform/androidBack';
+import { bindAndroidBack } from '../../platform/androidExit';
 import { FamilyMapScreen } from './FamilyMapScreen';
 import { Onboarding } from './Onboarding';
 import { FamilyProvider, useFamily } from './session';
