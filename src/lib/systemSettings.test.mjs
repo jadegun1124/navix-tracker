@@ -78,6 +78,24 @@ test('location keep does not post an ongoing shade card', () => {
   assert.match(manifest, /USE_EXACT_ALARM/);
 });
 
+test('chat shade notification is one event and opens that conversation', () => {
+  const watch = readFileSync(new URL('../../android/app/src/main/java/kr/co/umap/tracker/AlertWatchService.java', import.meta.url), 'utf8');
+  const activity = readFileSync(new URL('../../android/app/src/main/java/kr/co/umap/tracker/MainActivity.java', import.meta.url), 'utf8');
+  const plugin = readFileSync(new URL('../../android/app/src/main/java/kr/co/umap/tracker/UmapLocationPlugin.java', import.meta.url), 'utf8');
+  assert.equal(watch.includes('startForeground('), false);
+  assert.equal(watch.includes('Umap 위치 공유'), false);
+  assert.match(watch, /CHAT_CHANNEL = "umap_chat"/);
+  assert.match(watch, /가족 대화/);
+  assert.match(watch, /\/chat\?me=/);
+  assert.match(watch, /umap_chat_peer/);
+  assert.match(watch, /CATEGORY_MESSAGE/);
+  assert.match(watch, /pullChat\(context, base, code, token, me, !MainActivity\.isResumed\(\)\)/);
+  assert.match(activity, /umap_chat_code/);
+  assert.match(activity, /UmapLocationPlugin\.openChat/);
+  assert.match(plugin, /consumePendingChat/);
+  assert.match(plugin, /notifyListeners\("chat"/);
+});
+
 test('gps is 2.5s only while moving and backs off to 2 then 5 minutes while still', () => {
   const location = readFileSync(new URL('../../android/app/src/main/java/kr/co/umap/tracker/LocationKeepService.java', import.meta.url), 'utf8');
   assert.match(location, /GPS_MOVING_MS = 2_500L/);

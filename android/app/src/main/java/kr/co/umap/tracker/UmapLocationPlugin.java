@@ -49,6 +49,9 @@ import org.json.JSONObject;
     }
 )
 public class UmapLocationPlugin extends Plugin {
+    private static volatile UmapLocationPlugin active;
+    private static volatile String pendingChatCode;
+    private static volatile String pendingChatPeer;
     private static final long BOUNCE_MS = 450L;
     private static final long BOUNCE_CONFIRM_MS = 800L;
     private static final long OPEN_WATCH_MS = 2000L;
@@ -63,8 +66,22 @@ public class UmapLocationPlugin extends Plugin {
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private Runnable bounceFallback;
 
+    public static void openChat(String code, String peer) {
+        if (code == null || peer == null || code.isEmpty() || peer.isEmpty()) return;
+        pendingChatCode = code;
+        pendingChatPeer = peer;
+        UmapLocationPlugin plugin = active;
+        if (plugin == null) return;
+        try {
+            plugin.notifyChat(code, peer);
+        } catch (RuntimeException ignored) {
+            /* 화면이 아직 없어도 다음에 남은 대화를 연다 */
+        }
+    }
+
     @Override
     public void load() {
+        active = this;
         Context context = getContext();
         LocationKeepService.attach(context);
         AlertWatchService.attach(context);
@@ -276,6 +293,23 @@ public class UmapLocationPlugin extends Plugin {
         JSObject result = new JSObject();
         result.put("stopped", true);
         call.resolve(result);
+    }
+
+    @PluginMethod
+    public void consumePendingChat(PluginCall call) {
+        JSObject result = new JSObject();
+        result.put("code", pendingChatCode == null ? "" : pendingChatCode);
+        result.put("peer", pendingChatPeer == null ? "" : pendingChatPeer);
+        pendingChatCode = null;
+        pendingChatPeer = null;
+        call.resolve(result);
+    }
+
+    private void notifyChat(String code, String peer) {
+        JSObject data = new JSObject();
+        data.put("code", code);
+        data.put("peer", peer);
+        notifyListeners("chat", data);
     }
 
     @PluginMethod

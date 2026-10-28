@@ -2,12 +2,12 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Bell, ChevronLeft, ChevronRight, Copy, Home, LocateFixed, MapPin, Menu, Plus, Route, Settings, UserPlus, X } from 'lucide-react';
 import { looksLikePhone, localProfile } from '../../lib/localProfile.mjs';
 import { buildInviteLink, formatClock, hasLocation, haversineMeters, shouldAlertLeave } from '../../lib/geo';
-import { ALWAYS_GUIDE_DISMISSED_KEY, KEEP_PERMISSION_ASKED_KEY, KEEP_START_ASKED_KEY, keepEntryPrompt, markSessionFlag, readSessionFlag } from '../../lib/systemSettings.mjs';
+import { ALWAYS_GUIDE_DISMISSED_KEY, CHAT_NOTIFY_ASKED_KEY, KEEP_PERMISSION_ASKED_KEY, KEEP_START_ASKED_KEY, keepEntryPrompt, markSessionFlag, readSessionFlag } from '../../lib/systemSettings.mjs';
 import { collapseDuplicateJourneys, displayCoordinate, historyDayKeys, historyDayLabel, liveTrailPoints, previewOpenJourney, seoulDayEndMs, seoulDayKey, visibleTrail } from '../../lib/tracking.mjs';
 import { ackFamilyAlert, isFamilyAlertAcked, publishFamilyAlert, readFamilyAlert, subscribeFamilyAlerts, type FamilyAlert } from '../../services/familyAlert';
 import { readSharedPlaces, subscribeSharedPlaces } from '../../services/familyShare';
-import { currentSyncPhase, familySyncConfigured, familySyncUrl, fetchMyDirectThreads, registerAdminPush, splitSyncToken, startAdminRemoteSync, startSyncMonitor, subscribeSyncPhase, syncTokenFor, type SyncPhase } from '../../services/familySync';
-import { umapLocation, umapLocationNative } from '../../services/umapLocation';
+import { currentSyncPhase, familySyncConfigured, familySyncUrl, fetchMyDirectThreads, registerRoomPush, splitSyncToken, startAdminRemoteSync, startSyncMonitor, subscribeSyncPhase, syncTokenFor, type SyncPhase } from '../../services/familySync';
+import { consumePendingChat, listenChatOpen, umapLocation, umapLocationNative } from '../../services/umapLocation';
 import { sounds } from '../../utils/audio';
 import { DEFAULT_CENTER, type GuardianLink, type HomeZone, type Member } from '../../types/family';
 import { AlwaysAllowGuide, AlwaysAllowMapHint } from './AlwaysAllowGuide';
@@ -18,7 +18,7 @@ import { JourneyCards, JourneyScrubber, playbackMark } from './JourneyCards';
 import { FamilyChatSheet, type DirectChatTarget } from './FamilyChatSheet';
 import { MemberAvatar } from './MemberAvatar';
 import { PhotoPicker } from './ProfilePhoto';
-import { chatName, mergeDirectChat, subscribeChat, unreadCount } from '../../services/familyChat';
+import { chatName, isFamilyChatMessage, mergeDirectChat, subscribeChat, unreadCount } from '../../services/familyChat';
 import { TodayRecord } from './TodayRecord';
 import { askAlwaysLocation, askBattery, askNotifications } from '../../services/systemPermissions';
 import { useFamilyTracking } from './useFamilyTracking';
@@ -248,25 +248,114 @@ export function FamilyMapScreen() {
   }, [dmRoomKey, state.tab]);
 
   useEffect(() => {
-    if (state.mode !== 'admin' || state.permissions.notifications !== 'granted' || !familySyncConfigured()) return;
+    if (!familySyncConfigured() || state.permissions.notifications !== 'unknown' || keepPrompt !== 'none') return;
+    if (readSessionFlag(CHAT_NOTIFY_ASKED_KEY)) return;
+    markSessionFlag(CHAT_NOTIFY_ASKED_KEY);
+    void askNotifications().then((result) => {
+      const notifications = result.state === 'granted' || result.state === 'denied' || result.state === 'skipped' ? result.state : 'denied';
+      const current = familyRef.current.state.permissions;
+      familyRef.current.finishPermissions({ ...current, notifications, completed: true });
+    });
+  }, [keepPrompt, state.mode, state.permissions.notifications]);
+
+  const chatIdentity = `${dmRoomKey}:${state.profile?.name ?? ''}:${notifyOk ? '1' : '0'}`;
+  useEffect(() => {
+    if (!notifyOk || !familySyncConfigured()) return;
     let cancel = false;
-    const link = { code: state.inviteCode, writeKey: state.syncWriteKey, readKey: state.syncReadKey };
     void (async () => {
-      const pushed = await registerAdminPush(link);
-      if (cancel || pushed || !umapLocationNative()) return;
+      const current = familyRef.current.state;
+      const rooms: Array<{ code: string; token: string; me: string; readKey?: string }> = [];
+      if (current.mode === 'admin' && current.syncWriteKey && current.syncReadKey) {
+        const token = await syncTokenFor(current.syncWriteKey, current.syncReadKey);
+        rooms.push({
+          code: current.inviteCode,
+          token,
+          me: myChatName(current, current.inviteCode),
+          readKey: current.syncReadKey,
+        });
+      } else if (current.mode === 'managed') {
+        for (const link of current.guardians) {
+          if (link.share === 'revoked' || !link.syncToken?.includes('.')) continue;
+          rooms.push({ code: link.code, token: link.syncToken, me: myChatName(current, link.code) });
+        }
+      }
+      if (cancel || rooms.length === 0) return;
+      let allPushed = true;
+      for (const room of rooms) {
+        const pushed = await registerRoomPush({ code: room.code, token: room.token, name: room.me, readKey: room.readKey });
+        if (!pushed) allPushed = false;
+      }
+      if (cancel || allPushed || !umapLocationNative()) return;
       const status = await umapLocation.alertWatchStatus().catch(() => ({ running: false, userStopped: false }));
       if (cancel || status.userStopped) return;
-      const token = await syncTokenFor(link.writeKey, link.readKey);
       const base = familySyncUrl();
       if (!base) return;
       await umapLocation.startAlertWatch({
-        config: JSON.stringify({ baseUrl: base, code: link.code, token, readKey: link.readKey }),
+        config: JSON.stringify({
+          baseUrl: base,
+          rooms: rooms.map((room) => ({
+            code: room.code,
+            token: room.token,
+            me: room.me,
+            ...(room.readKey ? { readKey: room.readKey } : {}),
+          })),
+        }),
       }).catch(() => undefined);
     })();
     return () => {
       cancel = true;
     };
-  }, [state.inviteCode, state.mode, state.permissions.notifications, state.syncReadKey, state.syncWriteKey]);
+  }, [chatIdentity, notifyOk]);
+
+  useEffect(() => {
+    const open = (code: string, peer: string) => {
+      const target = chatTargetFor(familyRef.current.state, code, peer);
+      if (!target) return;
+      setMenuOpen(false);
+      setAdminSettings(false);
+      setManagedSettings(false);
+      setSheet(null);
+      setDm(target);
+    };
+    const onPush = (event: MessageEvent) => {
+      const data = event.data as { type?: string; code?: string; peer?: string; message?: unknown } | null;
+      if (!data) return;
+      if (data.type === 'umap-open-chat' && data.code && data.peer) {
+        open(data.code, data.peer);
+        return;
+      }
+      if (data.type !== 'umap-chat' || !data.code || !isFamilyChatMessage(data.message)) return;
+      const current = familyRef.current.state;
+      const me = myChatName(current, data.code);
+      const peer = chatName(data.message.from) === me ? data.message.to : data.message.from;
+      mergeDirectChat(data.code, me, peer, [data.message]);
+    };
+    navigator.serviceWorker?.addEventListener('message', onPush);
+    const params = new URLSearchParams(window.location.search);
+    const queryPeer = chatName(params.get('chat') || '');
+    const queryCode = (params.get('room') || '').replace(/\D/g, '').slice(0, 6);
+    if (queryPeer && /^\d{4,6}$/.test(queryCode) && chatTargetFor(familyRef.current.state, queryCode, queryPeer)) {
+      open(queryCode, queryPeer);
+      params.delete('chat');
+      params.delete('room');
+      const query = params.toString();
+      window.history.replaceState(null, '', `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash}`);
+    }
+    let removeNative = () => {};
+    void consumePendingChat().then((pending) => {
+      if (pending) open(pending.code, pending.peer);
+    });
+    void listenChatOpen((pending) => {
+      open(pending.code, pending.peer);
+      void consumePendingChat();
+    }).then((remove) => {
+      removeNative = remove;
+    });
+    return () => {
+      navigator.serviceWorker?.removeEventListener('message', onPush);
+      removeNative();
+    };
+  }, [state.mode, state.inviteCode, state.profile?.name, state.guardians]);
 
   const stopIncoming = () => {
     if (incoming) ackFamilyAlert(incoming.id);
@@ -940,7 +1029,7 @@ export function FamilyMapScreen() {
                   setKeepPrompt('none');
                   return;
                 }
-                setKeepNote(result.note ?? '알림을 허용하지 않았습니다. 위치를 항상 허용으로 고르면 위치 유지를 켤 수 있습니다. SOS 알림만 알림 권한이 필요합니다.');
+                setKeepNote(result.note ?? '알림을 허용하지 않았습니다. 위치를 항상 허용으로 고르면 위치 유지를 켤 수 있습니다. SOS와 새 대화 알림은 알림 권한이 필요합니다.');
               });
             }}
           />
@@ -1108,7 +1197,7 @@ export function FamilyMapScreen() {
               <Line k="배터리 안내" v={state.permissions.battery === 'acknowledged' ? '확인함' : state.permissions.battery === 'skipped' ? '나중에' : '해당 없음'} />
             </dl>
             <p className="mt-3 text-xs leading-5 text-slate-400">
-              가족 위치와 배터리는 초대 동기화 키로 위치 서버에 올라가고, 관리자 폰이 그 서버에서 받아 지도에 표시합니다. 예시 좌표나 하드코딩된 팝업이 아닙니다. 알림을 허용하면 앱을 닫아도 SOS가 푸시로 옵니다. 전화번호로는 위치를 찾지 않습니다.
+              가족 위치와 배터리는 초대 동기화 키로 위치 서버에 올라가고, 관리자 폰이 그 서버에서 받아 지도에 표시합니다. 예시 좌표나 하드코딩된 팝업이 아닙니다. 알림을 허용하면 앱을 닫아도 SOS와 새 대화가 알림 목록에 옵니다. 전화번호로는 위치를 찾지 않습니다.
             </p>
             <p className="mt-3 text-xs leading-5 text-slate-400">
               항상 허용을 누르면 「위치 액세스 권한」 화면이 바로 열립니다. 거기서 항상 허용을 고르고, 「정확한 위치 사용」을 직접 켭니다. 그 화면이 아니면 앱 권한 목록, 그다음 앱 정보로 갑니다. 배터리 제한 없음을 누르면 시스템 팝업이 바로 열립니다. Umap은 그 스위치를 대신 바꾸지 않습니다. 위치 유지는 사용자가 켠 뒤에만 백그라운드에서 보냅니다. 걷는 동안만 촘촘히 받고, 머물면 2분·5분으로 줄입니다. 알림 목록에 Umap 카드는 나오지 않습니다.
@@ -1392,6 +1481,29 @@ function AdminMenu({
       </div>
     </div>
   );
+}
+
+function chatTargetFor(state: {
+  mode: string | null;
+  profile: { name?: string } | null;
+  guardians: GuardianLink[];
+  inviteCode: string;
+  syncWriteKey: string;
+  syncReadKey: string;
+}, code: string, peer: string): DirectChatTarget | null {
+  const name = chatName(peer);
+  if (!name || !/^\d{4,6}$/.test(code)) return null;
+  if (state.mode === 'admin' && code === state.inviteCode) {
+    const me = myChatName(state, code);
+    if (!me || me === name) return null;
+    return { code, me, peer: name, label: name, writeKey: state.syncWriteKey, readKey: state.syncReadKey };
+  }
+  if (state.mode !== 'managed') return null;
+  const link = state.guardians.find((item) => item.code === code && item.share !== 'revoked' && item.syncToken);
+  if (!link) return null;
+  const me = myChatName(state, code);
+  if (!me || me === name) return null;
+  return { code, me, peer: name, label: name, token: link.syncToken };
 }
 
 function myChatName(state: { mode: string | null; profile: { name?: string } | null; guardians: GuardianLink[] }, code: string): string {
@@ -1876,7 +1988,7 @@ function KeepNoticeSheet({
         <h2 className="text-lg font-black">{mode === 'permission' ? '알림을 허용할까요?' : '위치 유지를 켤까요?'}</h2>
         <p className="mt-2 text-sm leading-6 text-slate-600">
           {mode === 'permission'
-            ? '알림 권한은 SOS와 집 반경 알림에 씁니다. 허용을 누르면 알림 창이 열립니다. 위치 공유 중에는 알림 목록에 Umap 카드가 나오지 않습니다. 앱이 혼자 켜지 않습니다. 전화번호는 쓰지 않습니다.'
+            ? '알림 권한은 SOS, 집 반경, 새 대화에 씁니다. 허용을 누르면 알림 창이 열립니다. 위치 공유 중에는 알림 목록에 Umap 카드가 나오지 않습니다. 앱이 혼자 켜지 않습니다. 전화번호는 쓰지 않습니다.'
             : '켜면 앱을 닫아도 위치를 보냅니다. 걷는 동안만 촘촘히 받고, 한곳에 머물면 2분에서 5분으로 줄입니다. 알림 목록에 Umap 카드는 나오지 않습니다. 배터리 제한이 없으면 그 간격을 더 잘 지킵니다. 앱이 혼자 켜지 않습니다.'}
         </p>
         {note && <p className="mt-3 text-sm leading-6 text-amber-800">{note}</p>}

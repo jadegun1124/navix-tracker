@@ -1,6 +1,6 @@
 import { rememberPlaceName } from '../lib/placeAlias.mjs';
 import type { FamilyAlert } from './familyAlert';
-import { isFamilyChatMessage, type FamilyChatMessage } from './familyChat';
+import { chatName, isFamilyChatMessage, type FamilyChatMessage } from './familyChat';
 import type { SharedPlace, SharedProfile } from './familyShare';
 
 // Keep the hash identical to sync/protocol.mjs.
@@ -535,10 +535,20 @@ function base64UrlToBytes(value: string): Uint8Array<ArrayBuffer> {
   return bytes;
 }
 
-/** Subscribe this admin browser for Worker-sent Web Push. Returns false when the WebView has no Push API. */
-export async function registerAdminPush(link: RemoteLink): Promise<boolean> {
-  if (!familySyncUrl() || typeof navigator === 'undefined' || !('serviceWorker' in navigator) || !('PushManager' in window)) return false;
+export interface RoomPushLink {
+  code: string;
+  token: string;
+  name: string;
+  readKey?: string;
+}
+
+/** Subscribe this browser for Worker-sent Web Push. Returns false when the WebView has no Push API. */
+export async function registerRoomPush(link: RoomPushLink): Promise<boolean> {
+  const name = chatName(link.name);
+  if (!familySyncUrl() || !name || name === '나') return false;
+  if (typeof navigator === 'undefined' || !('serviceWorker' in navigator) || !('PushManager' in window)) return false;
   if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return false;
+  if (!link.token.includes('.')) return false;
   try {
     const registration = await navigator.serviceWorker.ready;
     const keyResponse = await request('/v1/push/vapid', { method: 'GET' });
@@ -557,15 +567,15 @@ export async function registerAdminPush(link: RemoteLink): Promise<boolean> {
     const p256dh = json.keys?.p256dh;
     const auth = json.keys?.auth;
     if (!endpoint || !p256dh || !auth) return false;
-    const token = await syncTokenFor(link.writeKey, link.readKey);
+    const headers: Record<string, string> = {
+      'content-type': 'application/json',
+      'x-umap-sync-key': link.token,
+    };
+    if (link.readKey) headers['x-umap-read-key'] = link.readKey;
     const response = await request(`/v1/rooms/${link.code}/push`, {
       method: 'PUT',
-      headers: {
-        'content-type': 'application/json',
-        'x-umap-sync-key': token,
-        'x-umap-read-key': link.readKey,
-      },
-      body: JSON.stringify({ endpoint, p256dh, auth }),
+      headers,
+      body: JSON.stringify({ endpoint, p256dh, auth, name }),
     });
     classify(response);
     return response.ok;

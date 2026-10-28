@@ -42,6 +42,7 @@ export function alwaysAllowScreens() {
 export const KEEP_PERMISSION_ASKED_KEY = 'umap_keep_permission_asked';
 export const KEEP_START_ASKED_KEY = 'umap_keep_start_asked';
 export const ALWAYS_GUIDE_DISMISSED_KEY = 'umap_always_guide_dismissed';
+export const CHAT_NOTIFY_ASKED_KEY = 'umap_chat_notify_asked';
 
 export function readSessionFlag(key) {
   try {

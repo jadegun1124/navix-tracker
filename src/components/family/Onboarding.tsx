@@ -393,7 +393,7 @@ function Permissions({
         <Dialog
           icon={<Bell className="h-7 w-7 text-[#0084FF]" />}
           title="알림을 허용할까요?"
-          body="알림 권한은 SOS와 집 반경 알림에 씁니다. 허용을 누르면 알림 창이 열립니다. 위치 공유 중에는 알림 목록에 Umap 카드가 나오지 않습니다. 앱이 혼자 위치를 백그라운드로 올리지 않습니다. 전화번호는 쓰지 않습니다."
+          body="알림 권한은 SOS, 집 반경, 새 대화에 씁니다. 허용을 누르면 알림 창이 열립니다. 위치 공유 중에는 알림 목록에 Umap 카드가 나오지 않습니다. 앱이 혼자 위치를 백그라운드로 올리지 않습니다. 전화번호는 쓰지 않습니다."
           note={note}
           busy={busy}
           primary="알림 허용"
@@ -442,7 +442,7 @@ function Permissions({
             {draft.notifications === 'granted'
               ? '알림을 허용했습니다. 항상 허용을 고른 뒤 지도에서 위치 유지를 켭니다. 알림 목록에 Umap 카드는 나오지 않습니다.'
               : draft.notifications === 'denied'
-                ? '알림을 허용하지 않았습니다. 위치 유지는 항상 허용 뒤에 켤 수 있습니다. SOS 알림만 알림 권한이 필요합니다.'
+                ? '알림을 허용하지 않았습니다. 위치 유지는 항상 허용 뒤에 켤 수 있습니다. SOS와 새 대화 알림은 알림 권한이 필요합니다.'
                 : '이 브라우저에는 알림 창이 없습니다.'}
           </p>
           {note && <p className="mt-3 text-center text-sm leading-6 text-slate-600">{note}</p>}

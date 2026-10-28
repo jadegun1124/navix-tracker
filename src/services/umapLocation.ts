@@ -63,8 +63,10 @@ interface UmapLocationPlugin {
   startAlertWatch(options: { config: string }): Promise<{ started: boolean; reason?: string }>;
   stopAlertWatch(): Promise<{ stopped: boolean }>;
   alertWatchStatus(): Promise<{ running: boolean; userStopped: boolean }>;
+  consumePendingChat(): Promise<{ code?: string; peer?: string }>;
   ackStopped(): Promise<void>;
   addListener(eventName: 'fix', listenerFunc: (fix: UmapFix) => void): Promise<PluginListenerHandle>;
+  addListener(eventName: 'chat', listenerFunc: (event: { code?: string; peer?: string }) => void): Promise<PluginListenerHandle>;
 }
 
 const web: UmapLocationPlugin = {
@@ -110,6 +112,9 @@ const web: UmapLocationPlugin = {
   },
   async alertWatchStatus() {
     return { running: false, userStopped: false };
+  },
+  async consumePendingChat() {
+    return { code: '', peer: '' };
   },
   async addListener() {
     return { remove: async () => {} };
@@ -215,6 +220,35 @@ export async function readNativeBattery(): Promise<NativeBattery> {
     return { pct, charging };
   } catch {
     return { pct: null, charging: null };
+  }
+}
+
+export async function consumePendingChat(): Promise<{ code: string; peer: string } | null> {
+  if (!umapLocationNative()) return null;
+  try {
+    const result = await plugin.consumePendingChat();
+    const code = typeof result.code === 'string' ? result.code : '';
+    const peer = typeof result.peer === 'string' ? result.peer.trim() : '';
+    if (!/^\d{4,6}$/.test(code) || !peer) return null;
+    return { code, peer: peer.slice(0, 20) };
+  } catch {
+    return null;
+  }
+}
+
+export async function listenChatOpen(listener: (event: { code: string; peer: string }) => void): Promise<() => void> {
+  if (!umapLocationNative()) return () => {};
+  try {
+    const handle = await plugin.addListener('chat', (event) => {
+      const code = typeof event.code === 'string' ? event.code : '';
+      const peer = typeof event.peer === 'string' ? event.peer.trim() : '';
+      if (/^\d{4,6}$/.test(code) && peer) listener({ code, peer: peer.slice(0, 20) });
+    });
+    return () => {
+      void handle.remove();
+    };
+  } catch {
+    return () => {};
   }
 }
 

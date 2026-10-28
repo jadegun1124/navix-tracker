@@ -16,7 +16,9 @@ import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
@@ -25,10 +27,10 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 /**
- * Polls the family sync worker for SOS and home-leave alerts and posts a
- * system notification only when one of those alerts arrives. Web Push is
- * used when the browser can subscribe. This WebView cannot, so the admin
- * phone schedules an exact alarm after notification permission.
+ * Polls the family sync worker for SOS, home-leave, and new direct messages.
+ * Each event is one shade notification. Web Push is used when the browser
+ * can subscribe. This WebView cannot, so the phone schedules an exact alarm
+ * after notification permission.
  *
  * The 1.6.0 data-sync foreground service posted an empty ongoing card.
  * Android 12+ keeps that card visible. This class does not call
@@ -39,6 +41,7 @@ public class AlertWatchService {
     public static final String ACTION_POLL = "kr.co.umap.tracker.ALERT_POLL";
     private static final String PREFS = "umap_alert_watch";
     private static final String ALERT_CHANNEL = "umap_alert";
+    private static final String CHAT_CHANNEL = "umap_chat";
     private static final int WATCH_ID = OngoingNotificationCleanup.WATCH_NOTIFICATION_ID;
     private static final long POLL_MS = 12_000L;
     private static final ExecutorService IO = Executors.newSingleThreadExecutor();
@@ -133,12 +136,16 @@ public class AlertWatchService {
         try {
             JSONObject parsed = new JSONObject(configJson);
             if (!allowedBase(parsed.optString("baseUrl", ""))) return false;
-            String code = parsed.optString("code", "");
-            String token = parsed.optString("token", "");
-            String readKey = parsed.optString("readKey", "");
-            if (!code.matches("\\d{4,6}")) return false;
-            if (!token.matches("[A-Za-z0-9_-]{16,64}\\.[A-Za-z0-9_-]{16,64}")) return false;
-            if (!readKey.matches("[A-Za-z0-9_-]{16,64}")) return false;
+            if (parsed.optJSONArray("rooms") != null) {
+                if (!validRooms(parsed.optJSONArray("rooms"))) return false;
+            } else {
+                String code = parsed.optString("code", "");
+                String token = parsed.optString("token", "");
+                String readKey = parsed.optString("readKey", "");
+                if (!code.matches("\\d{4,6}")) return false;
+                if (!token.matches("[A-Za-z0-9_-]{16,64}\\.[A-Za-z0-9_-]{16,64}")) return false;
+                if (!readKey.matches("[A-Za-z0-9_-]{16,64}")) return false;
+            }
             prefs(context).edit().putString("config", parsed.toString()).putBoolean("userStopped", false).commit();
             return true;
         } catch (Exception error) {
@@ -209,15 +216,65 @@ public class AlertWatchService {
         alert.setDescription("SOS와 집 반경을 벗어났을 때 알려 줍니다.");
         alert.enableVibration(true);
         manager.createNotificationChannel(alert);
+        NotificationChannel chat = new NotificationChannel(CHAT_CHANNEL, "가족 대화", NotificationManager.IMPORTANCE_HIGH);
+        chat.setDescription("새 대화가 오면 보낸 사람과 짧은 내용을 알려 줍니다.");
+        chat.enableVibration(true);
+        manager.createNotificationChannel(chat);
+    }
+
+    private static boolean validRooms(org.json.JSONArray rooms) {
+        if (rooms.length() < 1 || rooms.length() > 8) return false;
+        for (int index = 0; index < rooms.length(); index += 1) {
+            JSONObject room = rooms.optJSONObject(index);
+            if (room == null) return false;
+            String code = room.optString("code", "");
+            String token = room.optString("token", "");
+            String readKey = room.optString("readKey", "");
+            String me = room.optString("me", "").trim();
+            if (!code.matches("\\d{4,6}")) return false;
+            if (!token.matches("[A-Za-z0-9_-]{16,64}\\.[A-Za-z0-9_-]{16,64}")) return false;
+            boolean alerts = readKey.matches("[A-Za-z0-9_-]{16,64}");
+            boolean chat = validMe(me);
+            if (!alerts && !chat) return false;
+        }
+        return true;
+    }
+
+    private static boolean validMe(String me) {
+        if (me == null) return false;
+        String name = me.trim();
+        if (name.isEmpty() || name.length() > 20) return false;
+        String digits = name.replaceAll("\\D", "");
+        return digits.length() < 8;
     }
 
     private static void pull(Context context) {
         JSONObject current = readConfig(context);
         if (!isArmed(context) || current == null) return;
         String base = current.optString("baseUrl", "").replaceAll("/+$", "");
-        String code = current.optString("code", "");
-        String token = current.optString("token", "");
-        String readKey = current.optString("readKey", "");
+        if (!allowedBase(base)) return;
+        org.json.JSONArray rooms = current.optJSONArray("rooms");
+        if (rooms == null) {
+            pullRoom(context, base, current);
+            return;
+        }
+        for (int index = 0; index < rooms.length(); index += 1) {
+            JSONObject room = rooms.optJSONObject(index);
+            if (room != null) pullRoom(context, base, room);
+        }
+    }
+
+    private static void pullRoom(Context context, String base, JSONObject room) {
+        String code = room.optString("code", "");
+        String token = room.optString("token", "");
+        String readKey = room.optString("readKey", "");
+        String me = room.optString("me", "").trim();
+        if (!code.matches("\\d{4,6}") || !token.matches("[A-Za-z0-9_-]{16,64}\\.[A-Za-z0-9_-]{16,64}")) return;
+        if (readKey.matches("[A-Za-z0-9_-]{16,64}")) pullAlerts(context, base, code, token, readKey);
+        if (validMe(me)) pullChat(context, base, code, token, me, !MainActivity.isResumed());
+    }
+
+    private static void pullAlerts(Context context, String base, String code, String token, String readKey) {
         long since = prefs(context).getLong("since", 0L);
         if (since == 0L) since = System.currentTimeMillis() - 60_000L;
         HttpURLConnection connection = null;
@@ -262,6 +319,67 @@ public class AlertWatchService {
         }
     }
 
+    private static void pullChat(Context context, String base, String code, String token, String me, boolean notify) {
+        String sinceKey = "chatSince_" + code;
+        long since = prefs(context).getLong(sinceKey, 0L);
+        if (since == 0L) since = System.currentTimeMillis() - 60_000L;
+        HttpURLConnection connection = null;
+        try {
+            String encoded = URLEncoder.encode(me, "UTF-8");
+            URL url = new URL(base + "/v1/rooms/" + code + "/chat?me=" + encoded);
+            connection = (HttpURLConnection) url.openConnection();
+            connection.setInstanceFollowRedirects(false);
+            connection.setConnectTimeout(8000);
+            connection.setReadTimeout(8000);
+            connection.setRequestMethod("GET");
+            connection.setRequestProperty("x-umap-sync-key", token);
+            int status = connection.getResponseCode();
+            if (status < 200 || status >= 300) return;
+            JSONObject body = new JSONObject(readStream(connection.getInputStream()));
+            JSONArray threads = body.optJSONArray("threads");
+            if (threads == null) return;
+            Set<String> seen = prefs(context).getStringSet("chatSeen", new HashSet<>());
+            Set<String> nextSeen = new HashSet<>(seen == null ? new HashSet<>() : seen);
+            long cursor = since;
+            ArrayList<JSONObject> fresh = new ArrayList<>();
+            for (int threadIndex = 0; threadIndex < threads.length(); threadIndex += 1) {
+                JSONObject thread = threads.optJSONObject(threadIndex);
+                if (thread == null) continue;
+                JSONArray messages = thread.optJSONArray("messages");
+                if (messages == null) continue;
+                for (int index = 0; index < messages.length(); index += 1) {
+                    JSONObject message = messages.optJSONObject(index);
+                    if (message == null) continue;
+                    String id = message.optString("id", "");
+                    String from = message.optString("from", "").trim();
+                    long at = message.optLong("at", 0L);
+                    if (id.isEmpty() || at <= since) continue;
+                    if (at > cursor) cursor = at;
+                    if (from.isEmpty() || from.equals(me) || nextSeen.contains(id)) continue;
+                    fresh.add(message);
+                    nextSeen.add(id);
+                }
+            }
+            if (notify) {
+                int start = Math.max(0, fresh.size() - 3);
+                for (int index = start; index < fresh.size(); index += 1) {
+                    JSONObject message = fresh.get(index);
+                    message.put("code", code);
+                    notifyChat(context, message);
+                }
+            }
+            while (nextSeen.size() > 40) {
+                String first = nextSeen.iterator().next();
+                nextSeen.remove(first);
+            }
+            prefs(context).edit().putLong(sinceKey, cursor).putStringSet("chatSeen", nextSeen).apply();
+        } catch (Exception ignored) {
+            /* 다음 주기에 다시 받는다 */
+        } finally {
+            if (connection != null) connection.disconnect();
+        }
+    }
+
     private static void notifyAlert(Context context, JSONObject alert) {
         String kind = alert.optString("kind", "");
         String title = "sos".equals(kind) ? "SOS" : "집 반경을 나갔습니다";
@@ -284,6 +402,43 @@ public class AlertWatchService {
             .setCategory(Notification.CATEGORY_ALARM);
         NotificationManager manager = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
         if (manager != null) manager.notify(id, builder.build());
+    }
+
+    private static void notifyChat(Context context, JSONObject message) {
+        if (Build.VERSION.SDK_INT >= 33
+            && context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            return;
+        }
+        String code = message.optString("code", "");
+        String from = message.optString("from", "").trim();
+        String body = preview(message.optString("text", ""));
+        if (!code.matches("\\d{4,6}") || from.isEmpty() || body.isEmpty()) return;
+        int id = 6200 + ((code + "\0" + from).hashCode() & 0x0fff);
+        Intent open = new Intent(context, MainActivity.class);
+        open.setAction("kr.co.umap.tracker.OPEN_CHAT");
+        open.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        open.putExtra("umap_chat_code", code);
+        open.putExtra("umap_chat_peer", from);
+        PendingIntent content = PendingIntent.getActivity(context, id, open, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        ensureAlertChannel(context);
+        Notification.Builder builder = Build.VERSION.SDK_INT >= 26
+            ? new Notification.Builder(context, CHAT_CHANNEL)
+            : new Notification.Builder(context);
+        builder.setContentTitle(from)
+            .setContentText(body)
+            .setStyle(new Notification.BigTextStyle().bigText(body))
+            .setSmallIcon(android.R.drawable.ic_dialog_email)
+            .setContentIntent(content)
+            .setAutoCancel(true)
+            .setCategory(Notification.CATEGORY_MESSAGE);
+        NotificationManager manager = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+        if (manager != null) manager.notify(id, builder.build());
+    }
+
+    private static String preview(String text) {
+        String trimmed = text == null ? "" : text.trim();
+        if (trimmed.length() <= 80) return trimmed;
+        return trimmed.substring(0, 79) + "…";
     }
 
     private static String readStream(InputStream stream) throws Exception {

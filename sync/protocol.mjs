@@ -5,6 +5,9 @@
 // The device profile key authorizes that member id. Readers never receive the key or its hash.
 // Phone numbers are not accepted. The read key is never stored.
 // Admin push subscriptions stay in the room and are never returned to readers.
+// A chat subscription may also store the display name. The write token is enough
+// for that name, so the other phone can receive that conversation. SOS still
+// uses the read key. Endpoints are never returned.
 
 import { base64UrlToBytes, pushEndpointAllowed } from './webpush.mjs';
 
@@ -23,6 +26,7 @@ const ALERT_TTL_MS = 24 * 60 * 60 * 1000;
 const FUTURE_SKEW_MS = 5 * 60 * 1000;
 const EARLIEST_AT = Date.UTC(2024, 0, 1);
 
+const MAX_PUSHES = 12;
 const MAX_MESSAGES = 40;
 const MAX_THREADS = 24;
 const CHAT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -534,8 +538,34 @@ function roomPushes(room) {
 export function applySubscription(room, subscription) {
   const pushes = roomPushes(room).filter((item) => item.endpoint !== subscription.endpoint);
   pushes.push(subscription);
-  while (pushes.length > 8) pushes.shift();
+  while (pushes.length > MAX_PUSHES) pushes.shift();
   return { ...room, pushes };
+}
+
+export function pushesForChat(room, message) {
+  if (!message || !message.to) return [];
+  return roomPushes(room).filter((item) => item && item.name === message.to && item.name !== message.from);
+}
+
+export function pushesForAlert(room, alert) {
+  const from = alert && typeof alert.from === 'string' ? alert.from : '';
+  return roomPushes(room).filter((item) => item && item.endpoint && (!item.name || item.name !== from));
+}
+
+export function chatPushPayload(message, code) {
+  const text = typeof message.text === 'string' ? message.text : '';
+  const preview = text.length > 80 ? `${text.slice(0, 79)}…` : text;
+  return {
+    id: message.id,
+    kind: 'chat',
+    code: typeof code === 'string' ? code : '',
+    from: message.from,
+    to: message.to,
+    title: message.from,
+    body: preview,
+    text,
+    at: message.at,
+  };
 }
 
 export function removeSubscriptions(room, endpoints) {
@@ -572,7 +602,10 @@ function cleanSubscription(input) {
   if (publicKey.length !== 65 || publicKey[0] !== 4 || auth.length < 16 || auth.length > 32) {
     return { error: json({ error: 'push' }, 400) };
   }
-  return { subscription: { endpoint: input.endpoint, p256dh: input.p256dh, auth: input.auth } };
+  const name = cleanChatName(typeof input.name === 'string' ? input.name : '');
+  const subscription = { endpoint: input.endpoint, p256dh: input.p256dh, auth: input.auth };
+  if (name) subscription.name = name;
+  return { subscription };
 }
 
 export function viewFamilyPlaces(room) {
@@ -650,18 +683,22 @@ export async function parseOperation(request) {
 
   if ((request.method === 'PUT' || request.method === 'DELETE') && action === '/push') {
     const readKey = request.headers.get('x-umap-read-key') || '';
-    if (!isKeyPart(readKey)) return json({ error: 'read-key' }, 403);
-    const actual = await sha256Base64Url(readKey);
-    if (!safeEqual(actual, token.readKeyHash)) return json({ error: 'read-key' }, 403);
+    let hasRead = false;
+    if (isKeyPart(readKey)) {
+      const actual = await sha256Base64Url(readKey);
+      hasRead = safeEqual(actual, token.readKeyHash);
+    }
     const body = await readJson(request);
     if (body.error) return body.error;
     if (request.method === 'DELETE') {
+      if (!hasRead) return json({ error: 'read-key' }, 403);
       const endpoint = body.value && typeof body.value.endpoint === 'string' ? body.value.endpoint : '';
       if (!pushEndpointAllowed(endpoint)) return json({ error: 'push' }, 400);
       return { kind: 'push-remove', token: id, endpoints: [endpoint] };
     }
     const cleaned = cleanSubscription(body.value);
     if (cleaned.error) return cleaned.error;
+    if (!hasRead && !cleaned.subscription.name) return json({ error: 'read-key' }, 403);
     return { kind: 'push-subscribe', token: id, subscription: cleaned.subscription };
   }
 
@@ -670,7 +707,7 @@ export async function parseOperation(request) {
     if (body.error) return body.error;
     const cleaned = cleanChat(body.value, Date.now());
     if (cleaned.error) return cleaned.error;
-    return { kind: 'chat', token: id, message: cleaned.message };
+    return { kind: 'chat', token: id, code, message: cleaned.message };
   }
 
   if (request.method === 'POST' && action === '/alert') {

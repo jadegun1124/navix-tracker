@@ -1,4 +1,4 @@
-import { applyAlert, applyDirectMessage, applySubscription, alertPushPayload, commitPlace, commitProfile, emptyRoom, parseOperation, removeSubscriptions, viewDirectMessages, viewFamilyPlaces, viewMyThreads, viewRoom, withCors } from './protocol.mjs';
+import { applyAlert, applyDirectMessage, applySubscription, alertPushPayload, chatPushPayload, commitPlace, commitProfile, emptyRoom, parseOperation, pushesForAlert, pushesForChat, removeSubscriptions, viewDirectMessages, viewFamilyPlaces, viewMyThreads, viewRoom, withCors } from './protocol.mjs';
 import { createVapidKeys, sendWebPush } from './webpush.mjs';
 
 // One Durable Object per family room. The id is a hash of the invite code,
@@ -38,11 +38,17 @@ export class FamilyRoom {
     }
     if (op.kind === 'chat') {
       const next = applyDirectMessage(room, op.message, Date.now());
+      const view = viewDirectMessages(next.room, op.message.from, op.message.to) || { messages: [] };
       if (!next.ignored) {
         room = next.room;
         await this.ctx.storage.put('room', room);
+        return Response.json({
+          ...view,
+          pushes: pushesForChat(room, op.message),
+          payload: chatPushPayload(op.message, op.code || ''),
+        });
       }
-      return Response.json(viewDirectMessages(room, op.message.from, op.message.to) || { messages: [] });
+      return Response.json(view);
     }
     if (op.kind === 'place') {
       const next = await commitPlace(room, op.place, op.profileKey || '');
@@ -67,8 +73,7 @@ export class FamilyRoom {
       if (!next.ignored) {
         room = next.room;
         await this.ctx.storage.put('room', room);
-        const pushes = Array.isArray(room.pushes) ? room.pushes : [];
-        return Response.json({ ok: true, pushes, payload: alertPushPayload(op.alert) });
+        return Response.json({ ok: true, pushes: pushesForAlert(room, op.alert), payload: alertPushPayload(op.alert) });
       }
       return Response.json({ ok: true, pushes: [], payload: null });
     }
@@ -144,9 +149,10 @@ export default {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(op),
     });
-    if (op.kind !== 'alert') return withCors(response);
+    if (op.kind !== 'alert' && op.kind !== 'chat') return withCors(response);
     const data = await response.json();
     await deliverAlert(env, stub, data);
-    return withCors(Response.json({ ok: data.ok === true }));
+    if (op.kind === 'alert') return withCors(Response.json({ ok: data.ok === true }));
+    return withCors(Response.json({ messages: Array.isArray(data.messages) ? data.messages : [] }));
   },
 };
