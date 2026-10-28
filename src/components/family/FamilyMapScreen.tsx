@@ -3,7 +3,7 @@ import { Bell, ChevronLeft, ChevronRight, Copy, Home, LocateFixed, MapPin, Menu,
 import { looksLikePhone, localProfile } from '../../lib/localProfile.mjs';
 import { buildInviteLink, formatClock, hasLocation, haversineMeters, shouldAlertLeave } from '../../lib/geo';
 import { ALWAYS_GUIDE_DISMISSED_KEY, CHAT_NOTIFY_ASKED_KEY, KEEP_PERMISSION_ASKED_KEY, KEEP_START_ASKED_KEY, keepEntryPrompt, markSessionFlag, readSessionFlag } from '../../lib/systemSettings.mjs';
-import { collapseDuplicateJourneys, displayCoordinate, historyDayKeys, historyDayLabel, liveTrailPoints, previewOpenJourney, seoulDayEndMs, seoulDayKey, visibleTrail } from '../../lib/tracking.mjs';
+import { collapseDuplicateJourneys, displayCoordinate, historyDayKeys, historyDayLabel, liveMotionLabel, liveTrailPoints, previewOpenJourney, seoulDayEndMs, seoulDayKey, visibleTrail } from '../../lib/tracking.mjs';
 import { ackFamilyAlert, isFamilyAlertAcked, publishFamilyAlert, readFamilyAlert, subscribeFamilyAlerts, type FamilyAlert } from '../../services/familyAlert';
 import { readSharedPlaces, subscribeSharedPlaces } from '../../services/familyShare';
 import { currentSyncPhase, familySyncConfigured, familySyncUrl, fetchMyDirectThreads, registerRoomPush, splitSyncToken, startAdminRemoteSync, startSyncMonitor, subscribeSyncPhase, syncTokenFor, type SyncPhase } from '../../services/familySync';
@@ -402,7 +402,12 @@ export function FamilyMapScreen() {
       lng: member.lng,
       at: member.updatedAt || now,
       accuracyM: member.accuracyM,
-      staying: member.moving === false,
+      staying: liveMotionLabel({
+        located: true,
+        moving: member.moving,
+        points: state.tracks[member.id],
+        now,
+      }) === '머무름',
     });
     if (stable.lat === member.lat && stable.lng === member.lng) return member;
     return { ...member, lat: stable.lat, lng: stable.lng };
@@ -890,6 +895,7 @@ export function FamilyMapScreen() {
                     home={state.home}
                     selected={member.id === selected?.id}
                     unread={chatTick >= 0 ? unread : 0}
+                    live={personLive(member, state.tracks[member.id], now)}
                     onSelect={() => openPerson(member)}
                     onPhoto={member.id === 'self' ? (photo) => family.setPhoto(photo) : undefined}
                     onRemove={member.id !== 'self' ? () => setConfirm({ kind: 'remove', id: member.id, name: member.name }) : undefined}
@@ -1569,9 +1575,13 @@ function personArea(member: Member, home: HomeZone | null) {
   });
 }
 
-function personLive(member: Member) {
-  if (!hasLocation(member)) return '';
-  return member.moving === false ? '머무름' : '지금';
+function personLive(member: Member, points: { lat: number; lng: number; at: number; speedMps?: number | null; stayEnd?: boolean }[] | undefined, now: number) {
+  return liveMotionLabel({
+    located: hasLocation(member),
+    moving: member.moving,
+    points,
+    now,
+  });
 }
 
 function MemberCard({
@@ -1579,6 +1589,7 @@ function MemberCard({
   home,
   selected,
   unread = 0,
+  live = '',
   onSelect,
   onPhoto,
   onRemove,
@@ -1587,11 +1598,11 @@ function MemberCard({
   home: HomeZone | null;
   selected: boolean;
   unread?: number;
+  live?: string;
   onSelect: () => void;
   onPhoto?: (photo: string) => void;
   onRemove?: () => void;
 }) {
-  const live = personLive(member);
   return (
     <div className={`flex w-full items-center gap-3 rounded-2xl px-1 py-2 text-left ${selected ? 'bg-blue-50' : ''}`}>
       {onPhoto ? (

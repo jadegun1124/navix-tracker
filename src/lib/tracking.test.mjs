@@ -22,6 +22,12 @@ import {
   tracksWithinHistory,
   trailDecision,
   formatFixAge,
+  isRideStep,
+  fixShowsRide,
+  recentRide,
+  liveMotionLabel,
+  TRAIL_RIDE_MIN_MPS,
+  RIDE_STATUS_FRESH_MS,
   visibleTrail,
   trailDrawParts,
   trailSegmentDashed,
@@ -214,6 +220,69 @@ test('admin, managed, and remote trails drop courtyard spikes and keep a block c
   assert.equal(driven[0].lat, drive[0].lat);
   assert.ok(eastOf(driven[driven.length - 1]) > 500);
   for (const point of driven) assert.ok(Math.abs(northOf(point)) < 12);
+});
+
+test('a vehicle pace keeps 2.5s vertices solid and does not say 머무름', () => {
+  const t = 1_700_000_000_000;
+  const origin = { lat: 37.636, lng: 127.15, at: t, accuracyM: 12, speedMps: 0, staying: true };
+  assert.ok(Math.abs(TRAIL_RIDE_MIN_MPS - 7 / 3.6) < 1e-9);
+  assert.equal(RIDE_STATUS_FRESH_MS, 45_000);
+
+  const radius = 120;
+  const steps = 6;
+  const speed = 12;
+  const drive = [];
+  for (let index = 0; index <= steps; index += 1) {
+    const theta = (Math.PI / 2) * (index / steps);
+    const north = radius * Math.sin(theta);
+    const east = radius * (1 - Math.cos(theta));
+    drive.push({
+      ...offset(origin, north, east, t + index * 2_500),
+      accuracyM: 12,
+      speedMps: speed,
+      staying: true,
+    });
+  }
+  assert.equal(isRideStep(drive[0], drive[1]), true);
+  assert.equal(trailDecision(drive[0], drive[1]), 'keep');
+  let recorded = [drive[0]];
+  for (const point of drive.slice(1)) recorded = settleTrailPoint(recorded, point, point.at).points;
+  const northOf = (point) => (point.lat - origin.lat) * 111_320;
+  const eastOf = (point) => (point.lng - origin.lng) * (111_320 * Math.cos((origin.lat * Math.PI) / 180));
+  const drawn = visibleTrail(recorded);
+  assert.ok(drawn.length >= 4, `ride bend kept ${drawn.length} vertices`);
+  assert.ok(drawn.some((point) => northOf(point) > 25 && eastOf(point) > 8 && northOf(point) > eastOf(point)));
+  const parts = trailDrawParts(recorded);
+  assert.equal(parts.some((part) => part.dashed), false);
+  assert.equal(liveMotionLabel({ located: true, moving: false, points: recorded, now: drive[drive.length - 1].at + 5_000 }), '지금');
+  assert.equal(recentRide(recorded, drive[drive.length - 1].at + 5_000), true);
+  assert.equal(liveMotionLabel({ located: true, moving: false, points: recorded, now: drive[drive.length - 1].at + 60_000 }), '머무름');
+
+  const quiet = drive.map((point) => ({ ...point, speedMps: null, staying: true }));
+  assert.equal(isRideStep(quiet[0], quiet[1]), true);
+  let implied = [quiet[0]];
+  for (const point of quiet.slice(1)) implied = settleTrailPoint(implied, point, point.at).points;
+  assert.equal(trailDrawParts(implied).some((part) => part.dashed), false);
+  assert.ok(visibleTrail(implied).length >= 4);
+
+  const stuck = { ...offset(origin, 4, 0, t + 10_000), accuracyM: 12, speedMps: 12, staying: true };
+  assert.equal(isRideStep(origin, stuck), false);
+  assert.equal(trailDecision(origin, stuck), 'snap');
+  assert.equal(fixShowsRide([origin], stuck), false);
+
+  const hole = {
+    ...offset(drive[drive.length - 1], 0, 400, drive[drive.length - 1].at + 40_000),
+    accuracyM: 12,
+    speedMps: 12,
+    staying: true,
+  };
+  const withHole = settleTrailPoint(recorded, hole, hole.at).points;
+  assert.equal(trailDrawParts(withHole).some((part) => part.dashed), true);
+
+  const parked = { ...offset(origin, 6, 4, t + 8_000), accuracyM: 12, speedMps: 0, staying: true };
+  assert.equal(trailDecision(origin, parked), 'snap');
+  assert.equal(liveMotionLabel({ located: true, moving: false, points: [origin], now: t + 8_000 }), '머무름');
+  assert.equal(liveMotionLabel({ located: false, moving: false, points: recorded, now: t }), '');
 });
 
 test('a short step inside the walking gate is not a vertex, and a poor fix is dropped', () => {
