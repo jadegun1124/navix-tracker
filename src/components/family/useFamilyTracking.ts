@@ -161,7 +161,6 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
   }, [trackingOn]);
 
   useEffect(() => {
-    if (state.guardians.length === 0) return;
     const name = (state.profile?.name || self?.name || '가족').trim().slice(0, 20) || '가족';
     const memberId = state.profile?.profileKey ? state.profile.id : undefined;
     const nextTokens: Record<string, string> = {};
@@ -170,12 +169,13 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
     }
     for (const [code, token] of Object.entries(sharedTokens.current)) {
       if (nextTokens[code]) continue;
-      const priorName = placePriorName(code, 'admin', name) || undefined;
+      const priorName = placePriorName(code, 'family', name) || placePriorName(code, 'admin', name) || undefined;
       publishSharedPlace({
         code,
         name,
         ...(memberId ? { memberId } : {}),
         ...(priorName ? { priorName } : {}),
+        audience: 'family',
         lat: null,
         lng: null,
         accuracyM: 0,
@@ -184,6 +184,7 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
       }, token, state.profile?.profileKey);
     }
     sharedTokens.current = nextTokens;
+    if (state.guardians.length === 0) return;
     const located = self && hasLocation(self) ? self : null;
     for (const link of state.guardians) {
       const sharing = link.share === 'allowed';
@@ -334,7 +335,10 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
         }
       }
       if (targets.length === 0) {
-        if (status.running) await umapLocation.stop().catch(() => undefined);
+        if (status.running) {
+          await umapLocation.stop().catch(() => undefined);
+          await umapLocation.ackStopped().catch(() => undefined);
+        }
         return;
       }
       const config: Parameters<typeof JSON.stringify>[0] = {

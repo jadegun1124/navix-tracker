@@ -4,8 +4,9 @@ import { deviceProfileKey, localProfile } from '../../lib/localProfile.mjs';
 import { carryPlace, cleanPlace } from '../../lib/memberPlace.mjs';
 import { isSelfEchoPlace, mergePeerSessions, withoutSelfEcho } from '../../lib/peerFamily.mjs';
 import { resolveManagedTarget } from '../../lib/managedPlace.mjs';
+import { hiddenKeysForMember, placeHidden } from '../../lib/familyRoom.mjs';
 import { familyPinId, isMemberId, moveKeyed } from '../../lib/sharedIdentity.mjs';
-import { HISTORY_DAYS, JOURNEY_POINT_CAP, TRAIL_POINT_CAP, fixShowsRide, isWithinHistory, journeysWithinHistory, labelJourneyPlace, mergeJourneyLists, recentRide, seoulDayKey, settleTrailPoint, splitClosedJourneys, tracksWithinHistory, trimJourneyList, visitsWithinHistory, type JourneyRecord } from '../../lib/tracking.mjs';
+import { HISTORY_DAYS, JOURNEY_POINT_CAP, STAY_LABEL_DWELL_MS, TRAIL_POINT_CAP, fixShowsRide, isWithinHistory, journeysWithinHistory, labelJourneyPlace, lastTravelAt, mergeJourneyLists, seoulDayKey, settleTrailPoint, splitClosedJourneys, tracksWithinHistory, trimJourneyList, visitsWithinHistory, type JourneyRecord } from '../../lib/tracking.mjs';
 import type { DayStop } from '../../lib/tracking.mjs';
 import type { SharedPlace, SharedProfile } from '../../services/familyShare';
 import { umapLocation } from '../../services/umapLocation';
@@ -130,7 +131,18 @@ function fresh(stage: Stage = 'splash'): Session {
     syncWriteKey: createKeyPart(),
     syncReadKey: createKeyPart(),
     pendingSyncToken: null,
+    hiddenMemberIds: [],
   };
+}
+
+function cleanHidden(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const out: string[] = [];
+  for (const item of value) {
+    if (typeof item !== 'string' || !item.trim() || item.length > 160) continue;
+    if (!out.includes(item)) out.push(item);
+  }
+  return out.slice(0, 80);
 }
 
 function readLeaveAlert(): LeaveAlert | null {
@@ -486,6 +498,7 @@ function load(): Session {
       syncWriteKey: isKeyPart(parsed.syncWriteKey) ? parsed.syncWriteKey : base.syncWriteKey,
       syncReadKey: isKeyPart(parsed.syncReadKey) ? parsed.syncReadKey : base.syncReadKey,
       pendingSyncToken: pendingSyncToken || cleanSyncToken(parsed.pendingSyncToken),
+      hiddenMemberIds: cleanHidden((parsed as Session).hiddenMemberIds),
       trailDay: typeof parsed.trailDay === 'string' ? parsed.trailDay : '',
       visits: cleanVisits(parsed.visits),
       journeys: cleanJourneys((parsed as Session).journeys),
@@ -565,6 +578,7 @@ type Action =
   | { type: 'set-motion'; moving: boolean }
   | { type: 'notice'; notice: FamilyNotice }
   | { type: 'logout' }
+  | { type: 'clear-family-room'; serverNote: string | null }
   | { type: 'revisit-permissions' };
 
 function notice(title: string, body: string): FamilyNotice {
@@ -672,12 +686,14 @@ function reducer(state: Session, action: Action): Session {
       delete tracks[action.id];
       const journeys = { ...state.journeys };
       delete journeys[action.id];
+      const hiddenMemberIds = cleanHidden([...(state.hiddenMemberIds || []), ...hiddenKeysForMember(removed)]);
       return {
         ...state,
         members: state.members.filter((member) => member.id !== action.id),
         tracks,
         journeys,
-        notices: [notice('가족을 지웠습니다', `${removed.name} 님을 이 기기의 목록과 지도에서 뺐습니다.`), ...state.notices],
+        hiddenMemberIds,
+        notices: [notice('가족을 지웠습니다', `${removed.name} 님을 이 기기의 목록과 지도에서 뺐습니다. 같은 방이 다시 받아도 이 폰에는 돌아오지 않습니다.`), ...state.notices],
       };
     }
     case 'accept-invite': {
@@ -815,6 +831,7 @@ function reducer(state: Session, action: Action): Session {
       return { ...state, backgroundKeepAlive: action.on };
     case 'apply-shared-place': {
       const place = action.place;
+      if (placeHidden(place.code, place, state.hiddenMemberIds || [])) return state;
       if (place.audience === 'family') return state;
       const target = resolveManagedTarget(state.members, place);
       const liveFix = place.sharing && place.lat != null && place.lng != null && Number.isFinite(place.lat) && Number.isFinite(place.lng);
@@ -908,7 +925,8 @@ function reducer(state: Session, action: Action): Session {
       const now = Date.now();
       const today = seoulDayKey(now);
       const profiles = action.profiles ?? [];
-      const incoming = action.places.filter((place) => place.audience === 'family' && place.sharing && place.lat != null && place.lng != null && Number.isFinite(place.lat) && Number.isFinite(place.lng) && !isSelfEchoPlace(place, state.profile?.id, state.inviteCode));
+      const hidden = state.hiddenMemberIds || [];
+      const incoming = action.places.filter((place) => place.audience === 'family' && place.sharing && place.lat != null && place.lng != null && Number.isFinite(place.lat) && Number.isFinite(place.lng) && !isSelfEchoPlace(place, state.profile?.id, state.inviteCode) && !placeHidden(action.code, place, hidden));
       const current = state.members.filter((member) => member.id.startsWith(prefix));
       const described = incoming.map((place) => describeFamilyPlace(action.code, place, profiles, current));
       const unchanged = current.length === described.length && described.every((item) => {
@@ -1113,16 +1131,45 @@ function reducer(state: Session, action: Action): Session {
         )),
       };
     }
-    case 'set-motion':
-      if (!action.moving && recentRide(state.tracks.self, Date.now())) return state;
+    case 'set-motion': {
+      const now = Date.now();
+      const traveledAt = lastTravelAt(state.tracks.self);
+      if (!action.moving && traveledAt != null && now >= traveledAt && now - traveledAt < STAY_LABEL_DWELL_MS) return state;
+      const self = state.members.find((member) => member.id === 'self');
+      if (self?.moving === action.moving) return state;
       return {
         ...state,
         members: state.members.map((member) => (member.id === 'self' ? { ...member, moving: action.moving } : member)),
       };
+    }
     case 'notice':
       return { ...state, notices: [action.notice, ...state.notices].slice(0, 40) };
     case 'logout':
       return fresh('login');
+    case 'clear-family-room': {
+      const self = state.members.find((member) => member.id === 'self');
+      const next = fresh(state.stage);
+      const noteBody = action.serverNote
+        || '이 폰의 가족 목록과 초대를 지웠고, 그 방 동기화를 멈췄습니다. 내가 만든 방은 서버에서도 지웠습니다.';
+      return {
+        ...state,
+        members: self ? [self] : [],
+        tracks: state.tracks.self ? { self: state.tracks.self } : {},
+        visits: state.visits.self ? { self: state.visits.self } : {},
+        journeys: state.journeys?.self ? { self: state.journeys.self } : {},
+        guardians: [],
+        home: null,
+        inviteCode: next.inviteCode,
+        syncWriteKey: next.syncWriteKey,
+        syncReadKey: next.syncReadKey,
+        shareSelfWithFamily: false,
+        pendingInvite: null,
+        pendingLeaveAlert: null,
+        pendingSyncToken: null,
+        hiddenMemberIds: [],
+        notices: [notice(action.serverNote ? '가족 방을 나갔습니다' : '가족 방을 지웠습니다', noteBody), ...state.notices].slice(0, 40),
+      };
+    }
     case 'revisit-permissions':
       return { ...state, stage: 'permissions' };
     default:
@@ -1173,6 +1220,7 @@ interface FamilyApi {
   setMotion: (moving: boolean) => void;
   pushNotice: (title: string, body: string) => void;
   logout: () => void;
+  clearFamilyRoom: (serverNote?: string | null) => void;
   revisitPermissions: () => void;
 }
 
@@ -1244,6 +1292,7 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
     setMotion: (moving) => dispatch({ type: 'set-motion', moving }),
     pushNotice: (title, body) => dispatch({ type: 'notice', notice: notice(title, body) }),
     logout: () => dispatch({ type: 'logout' }),
+    clearFamilyRoom: (serverNote) => dispatch({ type: 'clear-family-room', serverNote: serverNote ?? null }),
     revisitPermissions: () => dispatch({ type: 'revisit-permissions' }),
   };
 

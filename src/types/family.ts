@@ -134,6 +134,8 @@ export interface Session {
   syncWriteKey: string;
   syncReadKey: string;
   pendingSyncToken: string | null;
+  /** Member ids and publisher ids removed on this phone. Sync does not put them back. */
+  hiddenMemberIds: string[];
 }
 
 export const DEFAULT_CENTER = { lat: 37.6366, lng: 127.0672 };

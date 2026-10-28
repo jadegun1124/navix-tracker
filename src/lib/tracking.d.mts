@@ -22,6 +22,8 @@ export const TRAIL_RIDE_VERTEX_MS: number;
 export const TRAIL_RIDE_MIN_STEP_M: number;
 export const TRAIL_RIDE_STAY_STEP_M: number;
 export const RIDE_STATUS_FRESH_MS: number;
+export const STAY_LABEL_DWELL_MS: number;
+export const MOTION_STILL_HOLD_MS: number;
 
 export type TravelMode = 'walk' | 'bike' | 'vehicle' | 'plane';
 
@@ -75,6 +77,7 @@ export function needsDailyWipe(storedDay: string | null | undefined, now: number
 export function isRideStep(last: TrailSample | null | undefined, point: TrailSample | null | undefined): boolean;
 export function fixShowsRide(points: TrailSample[] | null | undefined, point: TrailSample | null | undefined): boolean;
 export function recentRide(points: TrailSample[] | null | undefined, now: number): boolean;
+export function lastTravelAt(points: TrailSample[] | null | undefined): number | null;
 export function liveMotionLabel(input: {
   located: boolean;
   moving: boolean | null | undefined;

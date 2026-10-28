@@ -779,3 +779,55 @@ test('member id keeps the fix across a rename and only the profile key can chang
   assert.equal(both.body.places.find((place) => place.memberId === memberId).lat, 37.55);
   assert.equal(both.body.places.find((place) => place.name === '아들').lat, 36.1);
 });
+
+test('the creator read key deletes the room and a write token cannot', async () => {
+  const store = createMemoryStore();
+  const code = '48291';
+  const writeKey = randomKey();
+  const readKey = randomKey();
+  const token = await syncTokenFor(writeKey, readKey);
+  const published = await call(store, 'PUT', `/v1/rooms/${code}/place`, {
+    token,
+    body: {
+      code,
+      name: '하나',
+      lat: 37.5,
+      lng: 127,
+      accuracyM: 12,
+      at: Date.now(),
+      sharing: true,
+      audience: 'family',
+    },
+  });
+  assert.equal(published.status, 200);
+
+  const denied = await call(store, 'DELETE', `/v1/rooms/${code}`, { token });
+  assert.equal(denied.status, 403);
+  const still = await call(store, 'GET', `/v1/rooms/${code}/family`, { token });
+  assert.equal(still.status, 200);
+  assert.equal(still.body.places.length, 1);
+
+  const removed = await call(store, 'DELETE', `/v1/rooms/${code}`, { token, readKey });
+  assert.equal(removed.status, 200);
+  assert.deepEqual(removed.body, { ok: true });
+  const after = await call(store, 'GET', `/v1/rooms/${code}/family`, { token });
+  assert.equal(after.status, 200);
+  assert.deepEqual(after.body.places, []);
+
+  const again = await call(store, 'PUT', `/v1/rooms/${code}/place`, {
+    token,
+    body: {
+      code,
+      name: '하나',
+      lat: 37.5,
+      lng: 127,
+      accuracyM: 12,
+      at: Date.now(),
+      sharing: true,
+      audience: 'family',
+    },
+  });
+  assert.equal(again.status, 200);
+  const back = await call(store, 'GET', `/v1/rooms/${code}/family`, { token });
+  assert.equal(back.body.places.length, 1);
+});

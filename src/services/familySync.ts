@@ -112,6 +112,7 @@ let profileQueue: { code: string; token: string; body: Record<string, unknown>; 
 let alertQueue: { alert: FamilyAlert; token: string } | null = null;
 let flushing = false;
 let retryMs = 3000;
+let syncEpoch = 0;
 
 const MAX_PROFILE_PHOTO = 24_000;
 
@@ -248,7 +249,66 @@ export function publishAlertRemote(alert: FamilyAlert, syncToken?: string | null
   void flushQueues();
 }
 
+export async function abandonFamilySync(): Promise<void> {
+  syncEpoch += 1;
+  placeQueue = null;
+  profileQueue = null;
+  alertQueue = null;
+  const started = Date.now();
+  while (flushing && Date.now() - started < 8000) {
+    await new Promise((resolve) => window.setTimeout(resolve, 20));
+  }
+}
+
+export async function revokeFamilyPlace(link: {
+  code: string;
+  token: string;
+  name: string;
+  memberId?: string;
+  profileKey?: string;
+}): Promise<void> {
+  if (!familySyncUrl() || !splitSyncToken(link.token) || !/^\d{4,6}$/.test(link.code)) return;
+  const name = link.name.trim().slice(0, 80);
+  if (!name) return;
+  const body: Record<string, unknown> = {
+    code: link.code,
+    name,
+    lat: null,
+    lng: null,
+    accuracyM: 0,
+    at: Date.now(),
+    sharing: false,
+    audience: 'family',
+  };
+  if (link.memberId && /^local-[a-z0-9]{3,64}$/.test(link.memberId)) body.memberId = link.memberId;
+  const headers: Record<string, string> = { 'content-type': 'application/json', 'x-umap-sync-key': link.token };
+  if (link.profileKey) headers['x-umap-profile-key'] = link.profileKey;
+  try {
+    const response = await request(`/v1/rooms/${link.code}/place`, { method: 'PUT', headers, body: JSON.stringify(body) });
+    classify(response);
+  } catch {
+    if (familySyncUrl()) setPhase('down');
+  }
+}
+
+export async function deleteFamilyRoomRemote(code: string, writeKey: string, readKey: string): Promise<'ok' | 'off' | 'failed'> {
+  if (!familySyncUrl() || !isKeyPart(writeKey) || !isKeyPart(readKey) || !/^\d{4,6}$/.test(code)) return 'off';
+  try {
+    const token = await syncTokenFor(writeKey, readKey);
+    const response = await request(`/v1/rooms/${code}`, {
+      method: 'DELETE',
+      headers: { 'x-umap-sync-key': token, 'x-umap-read-key': readKey },
+    });
+    classify(response);
+    return response.ok ? 'ok' : 'failed';
+  } catch {
+    if (familySyncUrl()) setPhase('down');
+    return 'failed';
+  }
+}
+
 async function sendQueued(path: string, token: string, body: unknown, drop: () => void, profileKey = '') {
+  const epoch = syncEpoch;
   const headers: Record<string, string> = { 'content-type': 'application/json', 'x-umap-sync-key': token };
   if (profileKey) headers['x-umap-profile-key'] = profileKey;
   const response = await request(path, {
@@ -256,6 +316,10 @@ async function sendQueued(path: string, token: string, body: unknown, drop: () =
     headers,
     body: JSON.stringify(body),
   });
+  if (epoch !== syncEpoch) {
+    drop();
+    return true;
+  }
   const staleProfile = path.endsWith('/profile') && response.status === 404;
   if (!staleProfile) classify(response);
   if (response.ok || staleProfile || response.status === 400 || response.status === 401 || response.status === 403 || response.status === 413) drop();
@@ -265,8 +329,10 @@ async function sendQueued(path: string, token: string, body: unknown, drop: () =
 async function flushQueues() {
   if (flushing) return;
   flushing = true;
+  const epoch = syncEpoch;
   let failed = false;
   try {
+    if (epoch !== syncEpoch) return;
     const place = placeQueue;
     if (place) {
       const ok = await sendQueued(`/v1/rooms/${place.code}/place`, place.token, place.body, () => {

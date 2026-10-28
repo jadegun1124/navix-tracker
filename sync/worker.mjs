@@ -87,6 +87,10 @@ export class FamilyRoom {
       await this.ctx.storage.put('room', room);
       return Response.json({ ok: true });
     }
+    if (op.kind === 'delete') {
+      await this.ctx.storage.delete('room');
+      return Response.json({ ok: true });
+    }
     return Response.json({ error: 'method' }, { status: 405 });
   }
 }

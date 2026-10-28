@@ -26,8 +26,10 @@ import {
   fixShowsRide,
   recentRide,
   liveMotionLabel,
+  lastTravelAt,
   TRAIL_RIDE_MIN_MPS,
   RIDE_STATUS_FRESH_MS,
+  STAY_LABEL_DWELL_MS,
   visibleTrail,
   trailDrawParts,
   trailSegmentDashed,
@@ -256,7 +258,10 @@ test('a vehicle pace keeps 2.5s vertices solid and does not say 머무름', () =
   assert.equal(parts.some((part) => part.dashed), false);
   assert.equal(liveMotionLabel({ located: true, moving: false, points: recorded, now: drive[drive.length - 1].at + 5_000 }), '지금');
   assert.equal(recentRide(recorded, drive[drive.length - 1].at + 5_000), true);
-  assert.equal(liveMotionLabel({ located: true, moving: false, points: recorded, now: drive[drive.length - 1].at + 60_000 }), '머무름');
+  assert.equal(STAY_LABEL_DWELL_MS, 90_000);
+  assert.equal(liveMotionLabel({ located: true, moving: false, points: recorded, now: drive[drive.length - 1].at + 60_000 }), '지금');
+  assert.equal(liveMotionLabel({ located: true, moving: null, points: recorded, now: drive[drive.length - 1].at + 60_000 }), '지금');
+  assert.equal(liveMotionLabel({ located: true, moving: false, points: recorded, now: drive[drive.length - 1].at + STAY_LABEL_DWELL_MS }), '머무름');
 
   const quiet = drive.map((point) => ({ ...point, speedMps: null, staying: true }));
   assert.equal(isRideStep(quiet[0], quiet[1]), true);
@@ -283,6 +288,30 @@ test('a vehicle pace keeps 2.5s vertices solid and does not say 머무름', () =
   assert.equal(trailDecision(origin, parked), 'snap');
   assert.equal(liveMotionLabel({ located: true, moving: false, points: [origin], now: t + 8_000 }), '머무름');
   assert.equal(liveMotionLabel({ located: false, moving: false, points: recorded, now: t }), '');
+});
+
+test('a walk keeps 지금 through sensor gaps and a peer trail uses the same dwell', () => {
+  const t = 1_700_000_000_000;
+  const origin = { lat: 37.55, lng: 127.02, at: t, accuracyM: 12, speedMps: 1.2, staying: false };
+  const walk = [origin];
+  for (let index = 1; index <= 8; index += 1) {
+    walk.push({
+      ...offset(origin, 0, index * 3.2, t + index * 2_500),
+      accuracyM: 12,
+      speedMps: 1.2,
+      staying: false,
+    });
+  }
+  const end = walk[walk.length - 1].at;
+  assert.equal(lastTravelAt(walk), end);
+  assert.equal(liveMotionLabel({ located: true, moving: false, points: walk, now: end + 2_000 }), '지금');
+  assert.equal(liveMotionLabel({ located: true, moving: true, points: walk, now: end + 2_000 }), '지금');
+  assert.equal(liveMotionLabel({ located: true, moving: null, points: walk, now: end + 30_000 }), '지금');
+  assert.equal(liveMotionLabel({ located: true, moving: false, points: walk, now: end + 60_000 }), '지금');
+  assert.equal(liveMotionLabel({ located: true, moving: null, points: walk, now: end + STAY_LABEL_DWELL_MS }), '머무름');
+  assert.equal(liveMotionLabel({ located: true, moving: true, points: [], now: end }), '지금');
+  const quiet = { ...offset(origin, 4, 2, t + 12_000), accuracyM: 12, speedMps: 0, staying: true };
+  assert.equal(lastTravelAt([origin, quiet]), null);
 });
 
 test('a short step inside the walking gate is not a vertex, and a poor fix is dropped', () => {
