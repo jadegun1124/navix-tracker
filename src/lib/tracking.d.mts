@@ -141,6 +141,14 @@ export const JOURNEY_STAY_MS: number;
 export const JOURNEY_STAY_FRESH_MS: number;
 export const JOURNEY_MIN_DISTANCE_M: number;
 export const JOURNEY_MIN_DURATION_MS: number;
+export const STAY_BOUND_RADIUS_M: number;
+export const STAY_SLOW_KMH: number;
+export const STAY_SLOW_MS: number;
+export function isStayNotJourney(
+  points: TrailSample[] | null | undefined,
+  durationMs: number,
+  distanceM?: number,
+): boolean;
 export const JOURNEY_POINT_CAP: number;
 export const JOURNEY_DAY_CAP: number;
 
@@ -185,7 +193,7 @@ export function playbackAnchor(
   points: TrailSample[] | null | undefined,
   ratio: number,
 ): { lat: number; lng: number; at: number; speedMps: number } | null;
-export function formatJourneyWhen(startedAt: number, endedAt: number): string;
+export function formatJourneyWhen(startedAt: number, endedAt: number, now?: number): string;
 export function formatJourneyDistance(meters: number): string;
 export function labelJourneyPlace<T extends JourneyPlace>(place: T, spots: JourneySpot[] | null | undefined): T;
 export function collapseDuplicateJourneys(list: JourneyRecord[] | null | undefined): JourneyRecord[];

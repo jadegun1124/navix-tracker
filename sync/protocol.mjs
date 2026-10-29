@@ -719,6 +719,7 @@ export function viewRoom(room, since) {
   const cursor = Number.isFinite(since) ? since : 0;
   return {
     places: Object.values(room.places || {}),
+    departed: departedMemberIds(room, 'family'),
     alerts: (room.alerts || []).filter((alert) => alert.at > cursor),
     profiles: viewProfiles(room),
     trails: viewTrails(room),
@@ -751,9 +752,23 @@ function cleanSubscription(input) {
   return { subscription };
 }
 
+export function departedMemberIds(room, audience = 'family') {
+  const ids = [];
+  const seen = new Set();
+  for (const place of Object.values(room.places || {})) {
+    if (!place || place.sharing !== false) continue;
+    if (audience && place.audience !== audience) continue;
+    if (typeof place.memberId !== 'string' || !place.memberId || seen.has(place.memberId)) continue;
+    seen.add(place.memberId);
+    ids.push(place.memberId);
+  }
+  return ids;
+}
+
 export function viewFamilyPlaces(room) {
   return {
     places: Object.values(room.places || {}).filter((place) => place.audience === 'family' && place.sharing && place.lat != null && place.lng != null),
+    departed: departedMemberIds(room, 'family'),
     profiles: viewProfiles(room),
     trails: viewTrails(room),
   };

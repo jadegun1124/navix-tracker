@@ -5,6 +5,8 @@ import { carryPlace, cleanPlace } from '../../lib/memberPlace.mjs';
 import { isSelfEchoPlace, mergePeerSessions, withoutSelfEcho } from '../../lib/peerFamily.mjs';
 import { resolveManagedTarget } from '../../lib/managedPlace.mjs';
 import { hiddenKeysForMember, placeHidden } from '../../lib/familyRoom.mjs';
+import { bindPlaceToMember, placeIsSelf, placeMemberId } from '../../lib/placeBinding.mjs';
+import { cleanDepartedIds } from '../../lib/memberPresence.mjs';
 import { familyPinId, isMemberId, moveKeyed } from '../../lib/sharedIdentity.mjs';
 import { HISTORY_DAYS, JOURNEY_POINT_CAP, TRAIL_POINT_CAP, fixShowsRide, isWithinHistory, journeysWithinHistory, labelJourneyPlace, lastTravelAt, mergeJourneyLists, seoulDayKey, settleTrailPoint, stayLabelDwellMs, storedTrackAfterArchive, tracksWithinHistory, trimJourneyList, visitsWithinHistory, type JourneyRecord } from '../../lib/tracking.mjs';
 import type { DayStop } from '../../lib/tracking.mjs';
@@ -440,7 +442,33 @@ function cleanProfile(value: unknown): Profile | null {
 }
 
 function memberIdOf(place: SharedPlace): string {
-  return isMemberId(place.memberId) ? place.memberId : '';
+  return placeMemberId(place);
+}
+
+function dropLeftPublishers(state: Session, memberIds: string[]): Session {
+  const gone = new Set(cleanDepartedIds(memberIds));
+  if (gone.size === 0) return state;
+  const removed = state.members.filter((member) => member.id !== 'self' && member.publisherId && gone.has(member.publisherId));
+  if (removed.length === 0) return state;
+  const dropIds = new Set(removed.map((member) => member.id));
+  const tracks = { ...state.tracks };
+  const journeys = { ...state.journeys };
+  const visits = { ...state.visits };
+  const trailRevisions = { ...(state.trailRevisions || {}) };
+  for (const member of removed) {
+    delete tracks[member.id];
+    delete journeys[member.id];
+    delete visits[member.id];
+    if (member.publisherId) delete trailRevisions[member.publisherId];
+  }
+  return {
+    ...state,
+    members: state.members.filter((member) => !dropIds.has(member.id)),
+    tracks,
+    journeys,
+    visits,
+    trailRevisions,
+  };
 }
 
 function withPublisher(member: Member, place: SharedPlace): Member {
@@ -456,11 +484,10 @@ function describeFamilyPlace(code: string, place: SharedPlace, profiles: SharedP
   const name = (profile?.name || place.name).trim().slice(0, 80) || place.name;
   const photo = profile?.photo ? cleanPhoto(profile.photo) : undefined;
   const id = familyPinId(code, place);
-  const legacyId = place.priorName ? `family:${code}:${place.priorName}` : `family:${code}:${place.name}`;
   const battery = typeof place.batteryPct === 'number' ? Math.round(place.batteryPct) : null;
   const charging = place.charging === true ? true : place.charging === false ? false : null;
   const previous = current.find((entry) => entry.id === id || (memberId !== '' && entry.publisherId === memberId));
-  return { id, legacyId, memberId, name, photo: photo || previous?.photo, battery, charging, place };
+  return { id, memberId, name, photo: photo || previous?.photo, battery, charging, place };
 }
 
 function memberIndexForProfile(members: Member[], profile: SharedProfile, code: string): number {
@@ -621,7 +648,7 @@ type Action =
   | { type: 'set-keep-alive'; on: boolean }
   | { type: 'apply-shared-place'; place: SharedPlace }
   | { type: 'apply-shared-profiles'; code: string; profiles: SharedProfile[] }
-  | { type: 'set-room-family-places'; code: string; places: SharedPlace[]; profiles: SharedProfile[] }
+  | { type: 'set-room-family-places'; code: string; places: SharedPlace[]; profiles: SharedProfile[]; departed?: string[] }
   | { type: 'apply-canonical-trails'; trails: CanonicalTrail[] }
   | { type: 'merge-visits'; memberId: string; stops: DayStop[] }
   | { type: 'set-visit-label'; memberId: string; id: string; label: string }
@@ -898,8 +925,13 @@ function reducer(state: Session, action: Action): Session {
     case 'apply-shared-place': {
       const place = action.place;
       if (placeHidden(place.code, place, state.hiddenMemberIds || [])) return state;
+      if (placeIsSelf(place, state.profile?.id)) return state;
+      const publisher = memberIdOf(place);
+      if (!place.sharing && publisher) return dropLeftPublishers(state, [publisher]);
       if (place.audience === 'family') return state;
+      if (!publisher) return state;
       const target = resolveManagedTarget(state.members, place);
+      if (!target.id) return state;
       const liveFix = place.sharing && place.lat != null && place.lng != null && Number.isFinite(place.lat) && Number.isFinite(place.lng);
       if (target.create && !liveFix) return state;
       const members = target.create ? [...state.members, target.create] : state.members;
@@ -1017,9 +1049,23 @@ function reducer(state: Session, action: Action): Session {
       const today = seoulDayKey(now);
       const profiles = action.profiles ?? [];
       const hidden = state.hiddenMemberIds || [];
-      const incoming = action.places.filter((place) => place.audience === 'family' && place.sharing && place.lat != null && place.lng != null && Number.isFinite(place.lat) && Number.isFinite(place.lng) && !isSelfEchoPlace(place, state.profile?.id, state.inviteCode) && !placeHidden(action.code, place, hidden));
+      state = dropLeftPublishers(state, action.departed || []);
+      const incoming = action.places.filter((place) => (
+        place.audience === 'family'
+        && place.sharing
+        && place.lat != null
+        && place.lng != null
+        && Number.isFinite(place.lat)
+        && Number.isFinite(place.lng)
+        && memberIdOf(place) !== ''
+        && !placeIsSelf(place, state.profile?.id)
+        && !isSelfEchoPlace(place, state.profile?.id, state.inviteCode)
+        && !placeHidden(action.code, place, hidden)
+      ));
       const current = state.members.filter((member) => member.id.startsWith(prefix));
-      const described = incoming.map((place) => describeFamilyPlace(action.code, place, profiles, current));
+      const described = incoming
+        .map((place) => describeFamilyPlace(action.code, place, profiles, current))
+        .filter((item) => item.id && item.memberId);
       const unchanged = current.length === described.length && described.every((item) => {
         const member = current.find((entry) => entry.id === item.id || (item.memberId && entry.publisherId === item.memberId));
         return !!member
@@ -1040,16 +1086,13 @@ function reducer(state: Session, action: Action): Session {
       for (const item of described) {
         const place = item.place;
         if (place.lat == null || place.lng == null) continue;
-        const previous = current.find((entry) => entry.id === item.id || (item.memberId !== '' && entry.publisherId === item.memberId) || entry.id === item.legacyId);
+        const previous = current.find((entry) => entry.id === item.id || (item.memberId !== '' && entry.publisherId === item.memberId));
         if (previous && previous.id !== item.id) {
           tracks = moveKeyed(tracks, previous.id, item.id);
           visits = moveKeyed(visits, previous.id, item.id);
           journeys = moveKeyed(journeys, previous.id, item.id);
         }
-        const roster = members.find((entry) => entry.id !== 'self' && entry.role !== 'admin-share' && (
-          (item.memberId !== '' && entry.publisherId === item.memberId)
-          || (entry.inviteCode === action.code && entry.name === item.name)
-        ));
+        const roster = bindPlaceToMember(members, place);
         if (roster) {
           if (item.id !== roster.id) {
             tracks = moveKeyed(tracks, item.id, roster.id);
@@ -1348,7 +1391,7 @@ interface FamilyApi {
   setKeepAlive: (on: boolean) => void;
   applySharedPlace: (place: SharedPlace) => void;
   applySharedProfiles: (code: string, profiles: SharedProfile[]) => void;
-  setRoomFamilyPlaces: (code: string, places: SharedPlace[], profiles?: SharedProfile[]) => void;
+  setRoomFamilyPlaces: (code: string, places: SharedPlace[], profiles?: SharedProfile[], departed?: string[]) => void;
   applyCanonicalTrails: (trails: CanonicalTrail[]) => void;
   mergeVisits: (memberId: string, stops: DayStop[]) => void;
   setVisitLabel: (memberId: string, id: string, label: string) => void;
@@ -1423,7 +1466,7 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
     setKeepAlive: (on) => dispatch({ type: 'set-keep-alive', on }),
     applySharedPlace: (place) => dispatch({ type: 'apply-shared-place', place }),
     applySharedProfiles: (code, profiles) => dispatch({ type: 'apply-shared-profiles', code, profiles }),
-    setRoomFamilyPlaces: (code, places, profiles) => dispatch({ type: 'set-room-family-places', code, places, profiles: profiles ?? [] }),
+    setRoomFamilyPlaces: (code, places, profiles, departed) => dispatch({ type: 'set-room-family-places', code, places, profiles: profiles ?? [], departed }),
     applyCanonicalTrails: (trails) => dispatch({ type: 'apply-canonical-trails', trails }),
     mergeVisits: (memberId, stops) => dispatch({ type: 'merge-visits', memberId, stops }),
     setVisitLabel: (memberId, id, label) => dispatch({ type: 'set-visit-label', memberId, id, label }),

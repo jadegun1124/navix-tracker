@@ -1,3 +1,4 @@
+import { placeMemberId, placeStorageKey } from '../lib/placeBinding.mjs';
 import { publishPlaceRemote } from './familySync';
 
 export interface SharedPlace {
@@ -34,10 +35,8 @@ function isPlace(value: unknown): value is SharedPlace {
   return typeof place.code === 'string' && place.code.length >= 4 && typeof place.at === 'number' && typeof place.sharing === 'boolean';
 }
 
-function storageKey(place: SharedPlace): string {
-  const audience = place.audience === 'family' ? 'family' : 'admin';
-  if (place.memberId) return `${place.code}:${audience}:id:${place.memberId}`;
-  return `${place.code}:${audience}:${place.name}`;
+function storageKey(place: SharedPlace): string | null {
+  return placeStorageKey(place);
 }
 
 function batteryOf(place: SharedPlace): number | null {
@@ -59,7 +58,7 @@ function readMap(): Record<string, SharedPlace> {
 }
 
 export function readSharedPlaces(): SharedPlace[] {
-  return Object.values(readMap());
+  return Object.values(readMap()).filter((place) => placeMemberId(place) !== '');
 }
 
 const remoteSent = new Set<string>();
@@ -72,16 +71,24 @@ function remoteFingerprint(place: SharedPlace): string {
 }
 
 export function publishSharedPlace(place: SharedPlace, syncToken?: string | null, profileKey?: string | null) {
-  const places = readMap();
   const key = storageKey(place);
+  const places = readMap();
   const audience = place.audience === 'family' ? 'family' : 'admin';
   const legacy = places[place.code];
   if (legacy && legacy.name === place.name && (legacy.audience === 'family' ? 'family' : 'admin') === audience) {
     delete places[place.code];
   }
-  if (place.memberId) {
+  if (placeMemberId(place)) {
     delete places[`${place.code}:${audience}:${place.name}`];
     if (place.priorName) delete places[`${place.code}:${audience}:${place.priorName}`];
+  }
+  if (!key) {
+    const fingerprint = remoteFingerprint(place);
+    if (syncToken && !remoteSent.has(fingerprint) && publishPlaceRemote(place, syncToken, profileKey)) {
+      remoteSent.add(fingerprint);
+      if (remoteSent.size > 200) remoteSent.clear();
+    }
+    return;
   }
   const current = places[key];
   const battery = batteryOf(place);

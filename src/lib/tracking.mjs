@@ -68,7 +68,10 @@ export const TRAIL_RELOCATION_M = 120;
  * the 50m stop cluster: a building canyon often jumps 50–200m.
  * A neighborhood relocation (about 1km) stays outside and is still kept.
  */
-const INDOOR_STAY_RADIUS_M = 220;
+const INDOOR_STAY_RADIUS_M = 300;
+export const STAY_BOUND_RADIUS_M = 300;
+export const STAY_SLOW_KMH = 1;
+export const STAY_SLOW_MS = 30 * 60 * 1000;
 /** One stationary step longer than a walked vertex (~30m) is a multipath leap on the drawing pass. */
 const INDOOR_LEAP_M = 48;
 /**
@@ -1669,11 +1672,34 @@ function isStationaryCloud(points, durationMs) {
   return pace < 0.08;
 }
 
+function locatedPath(points) {
+  return (Array.isArray(points) ? points : []).filter((point) => (
+    point && !point.stayEnd && Number.isFinite(point.lat) && Number.isFinite(point.lng)
+  ));
+}
+
+/** A stay that must not become a journey card, including already-saved ones. */
+export function isStayNotJourney(points, durationMs, distanceM) {
+  const path = locatedPath(points);
+  if (path.length < 2 || !Number.isFinite(durationMs) || durationMs <= 0) return false;
+  for (let index = 1; index < path.length; index += 1) {
+    if (isRideStep(path[index - 1], path[index])) return false;
+  }
+  const moved = Number.isFinite(distanceM) && distanceM > 0 ? distanceM : travelDistance(path);
+  if (loopDistanceBeatsSpread(moved, path)) return false;
+  const hours = durationMs / 3_600_000;
+  const kmh = hours > 0 ? (moved / 1000) / hours : 0;
+  const spread = clusterSpread(path);
+  if (durationMs > STAY_SLOW_MS && spread < STAY_BOUND_RADIUS_M) return true;
+  if (durationMs > STAY_SLOW_MS && kmh < STAY_SLOW_KMH) return true;
+  return isStationaryCloud(path, durationMs);
+}
+
 function journeyPathRecordable(path, durationMs) {
   if (!Array.isArray(path) || path.length < 2) return false;
   if (durationMs < JOURNEY_MIN_DURATION_MS) return false;
   if (travelDistance(path) < JOURNEY_MIN_DISTANCE_M) return false;
-  if (isStationaryCloud(path, durationMs)) return false;
+  if (isStayNotJourney(path, durationMs, travelDistance(path))) return false;
   return true;
 }
 
@@ -2035,15 +2061,34 @@ export function playbackAnchor(points, ratio) {
   return still(end);
 }
 
-export function formatJourneyWhen(startedAt, endedAt) {
-  if (!Number.isFinite(startedAt) || !Number.isFinite(endedAt)) return '';
-  const fmt = new Intl.DateTimeFormat('en-GB', {
+function seoulClock(at) {
+  return new Intl.DateTimeFormat('en-GB', {
     timeZone: 'Asia/Seoul',
     hour: '2-digit',
     minute: '2-digit',
     hourCycle: 'h23',
-  });
-  return `${fmt.format(startedAt)}–${fmt.format(endedAt)}`;
+  }).format(at);
+}
+
+function seoulMonthDay(at) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Seoul',
+    month: 'numeric',
+    day: 'numeric',
+  }).formatToParts(at);
+  const month = parts.find((part) => part.type === 'month')?.value || '';
+  const day = parts.find((part) => part.type === 'day')?.value || '';
+  if (!month || !day) return '';
+  return `${month.padStart(2, '0')}/${day.padStart(2, '0')}`;
+}
+
+export function formatJourneyWhen(startedAt, endedAt, now = Date.now()) {
+  if (!Number.isFinite(startedAt) || !Number.isFinite(endedAt)) return '';
+  const startDay = seoulDayKey(startedAt);
+  const endDay = seoulDayKey(endedAt);
+  const today = Number.isFinite(now) ? seoulDayKey(now) : '';
+  if (startDay === endDay && startDay === today) return `${seoulClock(startedAt)}–${seoulClock(endedAt)}`;
+  return `${seoulMonthDay(startedAt)} ${seoulClock(startedAt)} → ${seoulMonthDay(endedAt)} ${seoulClock(endedAt)}`;
 }
 
 export function formatJourneyDistance(meters) {
@@ -2216,12 +2261,10 @@ function storedJourneyRecordable(journey) {
   const durationMs = Number(journey?.endedAt) - Number(journey?.startedAt);
   if (!(durationMs >= JOURNEY_MIN_DURATION_MS)) return false;
   if (journey?.cloud === true) return false;
-  if (Number.isFinite(journey?.distanceM)) {
-    if (journey.distanceM < JOURNEY_MIN_DISTANCE_M) return false;
-    if (journey.cloud === false || loopDistanceBeatsSpread(journey.distanceM, samples)) return true;
-    if (isStationaryCloud(samples, durationMs)) return false;
-    return true;
-  }
+  if (Number.isFinite(journey?.distanceM) && journey.distanceM < JOURNEY_MIN_DISTANCE_M) return false;
+  if (loopDistanceBeatsSpread(journey?.distanceM, samples)) return true;
+  if (isStayNotJourney(samples, durationMs, journey?.distanceM)) return false;
+  if (Number.isFinite(journey?.distanceM)) return true;
   return journeyPathRecordable(samples, durationMs);
 }
 

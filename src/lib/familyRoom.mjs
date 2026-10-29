@@ -43,7 +43,8 @@ export function placeHidden(code, place, hidden) {
   const set = hidden instanceof Set ? hidden : new Set(Array.isArray(hidden) ? hidden : []);
   if (set.size === 0 || !place) return false;
   if (typeof place.memberId === 'string' && place.memberId && set.has(place.memberId)) return true;
-  if (set.has(familyPinId(code, place))) return true;
+  const pinId = familyPinId(code, place);
+  if (pinId && set.has(pinId)) return true;
   if (typeof place.name === 'string' && place.name) {
     if (set.has(`family:${code}:${place.name}`)) return true;
     if (set.has(`name:${place.name}`)) return true;

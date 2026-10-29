@@ -5,8 +5,7 @@ export function isMemberId(value) {
 }
 
 export function familyPinId(code, place) {
-  const name = typeof place?.name === 'string' ? place.name : '';
-  return isMemberId(place?.memberId) ? `family:${code}:${place.memberId}` : `family:${code}:${name}`;
+  return isMemberId(place?.memberId) ? `family:${code}:${place.memberId}` : '';
 }
 
 export function moveKeyed(records, fromId, toId) {

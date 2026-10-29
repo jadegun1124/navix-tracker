@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, type RefObject } from 'rea
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { Bike, Car, ChevronRight, Footprints, Pause, Plane, Play } from 'lucide-react';
-import { classifyJourneyMode, formatJourneyDistance, journeyPathDistance, modeLabel, playbackAnchor, visibleTrail, type TravelMode } from '../../lib/tracking.mjs';
+import { classifyJourneyMode, formatJourneyDistance, formatJourneyWhen, journeyPathDistance, modeLabel, playbackAnchor, visibleTrail, type TravelMode } from '../../lib/tracking.mjs';
 import { VWORLD_ATTRIBUTION, vworldApiKey, vworldBaseTileUrl } from '../../services/vworld';
 import type { Journey } from '../../types/family';
 
@@ -53,8 +53,28 @@ function formatDuration(ms: number) {
   return rest ? `${hours}시간 ${rest}분` : `${hours}시간`;
 }
 
-function rangeLabel(startedAt: number, endedAt: number) {
-  return `${seoulClock(startedAt)} ~ ${seoulClock(endedAt)} (${formatDuration(endedAt - startedAt)})`;
+function seoulMonthDay(at: number) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Seoul',
+    month: 'numeric',
+    day: 'numeric',
+  }).formatToParts(at);
+  const month = parts.find((part) => part.type === 'month')?.value || '';
+  const day = parts.find((part) => part.type === 'day')?.value || '';
+  return month && day ? `${month.padStart(2, '0')}/${day.padStart(2, '0')}` : '';
+}
+
+function rangeLabel(startedAt: number, endedAt: number, now = Date.now()) {
+  return `${formatJourneyWhen(startedAt, endedAt, now).replace('–', ' ~ ')} (${formatDuration(endedAt - startedAt)})`;
+}
+
+function journeyNeedsDate(startedAt: number, endedAt: number, now = Date.now()) {
+  return formatJourneyWhen(startedAt, endedAt, now).includes('→');
+}
+
+function journeyStamp(at: number, startedAt: number, endedAt: number, now = Date.now()) {
+  if (!journeyNeedsDate(startedAt, endedAt, now)) return seoulClock(at);
+  return `${seoulMonthDay(at)} ${seoulClock(at)}`;
 }
 
 function spacedDistance(meters: number) {
@@ -400,12 +420,12 @@ export function JourneyScrubber({
         <p className="flex items-center gap-2 text-xs text-slate-600">
           <span className="h-2.5 w-2.5 rounded-full bg-[#0084FF]" />
           <span className="min-w-0 flex-1 truncate">{placeText(journey.start, '출발지')}</span>
-          <span className="font-bold">{seoulClock(journey.startedAt)}</span>
+          <span className="font-bold">{journeyStamp(journey.startedAt, journey.startedAt, journey.endedAt)}</span>
         </p>
         <p className="flex items-center gap-2 text-xs text-slate-600">
           <span className="h-2.5 w-2.5 rounded-full border-2 border-[#0084FF] bg-white" />
           <span className="min-w-0 flex-1 truncate">{placeText(journey.end, '도착지')}</span>
-          <span className="font-bold">{seoulClock(journey.endedAt)}</span>
+          <span className="font-bold">{journeyStamp(journey.endedAt, journey.startedAt, journey.endedAt)}</span>
         </p>
       </div>
     </div>

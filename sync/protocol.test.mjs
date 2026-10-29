@@ -355,8 +355,46 @@ test('alert cursor does not hide places, and family share stays behind the write
   assert.equal(stopped.status, 200);
   const after = await call(store, 'GET', `/v1/rooms/${code}/family`, { token });
   assert.deepEqual(after.body.places, []);
+  assert.deepEqual(after.body.departed, []);
   const childStill = await call(store, 'GET', `/v1/rooms/${code}`, { token, readKey });
   assert.equal(childStill.body.places.find((place) => place.audience !== 'family').lat, 37.1);
+});
+
+test('a family leave with a member id is departed immediately', async () => {
+  const store = createMemoryStore();
+  const code = '48291';
+  const token = await syncTokenFor(randomKey(), randomKey());
+  const profileKey = randomKey();
+  const memberId = 'local-leave1';
+  const at = Date.now();
+  const live = await call(store, 'PUT', `/v1/rooms/${code}/place`, {
+    token,
+    profileKey,
+    body: {
+      code,
+      name: '민지',
+      memberId,
+      lat: 37.63,
+      lng: 127.06,
+      accuracyM: 8,
+      at,
+      sharing: true,
+      audience: 'family',
+    },
+  });
+  assert.equal(live.status, 200);
+  const sharing = await call(store, 'GET', `/v1/rooms/${code}/family`, { token });
+  assert.equal(sharing.body.places.length, 1);
+  assert.deepEqual(sharing.body.departed, []);
+  const left = await call(store, 'PUT', `/v1/rooms/${code}/place`, {
+    token,
+    profileKey,
+    body: { code, name: '민지', memberId, lat: null, lng: null, accuracyM: 0, at: at + 10, sharing: false, audience: 'family' },
+  });
+  assert.equal(left.status, 200);
+  const after = await call(store, 'GET', `/v1/rooms/${code}/family`, { token });
+  assert.deepEqual(after.body.places, []);
+  assert.deepEqual(after.body.departed, [memberId]);
 });
 
 test('bad battery and audience are rejected', async () => {

@@ -2,6 +2,7 @@ import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } f
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { hasLocation } from '../../lib/geo';
+import { memberIsStale, memberPresence } from '../../lib/memberPresence.mjs';
 import { trailDrawParts } from '../../lib/tracking.mjs';
 import { VWORLD_ATTRIBUTION, vworldApiKey, vworldBaseTileUrl } from '../../services/vworld';
 import type { HomeZone, Member, TrackPoint } from '../../types/family';
@@ -232,6 +233,7 @@ export const StreetMap = forwardRef<StreetMapHandle, {
     for (const member of members) {
       if (!hasLocation(member)) continue;
       const selected = member.id === selectedId;
+      const dimmed = memberIsStale(memberPresence(member, Date.now()));
       const color = '#0084FF';
       const self = member.role === 'self';
       const label = escapeHtml(self ? '나' : member.name);
@@ -249,7 +251,7 @@ export const StreetMap = forwardRef<StreetMapHandle, {
         zIndexOffset: selected ? 800 : 400,
         icon: L.divIcon({
           className: 'umap-member-pin',
-          html: `<div style="display:flex;flex-direction:column;align-items:center;transform:translate(-50%,-100%)">
+          html: `<div style="display:flex;flex-direction:column;align-items:center;transform:translate(-50%,-100%);opacity:${dimmed ? '0.55' : '1'}">
             <span style="display:inline-flex;flex-direction:column;align-items:center;margin-bottom:4px;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:700;max-width:180px;box-shadow:0 1px 4px rgba(15,23,42,.16);background:${selected ? '#0084FF' : '#fff'};color:${selected ? '#fff' : '#0f172a'}"><span style="display:inline-flex;align-items:center;white-space:nowrap">${label}${battery}</span>${place ? `<span style="display:block;max-width:164px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px;font-weight:600;opacity:.85">${place}</span>` : ''}</span>
             ${face}
           </div>`,
