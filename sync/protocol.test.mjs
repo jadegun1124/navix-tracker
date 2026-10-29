@@ -18,6 +18,11 @@ import {
   withCors,
 } from './protocol.mjs';
 
+/** Phone checks ignore clock fields. An epoch like 1793250105000 contains "010". */
+function publicJson(value) {
+  return JSON.stringify(value, (key, item) => (key === 'at' ? undefined : item));
+}
+
 async function call(store, method, path, { token, readKey, profileKey, body, raw } = {}) {
   const headers = new Headers();
   if (token) headers.set('x-umap-sync-key', token);
@@ -77,7 +82,7 @@ test('managed publish is visible only to the admin read key, and revoke clears c
   assert.equal(visible.body.places.length, 1);
   assert.equal(visible.body.places[0].name, '하나');
   assert.equal(visible.body.places[0].lat, 37.64);
-  assert.equal(JSON.stringify(visible.body).includes('010'), false);
+  assert.equal(publicJson(visible.body).includes('010'), false);
   assert.equal(visible.body.places[0].phone, undefined);
 
   const revoked = await call(store, 'PUT', `/v1/rooms/${code}/place`, {
@@ -504,7 +509,7 @@ test('SOS push subscription is kept for the admin reader and hidden from the roo
 
   const reader = await call(store, 'GET', `/v1/rooms/${code}`, { token, readKey });
   assert.equal(JSON.stringify(reader.body).includes('fcm.googleapis.com'), false);
-  assert.equal(JSON.stringify(reader.body).includes('010'), false);
+  assert.equal(publicJson(reader.body).includes('010'), false);
   const id = await roomToken(code, writeKey, token.split('.')[1]);
   const room = await store.read(id);
   assert.equal(room.pushes.length, 1);
@@ -633,7 +638,7 @@ test('chat push names the recipient and hides the endpoint', async () => {
   assert.equal(payload.title, '엄마');
   assert.equal(payload.body, '집 근처예요');
   assert.equal(payload.code, code);
-  assert.equal(JSON.stringify(payload).includes('010'), false);
+  assert.equal(publicJson(payload).includes('010'), false);
   const longText = `${'가'.repeat(90)}`;
   const longPayload = chatPushPayload({ ...message, text: longText }, code);
   assert.equal(longPayload.body.length, 80);

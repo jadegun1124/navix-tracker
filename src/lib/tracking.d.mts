@@ -89,6 +89,7 @@ export function liveMotionLabel(input: {
   now: number;
 }): '' | '지금' | '머무름';
 export function trailMoveGate(last: TrailSample | null | undefined, point: TrailSample | null | undefined): number;
+export function isImpossibleJump(last: TrailSample | null | undefined, point: TrailSample | null | undefined): boolean;
 export function trailDecision(last: TrailSample | null | undefined, point: TrailSample | null | undefined): TrailDecision;
 export function shouldKeepTrailPoint(last: TrailSample | null | undefined, point: TrailSample): boolean;
 export function collapseStayTrail(points: TrailSample[] | null | undefined): TrailSample[];
@@ -152,6 +153,8 @@ export interface JourneyRecord {
   start: JourneyPlace;
   end: JourneyPlace;
   open?: boolean;
+  /** Dense-path stationary-cloud verdict. False means the trip was a real walk before compaction. */
+  cloud?: boolean;
 }
 
 export interface JourneySpot {
@@ -165,9 +168,17 @@ export function splitClosedJourneys(
   points: TrailSample[] | null | undefined,
   now: number,
 ): { journeys: JourneyRecord[]; remaining: TrailSample[] };
+export function storedTrackAfterArchive(
+  points: TrailSample[] | null | undefined,
+  now: number,
+): { journeys: JourneyRecord[]; points: TrailSample[] };
 export function liveTrailPoints(points: TrailSample[] | null | undefined, now: number): TrailSample[];
 export function liveTrailDrawable(points: TrailSample[] | null | undefined, now?: number): boolean;
 export function previewOpenJourney(points: TrailSample[] | null | undefined, now: number): JourneyRecord | null;
+export function playbackAnchor(
+  points: TrailSample[] | null | undefined,
+  ratio: number,
+): { lat: number; lng: number; at: number; speedMps: number } | null;
 export function formatJourneyWhen(startedAt: number, endedAt: number): string;
 export function formatJourneyDistance(meters: number): string;
 export function labelJourneyPlace<T extends JourneyPlace>(place: T, spots: JourneySpot[] | null | undefined): T;

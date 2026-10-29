@@ -6,7 +6,7 @@ import { isSelfEchoPlace, mergePeerSessions, withoutSelfEcho } from '../../lib/p
 import { resolveManagedTarget } from '../../lib/managedPlace.mjs';
 import { hiddenKeysForMember, placeHidden } from '../../lib/familyRoom.mjs';
 import { familyPinId, isMemberId, moveKeyed } from '../../lib/sharedIdentity.mjs';
-import { HISTORY_DAYS, JOURNEY_POINT_CAP, TRAIL_POINT_CAP, fixShowsRide, isWithinHistory, journeysWithinHistory, labelJourneyPlace, lastTravelAt, mergeJourneyLists, seoulDayKey, settleTrailPoint, splitClosedJourneys, stayLabelDwellMs, tracksWithinHistory, trimJourneyList, visitsWithinHistory, type JourneyRecord } from '../../lib/tracking.mjs';
+import { HISTORY_DAYS, JOURNEY_POINT_CAP, TRAIL_POINT_CAP, fixShowsRide, isWithinHistory, journeysWithinHistory, labelJourneyPlace, lastTravelAt, mergeJourneyLists, seoulDayKey, settleTrailPoint, stayLabelDwellMs, storedTrackAfterArchive, tracksWithinHistory, trimJourneyList, visitsWithinHistory, type JourneyRecord } from '../../lib/tracking.mjs';
 import type { DayStop } from '../../lib/tracking.mjs';
 import type { SharedPlace, SharedProfile } from '../../services/familyShare';
 import { umapLocation } from '../../services/umapLocation';
@@ -288,7 +288,7 @@ function cleanJourneys(value: unknown): Record<string, Journey[]> {
       const points = Array.isArray(journey.points) ? journey.points.filter(isPoint).slice(-JOURNEY_POINT_CAP) : [];
       if (points.length < 2) continue;
       const placeLabel = (label: unknown) => (typeof label === 'string' && label.trim() ? label.trim().slice(0, 120) : null);
-      clean.push({
+      const stored: Journey = {
         id: journey.id.slice(0, 160),
         startedAt: journey.startedAt,
         endedAt: journey.endedAt,
@@ -296,7 +296,9 @@ function cleanJourneys(value: unknown): Record<string, Journey[]> {
         points,
         start: { lat: journey.start.lat, lng: journey.start.lng, label: placeLabel(journey.start.label) },
         end: { lat: journey.end.lat, lng: journey.end.lng, label: placeLabel(journey.end.label) },
-      });
+      };
+      if (journey.cloud === true || journey.cloud === false) stored.cloud = journey.cloud;
+      clean.push(stored);
     }
     if (clean.length > 0) journeys[id] = clean.slice(-80);
   }
@@ -315,13 +317,21 @@ function knownSpots(state: Session, memberId: string) {
 }
 
 function archiveJourneys(state: Session, now: number): Session {
-  const tracks = tracksWithinHistory(state.tracks, now);
+  let tracks = tracksWithinHistory(state.tracks, now);
   let journeys = journeysWithinHistory(state.journeys ?? {}, now);
+  let tracksDirty = tracks !== state.tracks;
+  const putTrack = (id: string, nextPoints: Session['tracks'][string]) => {
+    if (tracks === state.tracks) tracks = { ...tracks };
+    tracksDirty = true;
+    if (nextPoints.length === 0) delete tracks[id];
+    else tracks[id] = nextPoints;
+  };
   for (const [id, points] of Object.entries(tracks)) {
-    const split = splitClosedJourneys(points, now);
-    if (split.journeys.length === 0) continue;
+    const archived = storedTrackAfterArchive(points, now);
+    if (archived.points !== points) putTrack(id, archived.points);
+    if (archived.journeys.length === 0) continue;
     const spots = knownSpots({ ...state, journeys }, id);
-    const labeled = split.journeys.map((journey: JourneyRecord) => ({
+    const labeled = archived.journeys.map((journey: JourneyRecord) => ({
       ...journey,
       start: labelJourneyPlace(journey.start, spots),
       end: labelJourneyPlace(journey.end, spots),
@@ -334,7 +344,7 @@ function archiveJourneys(state: Session, now: number): Session {
     else next[id] = merged;
     journeys = next;
   }
-  if (tracks === state.tracks && journeys === (state.journeys ?? {})) return state;
+  if (!tracksDirty && journeys === (state.journeys ?? {})) return state;
   return {
     ...state,
     trailDay: seoulDayKey(now),
