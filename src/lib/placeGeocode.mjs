@@ -7,7 +7,7 @@
 
 import { APP_VERSION_NAME } from './appRelease.mjs';
 
-const NOMINATIM_UA = `Kinnex/${APP_VERSION_NAME} (family location; https://github.com/jadegun1124/kinnex)`;
+const NOMINATIM_UA = `Kinnex/${APP_VERSION_NAME} (family location; https://github.com/jadegun1124/umap)`;
 const CACHE_KEY = 'umap_geocode_cache_v2';
 const PLACE_LIMIT = 56;
 const NOMINATIM_GAP_MS = 1100;
