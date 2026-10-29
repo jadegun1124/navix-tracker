@@ -24,6 +24,8 @@ export function readGoogleAccount(storage: { getItem: (key: string) => string | 
 
 export function writeGoogleAccount(storage: { setItem: (key: string, value: string) => void } | null, account: { sub: string; localId: string; name: string; email: string }): void;
 
+export function clearGoogleAccount(storage: { removeItem: (key: string) => void } | null): void;
+
 export function profileFromGoogle(
   claims: { sub?: string; name?: string; email?: string } | null,
   saved: { sub: string; localId: string; name: string; email?: string } | null,

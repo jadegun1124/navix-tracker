@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Bell, BatteryCharging, ChevronLeft, Footprints, MapPin, Shield } from 'lucide-react';
-import { localProfile } from '../../lib/localProfile.mjs';
+import { deviceProfileKey, localProfile } from '../../lib/localProfile.mjs';
 import { GOOGLE_SETUP_MESSAGE } from '../../lib/googleAuth.mjs';
 import { persistAccountResult, recoverFamilyAccount } from '../../services/familyAccount';
 import { configuredGoogleWebClientId, signInWithGoogle } from '../../services/googleSignIn';
@@ -104,7 +104,20 @@ function Login({ onSubmit }: { onSubmit: (profile: Profile) => void }) {
           }
           setBusy(true);
           setMessage(null);
-          void signInWithGoogle().then((result) => {
+          const typed = localProfile(trimmed);
+          const snapshot = typed && family.state.inviteCode && family.state.syncWriteKey && family.state.syncReadKey
+            ? {
+              memberId: typed.id,
+              profileKey: deviceProfileKey(family.state.profile?.profileKey),
+              profile: { name: typed.name },
+              room: {
+                code: family.state.inviteCode,
+                writeKey: family.state.syncWriteKey,
+                readKey: family.state.syncReadKey,
+              },
+            }
+            : null;
+          void signInWithGoogle(snapshot).then((result) => {
             setBusy(false);
             if (!result.ok || !result.profile) {
               setMessage(result.message || 'Google 로그인을 마치지 못했습니다. 이 상태로 시작하지 않습니다.');

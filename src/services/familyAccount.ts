@@ -80,9 +80,7 @@ export async function backupFamilyAccount(snapshot: AccountSnapshot, accountKey 
     headers: accountHeaders(accountKey),
     body: JSON.stringify(snapshot),
   });
-  const result = await readAccountBody(response);
-  if (!result.ok && result.message) return registerFamilyAccount(snapshot);
-  return result;
+  return readAccountBody(response);
 }
 
 export async function recoverFamilyAccount(code: string) {

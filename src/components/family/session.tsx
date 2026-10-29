@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useReducer } from 'react';
 import { hasLocation, haversineMeters } from '../../lib/geo';
-import { applyAccountSnapshot } from '../../lib/accountRestore.mjs';
+import { applyAccountSnapshot, logoutLocalAccount } from '../../lib/accountRestore.mjs';
 import { scheduleAccountBackup } from '../../services/familyAccount';
 import { deviceProfileKey, localProfile } from '../../lib/localProfile.mjs';
 import { carryPlace, cleanPlace } from '../../lib/memberPlace.mjs';
@@ -1455,7 +1455,10 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
     setMotionNotify: (ids) => dispatch({ type: 'set-motion-notify', ids }),
     setMotionAlertPhase: (phase) => dispatch({ type: 'set-motion-alert-phase', phase }),
     pushNotice: (title, body) => dispatch({ type: 'notice', notice: notice(title, body) }),
-    logout: () => dispatch({ type: 'logout' }),
+    logout: () => {
+      logoutLocalAccount(typeof localStorage === 'undefined' ? null : localStorage);
+      dispatch({ type: 'logout' });
+    },
     clearFamilyRoom: (serverNote) => dispatch({ type: 'clear-family-room', serverNote: serverNote ?? null }),
     revisitPermissions: () => dispatch({ type: 'revisit-permissions' }),
   };

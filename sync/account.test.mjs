@@ -14,7 +14,16 @@ import {
 } from './account.mjs';
 import { createMemoryStore, handleSyncRequest, randomKey, syncTokenFor } from './protocol.mjs';
 import { GOOGLE_SETUP_MESSAGE } from '../src/lib/googleAuth.mjs';
-import { applyAccountSnapshot, snapshotFromSession } from '../src/lib/accountRestore.mjs';
+import {
+  ACCOUNT_KEY_STORAGE,
+  RECOVERY_CODE_STORAGE,
+  applyAccountSnapshot,
+  logoutLocalAccount,
+  snapshotFromSession,
+  writeStoredAccountKey,
+  writeStoredRecoveryCode,
+} from '../src/lib/accountRestore.mjs';
+import { GOOGLE_ACCOUNT_KEY, writeGoogleAccount } from '../src/lib/googleAuth.mjs';
 
 const CLIENT = '1234567890-abc.apps.googleusercontent.com';
 
@@ -239,4 +248,99 @@ test('restoring a snapshot reapplies the same person, room keys, and records', (
 test('account routes stay out of family rooms when the path is wrong', async () => {
   const op = await parseAccountOperation(new Request('http://sync.local/v1/rooms/48291', { method: 'GET' }));
   assert.equal(op, null);
+});
+
+test('a stale backup after recover updates the same account and does not mint a second book', async () => {
+  const accounts = createMemoryAccountStore();
+  const created = await accountCall(accounts, 'POST', '/v1/account', { body: snapshot() });
+  assert.equal(created.status, 200);
+  const oldKey = created.body.account.accountKey;
+  const recovery = created.body.account.recoveryCode;
+
+  const recovered = await accountCall(accounts, 'POST', '/v1/account/recover', { body: { code: recovery } });
+  assert.equal(recovered.status, 200);
+  assert.notEqual(recovered.body.account.accountKey, oldKey);
+
+  const stale = await accountCall(accounts, 'PUT', '/v1/account', {
+    accountKey: oldKey,
+    body: snapshot({
+      journeys: [{
+        id: 'j-2',
+        startedAt: Date.now() - 2_000_000,
+        endedAt: Date.now() - 1_800_000,
+        distanceM: 400,
+        points: [
+          { lat: 37.6365, lng: 127.0680, at: Date.now() - 2_000_000 },
+          { lat: 37.6368, lng: 127.0684, at: Date.now() - 1_800_000 },
+        ],
+        start: { lat: 37.6365, lng: 127.0680, label: '하계1차청구아파트 104동' },
+        end: { lat: 37.6368, lng: 127.0684, label: '하계동' },
+      }],
+    }),
+  });
+  assert.equal(stale.status, 200);
+  assert.equal(stale.body.account.memberId, 'local-restore1');
+  assert.equal(stale.body.account.recoveryCode, recovery);
+  assert.equal(stale.body.account.journeys[0].id, 'j-2');
+  assert.notEqual(stale.body.account.accountKey, oldKey);
+
+  const replay = await accountCall(accounts, 'POST', '/v1/account', { body: snapshot() });
+  assert.equal(replay.status, 200);
+  assert.equal(replay.body.account.memberId, 'local-restore1');
+  assert.equal(replay.body.account.recoveryCode, recovery);
+
+  const other = await accountCall(accounts, 'POST', '/v1/account', {
+    body: snapshot({ profileKey: 'otherkeyAAAAAAAAAA' }),
+  });
+  assert.equal(other.status, 409);
+});
+
+test('Google without a snapshot starts a new linked account', async () => {
+  const { publicKey, privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const jwk = publicKey.export({ format: 'jwk' });
+  const now = Date.now();
+  const payload = {
+    iss: 'https://accounts.google.com',
+    aud: CLIENT,
+    exp: Math.floor(now / 1000) + 600,
+    sub: '2098234766',
+    name: '아빠',
+    email: 'parent2@example.com',
+  };
+  const extras = { fetchCerts: async () => ({ keys: [{ kid: 'kid-1', kty: 'RSA', n: jwk.n, e: jwk.e }] }), now };
+  const accounts = createMemoryAccountStore();
+  const first = await accountCall(accounts, 'POST', '/v1/account/google', {
+    body: { idToken: tokenFor(privateKey, payload) },
+    extras,
+  });
+  assert.equal(first.status, 200);
+  assert.equal(first.body.account.googleLinked, true);
+  assert.equal(first.body.account.profile.name, '아빠');
+  assert.match(first.body.account.memberId, /^local-[a-z0-9]{3,64}$/);
+  assert.ok(first.body.account.room.code);
+  assert.ok(first.body.account.accountKey);
+
+  const again = await accountCall(accounts, 'POST', '/v1/account/google', {
+    body: { idToken: tokenFor(privateKey, payload) },
+    extras,
+  });
+  assert.equal(again.status, 200);
+  assert.equal(again.body.restored, true);
+  assert.equal(again.body.account.memberId, first.body.account.memberId);
+});
+
+test('logout wipes the stored account key so the next sign-in does not reuse the previous person', () => {
+  const storage = new Map();
+  const fake = {
+    getItem: (key) => (storage.has(key) ? storage.get(key) : null),
+    setItem: (key, value) => { storage.set(key, value); },
+    removeItem: (key) => { storage.delete(key); },
+  };
+  writeStoredAccountKey(fake, 'accountKeyAAAAAAAAAA');
+  writeStoredRecoveryCode(fake, 'ABCDEFGHJKLN');
+  writeGoogleAccount(fake, { sub: '1098234765', localId: 'local-restore1', name: '엄마', email: 'parent@example.com' });
+  logoutLocalAccount(fake);
+  assert.equal(fake.getItem(ACCOUNT_KEY_STORAGE), null);
+  assert.equal(fake.getItem(RECOVERY_CODE_STORAGE), null);
+  assert.equal(fake.getItem(GOOGLE_ACCOUNT_KEY), null);
 });

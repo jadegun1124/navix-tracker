@@ -322,6 +322,7 @@ export function sameMember(left, right) {
 function accountKeys(record) {
   return {
     record: `acct:${record.id}`,
+    member: `member:${record.memberId}`,
     session: `session:${record.sessionHash}`,
     recovery: `recovery:${record.recoveryHash}`,
     google: record.googleSub ? `google:${record.googleSub}` : '',
@@ -352,6 +353,7 @@ async function readRecord(store, id) {
 async function writeRecord(store, record, previous = null) {
   const keys = accountKeys(record);
   await store.put(keys.record, record);
+  await store.put(keys.member, record.id);
   await store.put(keys.session, record.id);
   await store.put(keys.recovery, record.id);
   if (keys.google) await store.put(keys.google, record.id);
@@ -363,6 +365,9 @@ async function writeRecord(store, record, previous = null) {
   }
   if (previous?.recoveryHash && previous.recoveryHash !== record.recoveryHash) {
     await store.delete(`recovery:${previous.recoveryHash}`);
+  }
+  if (previous?.memberId && previous.memberId !== record.memberId) {
+    await store.delete(`member:${previous.memberId}`);
   }
 }
 
@@ -381,6 +386,44 @@ async function findByRecovery(store, code) {
 async function findByGoogle(store, sub) {
   if (typeof sub !== 'string' || !/^[0-9]{5,}$/.test(sub)) return null;
   return readRecord(store, await store.get(`google:${sub}`));
+}
+
+async function findByMember(store, memberId) {
+  if (typeof memberId !== 'string' || !MEMBER_ID.test(memberId)) return null;
+  return readRecord(store, await store.get(`member:${memberId}`));
+}
+
+function mintLocalMemberId() {
+  const bytes = new Uint8Array(10);
+  crypto.getRandomValues(bytes);
+  const alphabet = 'abcdefghijklmnopqrstuvwxyz0123456789';
+  let id = 'local-';
+  for (const byte of bytes) id += alphabet[byte % 36];
+  return id;
+}
+
+function mintRoomCode() {
+  const bytes = new Uint8Array(2);
+  crypto.getRandomValues(bytes);
+  return String(10000 + ((bytes[0] << 8) | bytes[1]) % 90000);
+}
+
+function snapshotFromGoogleClaims(claims) {
+  const name = cleanName(claims && claims.name) || '가족';
+  return {
+    memberId: mintLocalMemberId(),
+    profileKey: randomKey(16),
+    profile: { name, photo: null },
+    room: { code: mintRoomCode(), writeKey: randomKey(16), readKey: randomKey(16) },
+    guardians: [],
+    home: null,
+    journeys: [],
+    visits: [],
+  };
+}
+
+function sameProfileKey(record, snapshot) {
+  return !!record && !!snapshot && record.profileKey === snapshot.profileKey;
 }
 
 async function mintRecord(snapshot, now, googleSub = '') {
@@ -421,7 +464,23 @@ function mergeSnapshot(record, snapshot, now) {
   };
 }
 
+async function attachSession(store, record, snapshot, now) {
+  const accountKey = mintAccountKey();
+  const next = {
+    ...mergeSnapshot(record, snapshot, now),
+    sessionHash: await accountKeyHash(accountKey),
+  };
+  await writeRecord(store, next, record);
+  return { record: next, accountKey };
+}
+
 export async function registerAccount(store, snapshot, now = Date.now()) {
+  const existing = await findByMember(store, snapshot.memberId);
+  if (existing) {
+    if (!sameProfileKey(existing, snapshot)) return { error: 'member' };
+    const attached = await attachSession(store, existing, snapshot, now);
+    return { ...attached, created: false };
+  }
   const minted = await mintRecord(snapshot, now);
   await writeRecord(store, minted.record);
   return { record: minted.record, accountKey: minted.accountKey, created: true };
@@ -429,11 +488,15 @@ export async function registerAccount(store, snapshot, now = Date.now()) {
 
 export async function backupAccount(store, accountKey, snapshot, now = Date.now()) {
   const current = await findBySession(store, accountKey);
-  if (!current) return { error: 'account' };
-  if (snapshot.memberId !== current.memberId) return { error: 'member' };
-  const next = mergeSnapshot(current, snapshot, now);
-  await writeRecord(store, next, current);
-  return { record: next, accountKey };
+  if (current) {
+    if (snapshot.memberId !== current.memberId) return { error: 'member' };
+    const next = mergeSnapshot(current, snapshot, now);
+    await writeRecord(store, next, current);
+    return { record: next, accountKey };
+  }
+  const existing = await findByMember(store, snapshot.memberId);
+  if (!existing || !sameProfileKey(existing, snapshot)) return { error: 'account' };
+  return attachSession(store, existing, snapshot, now);
 }
 
 export async function readAccount(store, accountKey) {
@@ -477,8 +540,8 @@ export async function linkGoogleAccount(store, { idToken, snapshot, accountKey }
       return { record: next, accountKey, linked: true };
     }
   }
-  if (!snapshot) return { error: 'snapshot' };
-  const minted = await mintRecord(snapshot, options.now || Date.now(), sub);
+  const seed = snapshot || snapshotFromGoogleClaims(verified.claims);
+  const minted = await mintRecord(seed, options.now || Date.now(), sub);
   await writeRecord(store, minted.record);
   return { record: minted.record, accountKey: minted.accountKey, created: true };
 }
@@ -558,7 +621,8 @@ export async function handleAccountOperation(store, op, options = {}) {
   }
   if (op.kind === 'account-register') {
     const result = await registerAccount(store, op.snapshot, options.now);
-    return json({ ok: true, account: publicAccount(result.record, { accountKey: result.accountKey, created: true }) });
+    if (result.error) return accountError(result.error);
+    return json({ ok: true, account: publicAccount(result.record, { accountKey: result.accountKey, created: result.created === true }) });
   }
   if (op.kind === 'account-put') {
     const result = await backupAccount(store, op.accountKey, op.snapshot, options.now);

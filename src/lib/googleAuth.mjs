@@ -116,6 +116,11 @@ export function writeGoogleAccount(storage, account) {
   storage.setItem(GOOGLE_ACCOUNT_KEY, JSON.stringify(account));
 }
 
+export function clearGoogleAccount(storage) {
+  if (!storage) return;
+  storage.removeItem(GOOGLE_ACCOUNT_KEY);
+}
+
 export function profileFromGoogle(claims, saved) {
   const sub = claims && claims.sub;
   if (typeof sub !== 'string') return null;

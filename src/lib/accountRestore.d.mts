@@ -26,6 +26,7 @@ export function writeStoredAccountKey(storage: StorageLike, key: string): void;
 export function readStoredRecoveryCode(storage: StorageLike): string;
 export function writeStoredRecoveryCode(storage: StorageLike, code: string): void;
 export function clearStoredAccount(storage: StorageLike): void;
+export function logoutLocalAccount(storage: StorageLike): void;
 export function rememberAccountSecrets(storage: StorageLike, account: AccountSnapshot | null | undefined): void;
 
 export function snapshotFromSession(state: unknown): AccountSnapshot | null;
