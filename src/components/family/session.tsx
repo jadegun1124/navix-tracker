@@ -6,7 +6,7 @@ import { isSelfEchoPlace, mergePeerSessions, withoutSelfEcho } from '../../lib/p
 import { resolveManagedTarget } from '../../lib/managedPlace.mjs';
 import { hiddenKeysForMember, placeHidden } from '../../lib/familyRoom.mjs';
 import { familyPinId, isMemberId, moveKeyed } from '../../lib/sharedIdentity.mjs';
-import { HISTORY_DAYS, JOURNEY_POINT_CAP, TRAIL_POINT_CAP, fixShowsRide, isWithinHistory, journeysWithinHistory, labelJourneyPlace, lastTravelAt, mergeJourneyLists, seoulDayKey, settleTrailPoint, splitClosedJourneys, stayLabelDwellMs, tracksWithinHistory, trimJourneyList, visitsWithinHistory, type JourneyRecord } from '../../lib/tracking.mjs';
+import { HISTORY_DAYS, JOURNEY_POINT_CAP, TRAIL_POINT_CAP, fixShowsRide, isWithinHistory, journeysWithinHistory, labelJourneyPlace, lastTravelAt, mergeJourneyLists, seoulDayKey, settleTrailPoint, stayLabelDwellMs, storedTrackAfterArchive, tracksWithinHistory, trimJourneyList, visitsWithinHistory, type JourneyRecord } from '../../lib/tracking.mjs';
 import type { DayStop } from '../../lib/tracking.mjs';
 import type { SharedPlace, SharedProfile } from '../../services/familyShare';
 import { umapLocation } from '../../services/umapLocation';
@@ -325,11 +325,11 @@ function archiveJourneys(state: Session, now: number): Session {
     else tracks[id] = nextPoints;
   };
   for (const [id, points] of Object.entries(tracks)) {
-    const split = splitClosedJourneys(points, now);
-    if (split.remaining !== points) putTrack(id, split.remaining);
-    if (split.journeys.length === 0) continue;
+    const archived = storedTrackAfterArchive(points, now);
+    if (archived.points !== points) putTrack(id, archived.points);
+    if (archived.journeys.length === 0) continue;
     const spots = knownSpots({ ...state, journeys }, id);
-    const labeled = split.journeys.map((journey: JourneyRecord) => ({
+    const labeled = archived.journeys.map((journey: JourneyRecord) => ({
       ...journey,
       start: labelJourneyPlace(journey.start, spots),
       end: labelJourneyPlace(journey.end, spots),

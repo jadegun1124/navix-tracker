@@ -1695,6 +1695,21 @@ export function splitClosedJourneys(points, now) {
   return { journeys: collapseDuplicateJourneys(journeys), remaining: line };
 }
 
+/**
+ * Samples to keep in storage.
+ * `remaining` is a display line: it can drop a slow hole and collapse to one anchor.
+ * That must not replace the raw track until a journey is actually cut.
+ * While the move is still open, every dense sample stays so the next walk can accumulate.
+ */
+export function storedTrackAfterArchive(points, now) {
+  const source = Array.isArray(points) ? points : [];
+  const split = splitClosedJourneys(source, now);
+  return {
+    journeys: split.journeys,
+    points: split.journeys.length === 0 ? source : split.remaining,
+  };
+}
+
 /** In-progress line for the family map. Finished stays are not on this overlay. */
 export function liveTrailPoints(points, now) {
   return splitClosedJourneys(points, now).remaining;
@@ -1917,6 +1932,23 @@ export function mergeJourneyLists(existing, incoming) {
   return collapsed;
 }
 
+/**
+ * Card gate for a journey that was already built.
+ * distanceM is the dense-path verdict. Compacted chords have no speed and can
+ * look like holes, so they are not measured again. A stationary cloud still drops.
+ */
+function storedJourneyRecordable(journey) {
+  const samples = Array.isArray(journey?.points) ? journey.points : [];
+  const durationMs = Number(journey?.endedAt) - Number(journey?.startedAt);
+  if (!(durationMs >= JOURNEY_MIN_DURATION_MS)) return false;
+  if (Number.isFinite(journey?.distanceM)) {
+    if (journey.distanceM < JOURNEY_MIN_DISTANCE_M) return false;
+    if (isStationaryCloud(samples, durationMs)) return false;
+    return true;
+  }
+  return journeyPathRecordable(samples, durationMs);
+}
+
 export function trimJourneyList(list, now) {
   if (!Array.isArray(list) || list.length === 0) return [];
   const collapsed = collapseDuplicateJourneys(list);
@@ -1930,9 +1962,7 @@ export function trimJourneyList(list, now) {
       dropped = true;
       continue;
     }
-    const samples = Array.isArray(journey.points) ? journey.points : [];
-    const durationMs = journey.endedAt - journey.startedAt;
-    if (!journeyPathRecordable(samples, durationMs)) {
+    if (!storedJourneyRecordable(journey)) {
       dropped = true;
       continue;
     }

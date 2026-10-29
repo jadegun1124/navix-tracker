@@ -43,6 +43,8 @@ import {
   trailSegmentDashed,
   JOURNEY_STAY_MS,
   splitClosedJourneys,
+  storedTrackAfterArchive,
+  trimJourneyList,
   liveTrailPoints,
   playbackAnchor,
   previewOpenJourney,
@@ -978,4 +980,85 @@ test('walk and ride samples stay dense; only a jump or stationary noise is dropp
   const spiked = settleTrailPoint(noisy, flash, flash.at);
   assert.equal(spiked.decision, 'drop');
   assert.equal(spiked.points.filter((point) => !point.stayEnd).length, beforeNoise);
+});
+
+test('a walk after a GPS hole stays in the raw track and later becomes a card', () => {
+  const t = Date.UTC(2026, 9, 28, 6, 0, 0);
+  const origin = { lat: 37.55, lng: 127.07, at: t, accuracyM: 10, speedMps: 1.3, staying: false };
+  const before = [];
+  for (let index = 0; index <= 8; index += 1) {
+    before.push({
+      ...offset(origin, 0, index * 8, t + index * 6_000),
+      accuracyM: 10,
+      speedMps: 1.3,
+      staying: false,
+    });
+  }
+  const hole = {
+    ...offset(before[before.length - 1], 0, 180, before[before.length - 1].at + 8 * 60 * 1000),
+    accuracyM: 12,
+    speedMps: 0,
+    staying: true,
+  };
+  let points = [...before, hole];
+  const opened = storedTrackAfterArchive(points, hole.at + 1_000);
+  assert.equal(opened.journeys.length, 0);
+  assert.equal(opened.points, points);
+  assert.equal(splitClosedJourneys(points, hole.at + 1_000).remaining.length < points.length, true);
+
+  const after = [];
+  for (let index = 1; index <= 40; index += 1) {
+    after.push({
+      ...offset(hole, 0, index * 8, hole.at + index * 6_000),
+      accuracyM: 10,
+      speedMps: 1.3,
+      staying: false,
+    });
+  }
+  points = [...points, ...after];
+  const during = storedTrackAfterArchive(points, after[after.length - 1].at + 1_000);
+  assert.equal(during.journeys.length, 0);
+  assert.equal(during.points.length, points.length);
+  assert.equal(during.points[during.points.length - 1].lng, after[after.length - 1].lng);
+
+  const arrive = after[after.length - 1].at;
+  const stay = [];
+  for (let at = arrive; at <= arrive + WALK_JOURNEY_STAY_MS; at += 60_000) {
+    stay.push({ ...after[after.length - 1], at, speedMps: 0, staying: true, accuracyM: 10 });
+  }
+  const closed = storedTrackAfterArchive([...points, ...stay], arrive + WALK_JOURNEY_STAY_MS);
+  assert.equal(closed.journeys.length, 1);
+  assert.ok(closed.journeys[0].distanceM >= 300, `card distance ${closed.journeys[0].distanceM}`);
+  assert.ok(closed.points.length < points.length);
+  const kept = trimJourneyList(closed.journeys, arrive + WALK_JOURNEY_STAY_MS);
+  assert.equal(kept.length, 1);
+  assert.ok(kept[0].distanceM >= 300);
+});
+
+test('a straight walk over 300m survives trimJourneyList after compaction', () => {
+  const t = Date.UTC(2026, 9, 28, 7, 0, 0);
+  const origin = { lat: 37.56, lng: 127.08, at: t, accuracyM: 8, speedMps: 1.4, staying: false };
+  const walk = [];
+  for (let index = 0; index <= 250; index += 1) {
+    walk.push({
+      ...offset(origin, 0, index * 3, t + index * 2_000),
+      accuracyM: 8,
+      speedMps: 1.4,
+      staying: false,
+    });
+  }
+  const arrive = walk[walk.length - 1].at;
+  const stay = [];
+  for (let at = arrive; at <= arrive + WALK_JOURNEY_STAY_MS; at += 60_000) {
+    stay.push({ ...walk[walk.length - 1], at, speedMps: 0, staying: true, accuracyM: 8 });
+  }
+  const split = splitClosedJourneys([...walk, ...stay], arrive + WALK_JOURNEY_STAY_MS);
+  assert.equal(split.journeys.length, 1);
+  assert.ok(split.journeys[0].distanceM >= 300, `dense distance ${split.journeys[0].distanceM}`);
+  assert.ok(split.journeys[0].points.length < walk.length);
+  assert.equal(split.journeys[0].points.some((point) => point.speedMps != null), false);
+  assert.equal(trailSegmentDashed(split.journeys[0].points[0], split.journeys[0].points[split.journeys[0].points.length - 1]), true);
+  const kept = trimJourneyList(split.journeys, arrive + WALK_JOURNEY_STAY_MS);
+  assert.equal(kept.length, 1);
+  assert.ok(kept[0].distanceM >= 300);
 });

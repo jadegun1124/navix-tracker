@@ -166,6 +166,10 @@ export function splitClosedJourneys(
   points: TrailSample[] | null | undefined,
   now: number,
 ): { journeys: JourneyRecord[]; remaining: TrailSample[] };
+export function storedTrackAfterArchive(
+  points: TrailSample[] | null | undefined,
+  now: number,
+): { journeys: JourneyRecord[]; points: TrailSample[] };
 export function liveTrailPoints(points: TrailSample[] | null | undefined, now: number): TrailSample[];
 export function liveTrailDrawable(points: TrailSample[] | null | undefined, now?: number): boolean;
 export function previewOpenJourney(points: TrailSample[] | null | undefined, now: number): JourneyRecord | null;
