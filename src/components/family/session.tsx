@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useReducer } from 'react';
 import { hasLocation, haversineMeters } from '../../lib/geo';
 import { applyAccountSnapshot, logoutLocalAccount } from '../../lib/accountRestore.mjs';
-import { scheduleAccountBackup } from '../../services/familyAccount';
+import { cancelAccountBackup, scheduleAccountBackup } from '../../services/familyAccount';
 import { deviceProfileKey, localProfile } from '../../lib/localProfile.mjs';
 import { carryPlace, cleanPlace } from '../../lib/memberPlace.mjs';
 import { isSelfEchoPlace, mergePeerSessions, withoutSelfEcho } from '../../lib/peerFamily.mjs';
@@ -1456,6 +1456,7 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
     setMotionAlertPhase: (phase) => dispatch({ type: 'set-motion-alert-phase', phase }),
     pushNotice: (title, body) => dispatch({ type: 'notice', notice: notice(title, body) }),
     logout: () => {
+      cancelAccountBackup();
       logoutLocalAccount(typeof localStorage === 'undefined' ? null : localStorage);
       dispatch({ type: 'logout' });
     },

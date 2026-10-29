@@ -2,6 +2,8 @@ import {
   ACCOUNT_KEY_STORAGE,
   RECOVERY_CODE_STORAGE,
   applyAccountSnapshot,
+  currentAccountBackupEpoch,
+  persistAccountSecretsIfCurrent,
   readStoredAccountKey,
   readStoredRecoveryCode,
   rememberAccountSecrets,
@@ -114,16 +116,30 @@ export async function persistAccountResult(result: { ok: boolean; account?: Acco
 let backupTimer = 0;
 let backupInflight = false;
 
+export function cancelAccountBackup() {
+  if (typeof window !== 'undefined') window.clearTimeout(backupTimer);
+  backupTimer = 0;
+  backupInflight = false;
+}
+
 export function scheduleAccountBackup(state: unknown) {
   if (typeof window === 'undefined' || !familySyncUrl()) return;
   const snapshot = snapshotFromSession(state);
   if (!snapshot) return;
+  const epoch = currentAccountBackupEpoch();
   window.clearTimeout(backupTimer);
   backupTimer = window.setTimeout(() => {
-    if (backupInflight) return;
+    if (backupInflight || epoch !== currentAccountBackupEpoch()) return;
     backupInflight = true;
     void backupFamilyAccount(snapshot)
-      .then((result) => persistAccountResult(result))
+      .then((result) => {
+        if (!result.ok || !result.account) return;
+        persistAccountSecretsIfCurrent(
+          typeof localStorage === 'undefined' ? null : localStorage,
+          result.account,
+          epoch,
+        );
+      })
       .catch(() => undefined)
       .finally(() => {
         backupInflight = false;

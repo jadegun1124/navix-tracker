@@ -18,7 +18,9 @@ import {
   ACCOUNT_KEY_STORAGE,
   RECOVERY_CODE_STORAGE,
   applyAccountSnapshot,
+  currentAccountBackupEpoch,
   logoutLocalAccount,
+  persistAccountSecretsIfCurrent,
   snapshotFromSession,
   writeStoredAccountKey,
   writeStoredRecoveryCode,
@@ -339,8 +341,20 @@ test('logout wipes the stored account key so the next sign-in does not reuse the
   writeStoredAccountKey(fake, 'accountKeyAAAAAAAAAA');
   writeStoredRecoveryCode(fake, 'ABCDEFGHJKLN');
   writeGoogleAccount(fake, { sub: '1098234765', localId: 'local-restore1', name: '엄마', email: 'parent@example.com' });
+  const epoch = currentAccountBackupEpoch();
   logoutLocalAccount(fake);
   assert.equal(fake.getItem(ACCOUNT_KEY_STORAGE), null);
   assert.equal(fake.getItem(RECOVERY_CODE_STORAGE), null);
   assert.equal(fake.getItem(GOOGLE_ACCOUNT_KEY), null);
+  assert.equal(persistAccountSecretsIfCurrent(fake, {
+    memberId: 'local-restore1',
+    profileKey: 'profilekeyAAAAAAAA',
+    profile: { name: '엄마' },
+    room: { code: '48291', writeKey: 'writeKeyAAAAAAAAAA', readKey: 'readKeyAAAAAAAAAAA' },
+    accountKey: 'accountKeyAAAAAAAAAA',
+    recoveryCode: 'ABCDEFGHJKLN',
+  }, epoch), false);
+  assert.equal(fake.getItem(ACCOUNT_KEY_STORAGE), null);
+  assert.equal(fake.getItem(RECOVERY_CODE_STORAGE), null);
+  assert.notEqual(currentAccountBackupEpoch(), epoch);
 });

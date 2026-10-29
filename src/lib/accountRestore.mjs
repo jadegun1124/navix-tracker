@@ -39,7 +39,25 @@ export function clearStoredAccount(storage) {
   storage.removeItem(RECOVERY_CODE_STORAGE);
 }
 
+let accountBackupEpoch = 0;
+
+export function currentAccountBackupEpoch() {
+  return accountBackupEpoch;
+}
+
+export function invalidateAccountBackup() {
+  accountBackupEpoch += 1;
+  return accountBackupEpoch;
+}
+
+export function persistAccountSecretsIfCurrent(storage, account, epoch) {
+  if (epoch !== accountBackupEpoch) return false;
+  rememberAccountSecrets(storage, account);
+  return true;
+}
+
 export function logoutLocalAccount(storage) {
+  invalidateAccountBackup();
   clearStoredAccount(storage);
   clearGoogleAccount(storage);
 }
