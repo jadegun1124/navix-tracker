@@ -1,5 +1,7 @@
 import React, { createContext, useContext, useEffect, useReducer } from 'react';
 import { hasLocation, haversineMeters } from '../../lib/geo';
+import { applyAccountSnapshot } from '../../lib/accountRestore.mjs';
+import { scheduleAccountBackup } from '../../services/familyAccount';
 import { deviceProfileKey, localProfile } from '../../lib/localProfile.mjs';
 import { carryPlace, cleanPlace } from '../../lib/memberPlace.mjs';
 import { isSelfEchoPlace, mergePeerSessions, withoutSelfEcho } from '../../lib/peerFamily.mjs';
@@ -637,6 +639,7 @@ type Action =
   | { type: 'set-motion-alert-phase'; phase: Session['motionAlertPhase'] }
   | { type: 'notice'; notice: FamilyNotice }
   | { type: 'logout' }
+  | { type: 'restore-account'; account: Parameters<typeof applyAccountSnapshot>[1] }
   | { type: 'clear-family-room'; serverNote: string | null }
   | { type: 'revisit-permissions' };
 
@@ -1286,6 +1289,15 @@ function reducer(state: Session, action: Action): Session {
       return { ...state, notices: [action.notice, ...state.notices].slice(0, 40) };
     case 'logout':
       return fresh('login');
+    case 'restore-account': {
+      const restored = applyAccountSnapshot(state, action.account);
+      if (restored === state || !restored.profile) return state;
+      return withoutDemo({
+        ...restored,
+        phone: '',
+        phoneVerified: false,
+      });
+    }
     case 'clear-family-room': {
       const self = state.members.find((member) => member.id === 'self');
       const next = fresh(state.stage);
@@ -1324,6 +1336,7 @@ interface FamilyApi {
   state: Session;
   splashDone: () => void;
   login: (profile: Profile) => void;
+  restoreAccount: (account: Parameters<typeof applyAccountSnapshot>[1]) => void;
   closeMode: () => void;
   skipSurvey: () => void;
   pickSurvey: (id: string) => void;
@@ -1393,12 +1406,14 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
     } catch {
       /* 용량이 가득 차도 화면의 상태는 유지한다 */
     }
+    scheduleAccountBackup(state);
   }, [state]);
 
   const api: FamilyApi = {
     state,
     splashDone: () => dispatch({ type: 'splash-done' }),
     login: (profile) => dispatch({ type: 'login', profile }),
+    restoreAccount: (account) => dispatch({ type: 'restore-account', account }),
     closeMode: () => dispatch({ type: 'close-mode' }),
     skipSurvey: () => dispatch({ type: 'skip-survey' }),
     pickSurvey: (id) => dispatch({ type: 'pick-survey', id }),

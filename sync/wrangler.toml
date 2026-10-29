@@ -7,6 +7,14 @@ workers_dev = true
 name = "FAMILY_ROOM"
 class_name = "FamilyRoom"
 
+[[durable_objects.bindings]]
+name = "FAMILY_ACCOUNT"
+class_name = "FamilyAccount"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["FamilyRoom"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["FamilyAccount"]

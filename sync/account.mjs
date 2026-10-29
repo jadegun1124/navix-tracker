@@ -1,0 +1,587 @@
+// Server-side Kinnex account. Google subject and recovery hash look up the
+// same member id, room keys, and a 30-day journey/visit backup.
+// Google subject is never the family member id.
+
+import { verifyGoogleIdToken, googleWebClientId, GOOGLE_SETUP_MESSAGE, GOOGLE_VERIFY_MESSAGE } from '../src/lib/googleAuth.mjs';
+
+const MEMBER_ID = /^local-[a-z0-9]{3,64}$/;
+const KEY_PART = /^[A-Za-z0-9_-]{16,64}$/;
+const CODE_PART = /^\d{4,6}$/;
+const PHOTO_URL = /^data:image\/(?:jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/;
+const RECOVERY_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const ACCOUNT_ID = /^[A-Za-z0-9_-]{16,64}$/;
+const MAX_ACCOUNT_BODY = 220 * 1024;
+const MAX_PHOTO = 24_000;
+const MAX_JOURNEYS = 40;
+const MAX_JOURNEY_POINTS = 240;
+const MAX_VISITS = 40;
+const HISTORY_MS = 30 * 24 * 60 * 60 * 1000;
+const EARLIEST_AT = Date.UTC(2024, 0, 1);
+
+export const ACCOUNT_SETUP_MESSAGE = GOOGLE_SETUP_MESSAGE;
+export const ACCOUNT_VERIFY_MESSAGE = GOOGLE_VERIFY_MESSAGE;
+export const ACCOUNT_RECOVER_MESSAGE = '복구 코드를 확인하지 못했습니다. 코드를 다시 입력해 주세요.';
+export const ACCOUNT_MISSING_MESSAGE = '저장된 계정을 찾지 못했습니다.';
+
+export function bytesToBase64Url(bytes) {
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+export function randomKey(bytes = 16) {
+  const buffer = new Uint8Array(bytes);
+  crypto.getRandomValues(buffer);
+  return bytesToBase64Url(buffer);
+}
+
+export async function sha256Base64Url(value) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+  return bytesToBase64Url(new Uint8Array(digest));
+}
+
+export function mintRecoveryCode() {
+  const bytes = new Uint8Array(12);
+  crypto.getRandomValues(bytes);
+  let out = '';
+  for (const byte of bytes) out += RECOVERY_ALPHABET[byte % RECOVERY_ALPHABET.length];
+  return out;
+}
+
+export function normalizeRecoveryCode(value) {
+  const raw = String(value ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (raw.length !== 12) return '';
+  if ([...raw].some((ch) => !RECOVERY_ALPHABET.includes(ch))) return '';
+  return raw;
+}
+
+export function formatRecoveryCode(value) {
+  const code = normalizeRecoveryCode(value);
+  if (!code) return '';
+  return `${code.slice(0, 4)}-${code.slice(4, 8)}-${code.slice(8, 12)}`;
+}
+
+export async function recoveryHash(code) {
+  const normalized = normalizeRecoveryCode(code);
+  if (!normalized) return '';
+  return sha256Base64Url(`umap-recovery\0${normalized}`);
+}
+
+export function mintAccountKey() {
+  return randomKey(24);
+}
+
+export async function accountKeyHash(key) {
+  if (typeof key !== 'string' || !KEY_PART.test(key)) return '';
+  return sha256Base64Url(`umap-account-key\0${key}`);
+}
+
+function json(data, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: {
+      'content-type': 'application/json; charset=utf-8',
+      'cache-control': 'no-store',
+    },
+  });
+}
+
+function looksLikePhone(value) {
+  const compact = String(value ?? '').replace(/[\s\-().+]/g, '');
+  if (!compact) return false;
+  const digits = compact.replace(/\D/g, '');
+  if (digits.length < 8 || digits.length > 15) return false;
+  return digits.length / compact.length >= 0.8;
+}
+
+function finiteNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function cleanName(value) {
+  if (typeof value !== 'string') return '';
+  const name = value.trim().replace(/\s+/g, ' ').slice(0, 20);
+  if (!name || looksLikePhone(name)) return '';
+  return name;
+}
+
+function cleanPhoto(value) {
+  if (value == null || value === '') return null;
+  if (typeof value !== 'string' || value.length > MAX_PHOTO || !PHOTO_URL.test(value)) return undefined;
+  return value;
+}
+
+function cleanPoint(point) {
+  if (!point || typeof point !== 'object') return null;
+  const lat = finiteNumber(point.lat);
+  const lng = finiteNumber(point.lng);
+  const at = finiteNumber(point.at);
+  if (lat == null || lng == null || at == null) return null;
+  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
+  const next = { lat: Number(lat.toFixed(6)), lng: Number(lng.toFixed(6)), at: Math.round(at) };
+  if (typeof point.speedMps === 'number' && point.speedMps >= 0 && point.speedMps < 400) {
+    next.speedMps = Number(point.speedMps.toFixed(2));
+  }
+  if (typeof point.accuracyM === 'number' && point.accuracyM > 0 && point.accuracyM <= 80) {
+    next.accuracyM = Math.round(point.accuracyM);
+  }
+  if (point.staying === true) next.staying = true;
+  if (point.stayEnd === true) next.stayEnd = true;
+  return next;
+}
+
+function cleanPlace(place) {
+  if (!place || typeof place !== 'object') return null;
+  const lat = finiteNumber(place.lat);
+  const lng = finiteNumber(place.lng);
+  if (lat == null || lng == null || lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
+  const label = typeof place.label === 'string' ? place.label.trim().slice(0, 56) : '';
+  return {
+    lat: Number(lat.toFixed(6)),
+    lng: Number(lng.toFixed(6)),
+    label: label && label !== '근처' ? label : null,
+  };
+}
+
+function cleanJourney(journey, now) {
+  if (!journey || typeof journey !== 'object') return null;
+  const startedAt = finiteNumber(journey.startedAt);
+  const endedAt = finiteNumber(journey.endedAt);
+  const distanceM = finiteNumber(journey.distanceM);
+  if (startedAt == null || endedAt == null || distanceM == null || endedAt < startedAt) return null;
+  if (startedAt < now - HISTORY_MS || endedAt > now + 5 * 60 * 1000) return null;
+  const id = typeof journey.id === 'string' && journey.id.length <= 80 ? journey.id : '';
+  if (!id) return null;
+  const points = [];
+  for (const point of Array.isArray(journey.points) ? journey.points : []) {
+    const cleaned = cleanPoint(point);
+    if (cleaned) points.push(cleaned);
+    if (points.length >= MAX_JOURNEY_POINTS) break;
+  }
+  const start = cleanPlace(journey.start);
+  const end = cleanPlace(journey.end);
+  if (!start || !end || points.length < 2) return null;
+  const next = {
+    id,
+    startedAt: Math.round(startedAt),
+    endedAt: Math.round(endedAt),
+    distanceM: Math.max(0, Math.round(distanceM)),
+    points,
+    start,
+    end,
+  };
+  if (journey.cloud === true || journey.cloud === false) next.cloud = journey.cloud;
+  return next;
+}
+
+function cleanVisit(visit, now) {
+  if (!visit || typeof visit !== 'object') return null;
+  const arrivedAt = finiteNumber(visit.arrivedAt);
+  const lat = finiteNumber(visit.lat);
+  const lng = finiteNumber(visit.lng);
+  if (arrivedAt == null || lat == null || lng == null) return null;
+  if (arrivedAt < now - HISTORY_MS || arrivedAt < EARLIEST_AT) return null;
+  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
+  const id = typeof visit.id === 'string' && visit.id.length <= 120 ? visit.id : '';
+  if (!id) return null;
+  const label = typeof visit.label === 'string' ? visit.label.trim().slice(0, 120) : '';
+  const leftAt = finiteNumber(visit.leftAt);
+  return {
+    id,
+    lat: Number(lat.toFixed(6)),
+    lng: Number(lng.toFixed(6)),
+    arrivedAt: Math.round(arrivedAt),
+    leftAt: leftAt == null ? null : Math.round(leftAt),
+    label: label && label !== '근처' ? label : null,
+    source: visit.source === 'geocode' ? 'geocode' : 'coords',
+  };
+}
+
+function cleanRoom(input) {
+  if (!input || typeof input !== 'object') return null;
+  const code = typeof input.code === 'string' ? input.code.replace(/\D/g, '').slice(0, 6) : '';
+  if (!CODE_PART.test(code)) return null;
+  if (typeof input.writeKey !== 'string' || !KEY_PART.test(input.writeKey)) return null;
+  if (typeof input.readKey !== 'string' || !KEY_PART.test(input.readKey)) return null;
+  return { code, writeKey: input.writeKey, readKey: input.readKey };
+}
+
+function cleanGuardian(input) {
+  if (!input || typeof input !== 'object') return null;
+  const code = typeof input.code === 'string' ? input.code.replace(/\D/g, '').slice(0, 6) : '';
+  if (!CODE_PART.test(code)) return null;
+  const id = typeof input.id === 'string' && input.id.length <= 80 ? input.id : `g-${code}`;
+  const label = cleanName(input.label) || '가족';
+  const share = input.share === 'allowed' || input.share === 'revoked' ? input.share : 'accepted';
+  const syncToken = typeof input.syncToken === 'string' && /^[A-Za-z0-9_-]{16,64}\.[A-Za-z0-9_-]{16,64}$/.test(input.syncToken)
+    ? input.syncToken
+    : undefined;
+  const rosterName = typeof input.rosterName === 'string' ? input.rosterName.trim().slice(0, 80) : '';
+  const adminName = cleanName(input.adminName);
+  const next = { id, label, code, share };
+  if (syncToken) next.syncToken = syncToken;
+  if (rosterName) next.rosterName = rosterName;
+  if (adminName) next.adminName = adminName;
+  if (input.leaveAlert && typeof input.leaveAlert === 'object') {
+    const lat = finiteNumber(input.leaveAlert.lat);
+    const lng = finiteNumber(input.leaveAlert.lng);
+    const radiusM = finiteNumber(input.leaveAlert.radiusM);
+    if (lat != null && lng != null && radiusM != null) {
+      next.leaveAlert = {
+        label: typeof input.leaveAlert.label === 'string' ? input.leaveAlert.label.slice(0, 40) : '우리 집',
+        lat,
+        lng,
+        radiusM: Math.min(2000, Math.max(50, Math.round(radiusM))),
+      };
+    }
+  }
+  return next;
+}
+
+function cleanHome(input) {
+  if (!input || typeof input !== 'object') return null;
+  const lat = finiteNumber(input.lat);
+  const lng = finiteNumber(input.lng);
+  if (lat == null || lng == null) return null;
+  const radius = finiteNumber(input.radiusM);
+  return {
+    label: typeof input.label === 'string' && input.label.trim() ? input.label.trim().slice(0, 40) : '우리 집',
+    address: typeof input.address === 'string' ? input.address.trim().slice(0, 80) : '',
+    lat,
+    lng,
+    radiusM: radius == null ? 200 : Math.min(2000, Math.max(50, Math.round(radius))),
+    alertPhone: '',
+  };
+}
+
+export function cleanAccountSnapshot(input, now = Date.now()) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return { error: 'snapshot' };
+  if (typeof input.memberId !== 'string' || !MEMBER_ID.test(input.memberId)) return { error: 'member' };
+  if (typeof input.profileKey !== 'string' || !KEY_PART.test(input.profileKey)) return { error: 'profile-key' };
+  const name = cleanName(input.profile && input.profile.name);
+  if (!name) return { error: 'name' };
+  const photo = cleanPhoto(input.profile && input.profile.photo);
+  if (photo === undefined && input.profile && input.profile.photo) return { error: 'photo' };
+  const room = cleanRoom(input.room);
+  if (!room) return { error: 'room' };
+  const guardians = [];
+  for (const item of Array.isArray(input.guardians) ? input.guardians : []) {
+    const cleaned = cleanGuardian(item);
+    if (cleaned && !guardians.some((entry) => entry.code === cleaned.code)) guardians.push(cleaned);
+    if (guardians.length >= 8) break;
+  }
+  const journeys = [];
+  for (const item of Array.isArray(input.journeys) ? input.journeys : []) {
+    const cleaned = cleanJourney(item, now);
+    if (cleaned) journeys.push(cleaned);
+    if (journeys.length >= MAX_JOURNEYS) break;
+  }
+  const visits = [];
+  for (const item of Array.isArray(input.visits) ? input.visits : []) {
+    const cleaned = cleanVisit(item, now);
+    if (cleaned) visits.push(cleaned);
+    if (visits.length >= MAX_VISITS) break;
+  }
+  return {
+    snapshot: {
+      memberId: input.memberId,
+      profileKey: input.profileKey,
+      profile: { name, photo: photo ?? null },
+      room,
+      guardians,
+      home: cleanHome(input.home),
+      journeys,
+      visits,
+    },
+  };
+}
+
+export function publicAccount(record, extras = {}) {
+  if (!record) return null;
+  return {
+    memberId: record.memberId,
+    profileKey: record.profileKey,
+    profile: record.profile,
+    room: record.room,
+    guardians: record.guardians || [],
+    home: record.home || null,
+    journeys: record.journeys || [],
+    visits: record.visits || [],
+    recoveryCode: formatRecoveryCode(record.recoveryCode),
+    googleLinked: typeof record.googleSub === 'string' && record.googleSub.length > 0,
+    ...(extras.accountKey ? { accountKey: extras.accountKey } : {}),
+    ...(extras.created ? { created: true } : {}),
+  };
+}
+
+export function sameMember(left, right) {
+  return !!left && !!right && left.memberId === right.memberId;
+}
+
+function accountKeys(record) {
+  return {
+    record: `acct:${record.id}`,
+    session: `session:${record.sessionHash}`,
+    recovery: `recovery:${record.recoveryHash}`,
+    google: record.googleSub ? `google:${record.googleSub}` : '',
+  };
+}
+
+export function createMemoryAccountStore() {
+  const map = new Map();
+  return {
+    async get(key) {
+      return map.get(key);
+    },
+    async put(key, value) {
+      map.set(key, value);
+    },
+    async delete(key) {
+      map.delete(key);
+    },
+  };
+}
+
+async function readRecord(store, id) {
+  if (typeof id !== 'string' || !ACCOUNT_ID.test(id)) return null;
+  const record = await store.get(`acct:${id}`);
+  return record && typeof record === 'object' ? record : null;
+}
+
+async function writeRecord(store, record, previous = null) {
+  const keys = accountKeys(record);
+  await store.put(keys.record, record);
+  await store.put(keys.session, record.id);
+  await store.put(keys.recovery, record.id);
+  if (keys.google) await store.put(keys.google, record.id);
+  if (previous?.googleSub && previous.googleSub !== record.googleSub) {
+    await store.delete(`google:${previous.googleSub}`);
+  }
+  if (previous?.sessionHash && previous.sessionHash !== record.sessionHash) {
+    await store.delete(`session:${previous.sessionHash}`);
+  }
+  if (previous?.recoveryHash && previous.recoveryHash !== record.recoveryHash) {
+    await store.delete(`recovery:${previous.recoveryHash}`);
+  }
+}
+
+async function findBySession(store, accountKey) {
+  const hash = await accountKeyHash(accountKey);
+  if (!hash) return null;
+  return readRecord(store, await store.get(`session:${hash}`));
+}
+
+async function findByRecovery(store, code) {
+  const hash = await recoveryHash(code);
+  if (!hash) return null;
+  return readRecord(store, await store.get(`recovery:${hash}`));
+}
+
+async function findByGoogle(store, sub) {
+  if (typeof sub !== 'string' || !/^[0-9]{5,}$/.test(sub)) return null;
+  return readRecord(store, await store.get(`google:${sub}`));
+}
+
+async function mintRecord(snapshot, now, googleSub = '') {
+  const recoveryCode = mintRecoveryCode();
+  const accountKey = mintAccountKey();
+  const record = {
+    id: randomKey(18),
+    memberId: snapshot.memberId,
+    profileKey: snapshot.profileKey,
+    profile: snapshot.profile,
+    room: snapshot.room,
+    guardians: snapshot.guardians,
+    home: snapshot.home,
+    journeys: snapshot.journeys,
+    visits: snapshot.visits,
+    googleSub: googleSub || '',
+    recoveryCode,
+    recoveryHash: await recoveryHash(recoveryCode),
+    sessionHash: await accountKeyHash(accountKey),
+    createdAt: now,
+    updatedAt: now,
+  };
+  return { record, accountKey };
+}
+
+function mergeSnapshot(record, snapshot, now) {
+  if (snapshot.memberId !== record.memberId) return record;
+  return {
+    ...record,
+    profileKey: snapshot.profileKey || record.profileKey,
+    profile: snapshot.profile,
+    room: snapshot.room,
+    guardians: snapshot.guardians,
+    home: snapshot.home,
+    journeys: snapshot.journeys,
+    visits: snapshot.visits,
+    updatedAt: now,
+  };
+}
+
+export async function registerAccount(store, snapshot, now = Date.now()) {
+  const minted = await mintRecord(snapshot, now);
+  await writeRecord(store, minted.record);
+  return { record: minted.record, accountKey: minted.accountKey, created: true };
+}
+
+export async function backupAccount(store, accountKey, snapshot, now = Date.now()) {
+  const current = await findBySession(store, accountKey);
+  if (!current) return { error: 'account' };
+  if (snapshot.memberId !== current.memberId) return { error: 'member' };
+  const next = mergeSnapshot(current, snapshot, now);
+  await writeRecord(store, next, current);
+  return { record: next, accountKey };
+}
+
+export async function readAccount(store, accountKey) {
+  const record = await findBySession(store, accountKey);
+  if (!record) return { error: 'account' };
+  return { record, accountKey };
+}
+
+export async function recoverAccount(store, code) {
+  const normalized = normalizeRecoveryCode(code);
+  if (!normalized) return { error: 'recovery' };
+  const record = await findByRecovery(store, normalized);
+  if (!record) return { error: 'recovery' };
+  const accountKey = mintAccountKey();
+  const next = { ...record, sessionHash: await accountKeyHash(accountKey), updatedAt: Date.now() };
+  await writeRecord(store, next, record);
+  return { record: next, accountKey };
+}
+
+export async function linkGoogleAccount(store, { idToken, snapshot, accountKey }, options = {}) {
+  const clientId = googleWebClientId(options.clientId);
+  if (!clientId) return { error: 'setup' };
+  const verified = await verifyGoogleIdToken(idToken, clientId, {
+    now: options.now,
+    fetchCerts: options.fetchCerts,
+  });
+  if (!verified.ok) return { error: verified.message === GOOGLE_SETUP_MESSAGE ? 'setup' : 'token' };
+  const sub = verified.claims.sub;
+  const existing = await findByGoogle(store, sub);
+  if (existing) {
+    const nextKey = mintAccountKey();
+    const next = { ...existing, sessionHash: await accountKeyHash(nextKey), updatedAt: options.now || Date.now() };
+    await writeRecord(store, next, existing);
+    return { record: next, accountKey: nextKey, restored: true };
+  }
+  if (accountKey) {
+    const current = await findBySession(store, accountKey);
+    if (current) {
+      const next = { ...current, googleSub: sub, updatedAt: options.now || Date.now() };
+      await writeRecord(store, next, current);
+      return { record: next, accountKey, linked: true };
+    }
+  }
+  if (!snapshot) return { error: 'snapshot' };
+  const minted = await mintRecord(snapshot, options.now || Date.now(), sub);
+  await writeRecord(store, minted.record);
+  return { record: minted.record, accountKey: minted.accountKey, created: true };
+}
+
+export function accountError(code) {
+  if (code === 'setup') return json({ error: 'setup', message: ACCOUNT_SETUP_MESSAGE }, 503);
+  if (code === 'token') return json({ error: 'token', message: ACCOUNT_VERIFY_MESSAGE }, 401);
+  if (code === 'recovery') return json({ error: 'recovery', message: ACCOUNT_RECOVER_MESSAGE }, 403);
+  if (code === 'member') return json({ error: 'member' }, 409);
+  if (code === 'snapshot' || code === 'name' || code === 'room' || code === 'profile-key' || code === 'photo') {
+    return json({ error: code }, 400);
+  }
+  return json({ error: 'account', message: ACCOUNT_MISSING_MESSAGE }, 404);
+}
+
+export async function parseAccountOperation(request) {
+  const url = new URL(request.url);
+  const path = url.pathname.replace(/\/+$/, '') || '/';
+  if (!path.startsWith('/v1/account')) return null;
+
+  const accountKey = request.headers.get('x-umap-account-key') || '';
+
+  if (request.method === 'GET' && path === '/v1/account') {
+    return { kind: 'account-get', accountKey };
+  }
+
+  const declared = Number(request.headers.get('content-length') || 0);
+  if (Number.isFinite(declared) && declared > MAX_ACCOUNT_BODY) return json({ error: 'size' }, 413);
+  let value = {};
+  if (request.method !== 'GET') {
+    const text = await request.text();
+    if (text.length > MAX_ACCOUNT_BODY) return json({ error: 'size' }, 413);
+    if (text) {
+      try {
+        value = JSON.parse(text);
+      } catch {
+        return json({ error: 'json' }, 400);
+      }
+    }
+  }
+
+  if (request.method === 'POST' && path === '/v1/account') {
+    const cleaned = cleanAccountSnapshot(value);
+    if (cleaned.error) return json({ error: cleaned.error }, 400);
+    return { kind: 'account-register', snapshot: cleaned.snapshot };
+  }
+
+  if (request.method === 'PUT' && path === '/v1/account') {
+    const cleaned = cleanAccountSnapshot(value);
+    if (cleaned.error) return json({ error: cleaned.error }, 400);
+    return { kind: 'account-put', accountKey, snapshot: cleaned.snapshot };
+  }
+
+  if (request.method === 'POST' && path === '/v1/account/google') {
+    const cleaned = value.snapshot ? cleanAccountSnapshot(value.snapshot) : { snapshot: null };
+    if (value.snapshot && cleaned.error) return json({ error: cleaned.error }, 400);
+    return {
+      kind: 'account-google',
+      idToken: typeof value.idToken === 'string' ? value.idToken : '',
+      snapshot: cleaned.snapshot,
+      accountKey: typeof value.accountKey === 'string' ? value.accountKey : accountKey,
+    };
+  }
+
+  if (request.method === 'POST' && path === '/v1/account/recover') {
+    return { kind: 'account-recover', code: typeof value.code === 'string' ? value.code : '' };
+  }
+
+  return json({ error: 'method' }, 405);
+}
+
+export async function handleAccountOperation(store, op, options = {}) {
+  if (op.kind === 'account-get') {
+    const result = await readAccount(store, op.accountKey);
+    if (result.error) return accountError(result.error);
+    return json({ ok: true, account: publicAccount(result.record, { accountKey: result.accountKey }) });
+  }
+  if (op.kind === 'account-register') {
+    const result = await registerAccount(store, op.snapshot, options.now);
+    return json({ ok: true, account: publicAccount(result.record, { accountKey: result.accountKey, created: true }) });
+  }
+  if (op.kind === 'account-put') {
+    const result = await backupAccount(store, op.accountKey, op.snapshot, options.now);
+    if (result.error) return accountError(result.error);
+    return json({ ok: true, account: publicAccount(result.record, { accountKey: result.accountKey }) });
+  }
+  if (op.kind === 'account-google') {
+    const result = await linkGoogleAccount(store, op, options);
+    if (result.error) return accountError(result.error);
+    return json({
+      ok: true,
+      restored: result.restored === true,
+      account: publicAccount(result.record, { accountKey: result.accountKey, created: result.created === true }),
+    });
+  }
+  if (op.kind === 'account-recover') {
+    const result = await recoverAccount(store, op.code);
+    if (result.error) return accountError(result.error);
+    return json({
+      ok: true,
+      restored: true,
+      account: publicAccount(result.record, { accountKey: result.accountKey }),
+    });
+  }
+  return json({ error: 'method' }, 405);
+}

@@ -1,3 +1,4 @@
+import { createMemoryAccountStore, handleAccountOperation } from './account.mjs';
 import { applyAlert, applyDirectMessage, applySubscription, alertPushPayload, chatPushPayload, commitPlace, commitProfile, commitTrail, emptyRoom, parseOperation, pushesForAlert, pushesForChat, removeSubscriptions, viewDirectMessages, viewFamilyPlaces, viewMyThreads, viewRoom, withCors } from './protocol.mjs';
 import { createVapidKeys, sendWebPush } from './webpush.mjs';
 
@@ -104,6 +105,41 @@ export class FamilyRoom {
   }
 }
 
+function durableAccountStore(storage) {
+  return {
+    async get(key) {
+      return storage.get(key);
+    },
+    async put(key, value) {
+      await storage.put(key, value);
+    },
+    async delete(key) {
+      await storage.delete(key);
+    },
+  };
+}
+
+export class FamilyAccount {
+  constructor(ctx) {
+    this.ctx = ctx;
+  }
+
+  async fetch(request) {
+    const body = await request.json();
+    return handleAccountOperation(durableAccountStore(this.ctx.storage), body.op, {
+      clientId: body.clientId || '',
+      fetchCerts: fetchGoogleCerts,
+      now: body.now,
+    });
+  }
+}
+
+async function fetchGoogleCerts() {
+  const response = await fetch('https://www.googleapis.com/oauth2/v3/certs');
+  if (!response.ok) return null;
+  return response.json();
+}
+
 async function vapidKeys(env) {
   const stub = env.FAMILY_ROOM.get(env.FAMILY_ROOM.idFromName('umap-push-meta'));
   const response = await stub.fetch('https://room.internal/op', {
@@ -155,6 +191,26 @@ export default {
       } catch {
         return withCors(Response.json({ error: 'vapid' }, { status: 503 }));
       }
+    }
+    if (typeof op.kind === 'string' && op.kind.startsWith('account-')) {
+      const accounts = env.FAMILY_ACCOUNT
+        ? env.FAMILY_ACCOUNT.get(env.FAMILY_ACCOUNT.idFromName('umap-account-book'))
+        : null;
+      if (!accounts) {
+        return withCors(await handleAccountOperation(createMemoryAccountStore(), op, {
+          clientId: env.GOOGLE_WEB_CLIENT_ID || env.VITE_GOOGLE_WEB_CLIENT_ID || '',
+          fetchCerts: fetchGoogleCerts,
+        }));
+      }
+      const response = await accounts.fetch('https://account.internal/op', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          op,
+          clientId: env.GOOGLE_WEB_CLIENT_ID || env.VITE_GOOGLE_WEB_CLIENT_ID || '',
+        }),
+      });
+      return withCors(response);
     }
     const stub = env.FAMILY_ROOM.get(env.FAMILY_ROOM.idFromName(op.token));
     const response = await stub.fetch('https://room.internal/op', {
