@@ -22,6 +22,8 @@ export const TRAIL_RIDE_VERTEX_MS: number;
 export const TRAIL_RIDE_MIN_STEP_M: number;
 export const TRAIL_RIDE_STAY_STEP_M: number;
 export const RIDE_STATUS_FRESH_MS: number;
+export const WALK_STAY_LABEL_MS: number;
+export const RIDE_STAY_LABEL_MS: number;
 export const STAY_LABEL_DWELL_MS: number;
 export const MOTION_STILL_HOLD_MS: number;
 
@@ -78,6 +80,8 @@ export function isRideStep(last: TrailSample | null | undefined, point: TrailSam
 export function fixShowsRide(points: TrailSample[] | null | undefined, point: TrailSample | null | undefined): boolean;
 export function recentRide(points: TrailSample[] | null | undefined, now: number): boolean;
 export function lastTravelAt(points: TrailSample[] | null | undefined): number | null;
+export function lastTravelWasRide(points: TrailSample[] | null | undefined): boolean;
+export function stayLabelDwellMs(points: TrailSample[] | null | undefined): number;
 export function liveMotionLabel(input: {
   located: boolean;
   moving: boolean | null | undefined;
@@ -123,6 +127,8 @@ export function formatFixAge(at: number, now?: number): string;
 export function formatDistanceM(meters: number): string;
 export function buildDayRecord(points: TrailSample[] | null | undefined, now: number): { stops: DayStop[]; segments: DaySegment[] };
 
+export const WALK_JOURNEY_STAY_MS: number;
+export const RIDE_JOURNEY_STAY_MS: number;
 export const JOURNEY_STAY_MS: number;
 export const JOURNEY_STAY_FRESH_MS: number;
 export const JOURNEY_MIN_DISTANCE_M: number;
@@ -159,6 +165,7 @@ export function splitClosedJourneys(
   now: number,
 ): { journeys: JourneyRecord[]; remaining: TrailSample[] };
 export function liveTrailPoints(points: TrailSample[] | null | undefined, now: number): TrailSample[];
+export function liveTrailDrawable(points: TrailSample[] | null | undefined, now?: number): boolean;
 export function previewOpenJourney(points: TrailSample[] | null | undefined, now: number): JourneyRecord | null;
 export function formatJourneyWhen(startedAt: number, endedAt: number): string;
 export function formatJourneyDistance(meters: number): string;

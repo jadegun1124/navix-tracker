@@ -101,9 +101,11 @@ test('chat shade notification is one event and opens that conversation', () => {
   assert.match(plugin, /notifyListeners\("chat"/);
 });
 
-test('gps is 2.5s while walking or riding, 12s for 3 minutes after a ride, then 2 and 5 minutes while parked', () => {
+test('gps is 2.5s while walking, 1s while riding, 12s for 3 minutes after a ride, then 2 and 5 minutes while parked', () => {
   const location = readFileSync(new URL('../../android/app/src/main/java/kr/co/umap/tracker/LocationKeepService.java', import.meta.url), 'utf8');
   assert.match(location, /GPS_MOVING_MS = 2_500L/);
+  assert.match(location, /GPS_RIDE_MS = 1_000L/);
+  assert.match(location, /requestedGpsMs < GPS_RIDE_MS \? GPS_RIDE_MS/);
   assert.match(location, /SAMPLE_GAP_MS = 1_200L/);
   assert.match(location, /GPS_STILL_MS = 120_000L/);
   assert.match(location, /GPS_STILL_LONG_MS = 300_000L/);

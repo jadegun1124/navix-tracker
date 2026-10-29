@@ -6,7 +6,7 @@ import { isSelfEchoPlace, mergePeerSessions, withoutSelfEcho } from '../../lib/p
 import { resolveManagedTarget } from '../../lib/managedPlace.mjs';
 import { hiddenKeysForMember, placeHidden } from '../../lib/familyRoom.mjs';
 import { familyPinId, isMemberId, moveKeyed } from '../../lib/sharedIdentity.mjs';
-import { HISTORY_DAYS, JOURNEY_POINT_CAP, STAY_LABEL_DWELL_MS, TRAIL_POINT_CAP, fixShowsRide, isWithinHistory, journeysWithinHistory, labelJourneyPlace, lastTravelAt, mergeJourneyLists, seoulDayKey, settleTrailPoint, splitClosedJourneys, tracksWithinHistory, trimJourneyList, visitsWithinHistory, type JourneyRecord } from '../../lib/tracking.mjs';
+import { HISTORY_DAYS, JOURNEY_POINT_CAP, TRAIL_POINT_CAP, fixShowsRide, isWithinHistory, journeysWithinHistory, labelJourneyPlace, lastTravelAt, mergeJourneyLists, seoulDayKey, settleTrailPoint, splitClosedJourneys, stayLabelDwellMs, tracksWithinHistory, trimJourneyList, visitsWithinHistory, type JourneyRecord } from '../../lib/tracking.mjs';
 import type { DayStop } from '../../lib/tracking.mjs';
 import type { SharedPlace, SharedProfile } from '../../services/familyShare';
 import { umapLocation } from '../../services/umapLocation';
@@ -637,7 +637,14 @@ function reducer(state: Session, action: Action): Session {
     case 'skip-phone':
       return { ...state, phone: '', phoneVerified: false, stage: 'permissions' };
     case 'finish-permissions':
-      return { ...state, permissions: { ...action.permissions, completed: true }, stage: 'map', tab: 'map' };
+      return {
+        ...state,
+        permissions: { ...action.permissions, completed: true },
+        stage: 'map',
+        tab: 'map',
+        shareSelfWithFamily: true,
+        guardians: state.guardians.map((link) => ({ ...link, share: 'allowed' as const })),
+      };
     case 'set-tab':
       return { ...state, tab: action.tab };
     case 'save-home': {
@@ -824,7 +831,7 @@ function reducer(state: Session, action: Action): Session {
         ...state,
         shareSelfWithFamily: action.share,
         guardians: state.guardians.map((link) => ({ ...link, share: action.share ? 'allowed' as const : 'revoked' as const })),
-        notices: [notice(action.share ? '내 위치를 가족에게 공유합니다' : '내 위치 공유를 껐습니다', action.share ? '가족 지도에 내 핀이 나타납니다. 언제든 끌 수 있습니다.' : '가족 지도에서 내 핀이 곧 사라집니다.'), ...state.notices],
+        notices: [notice(action.share ? '내 위치를 가족에게 공유합니다' : '내 위치 공유를 껐습니다', action.share ? '가족 지도에 내 핀이 나타납니다.' : '가족 지도에서 내 핀이 곧 사라집니다.'), ...state.notices],
       };
     case 'set-keep-alive':
       if (state.backgroundKeepAlive === action.on) return state;
@@ -960,13 +967,24 @@ function reducer(state: Session, action: Action): Session {
           || (entry.inviteCode === action.code && entry.name === item.name)
         ));
         if (roster) {
-          const keptPlace = carryPlace(roster, place.lat, place.lng);
+          if (item.id !== roster.id) {
+            tracks = moveKeyed(tracks, item.id, roster.id);
+            visits = moveKeyed(visits, item.id, roster.id);
+            journeys = moveKeyed(journeys, item.id, roster.id);
+          }
+          const settled = isWithinHistory(place.at, now)
+            ? settleTrailPoint(tracks[roster.id], { lat: place.lat, lng: place.lng, at: place.at, accuracyM: place.accuracyM }, now)
+            : null;
+          if (settled) tracks = { ...tracks, [roster.id]: settled.points };
+          const lat = settled && settled.decision === 'drop' && hasLocation(roster) ? roster.lat : (settled?.lat ?? place.lat);
+          const lng = settled && settled.decision === 'drop' && hasLocation(roster) ? roster.lng : (settled?.lng ?? place.lng);
+          const keptPlace = carryPlace(roster, lat, lng);
           members = members.map((entry) => (entry.id === roster.id
             ? {
                 ...entry,
                 share: 'allowed',
-                lat: place.lat,
-                lng: place.lng,
+                lat,
+                lng,
                 accuracyM: Math.max(1, Math.round(place.accuracyM || 1)),
                 battery: item.battery ?? entry.battery,
                 charging: item.charging ?? entry.charging,
@@ -1134,7 +1152,7 @@ function reducer(state: Session, action: Action): Session {
     case 'set-motion': {
       const now = Date.now();
       const traveledAt = lastTravelAt(state.tracks.self);
-      if (!action.moving && traveledAt != null && now >= traveledAt && now - traveledAt < STAY_LABEL_DWELL_MS) return state;
+      if (!action.moving && traveledAt != null && now >= traveledAt && now - traveledAt < stayLabelDwellMs(state.tracks.self)) return state;
       const self = state.members.find((member) => member.id === 'self');
       if (self?.moving === action.moving) return state;
       return {

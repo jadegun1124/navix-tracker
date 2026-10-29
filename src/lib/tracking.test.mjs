@@ -27,9 +27,16 @@ import {
   recentRide,
   liveMotionLabel,
   lastTravelAt,
+  lastTravelWasRide,
+  stayLabelDwellMs,
+  liveTrailDrawable,
   TRAIL_RIDE_MIN_MPS,
   RIDE_STATUS_FRESH_MS,
+  WALK_STAY_LABEL_MS,
+  RIDE_STAY_LABEL_MS,
   STAY_LABEL_DWELL_MS,
+  WALK_JOURNEY_STAY_MS,
+  RIDE_JOURNEY_STAY_MS,
   visibleTrail,
   trailDrawParts,
   trailSegmentDashed,
@@ -258,10 +265,15 @@ test('a vehicle pace keeps 2.5s vertices solid and does not say 머무름', () =
   assert.equal(parts.some((part) => part.dashed), false);
   assert.equal(liveMotionLabel({ located: true, moving: false, points: recorded, now: drive[drive.length - 1].at + 5_000 }), '지금');
   assert.equal(recentRide(recorded, drive[drive.length - 1].at + 5_000), true);
-  assert.equal(STAY_LABEL_DWELL_MS, 90_000);
+  assert.equal(lastTravelWasRide(recorded), true);
+  assert.equal(stayLabelDwellMs(recorded), RIDE_STAY_LABEL_MS);
+  assert.equal(WALK_STAY_LABEL_MS, 45_000);
+  assert.equal(RIDE_STAY_LABEL_MS, 3 * 60_000);
+  assert.equal(STAY_LABEL_DWELL_MS, WALK_STAY_LABEL_MS);
   assert.equal(liveMotionLabel({ located: true, moving: false, points: recorded, now: drive[drive.length - 1].at + 60_000 }), '지금');
   assert.equal(liveMotionLabel({ located: true, moving: null, points: recorded, now: drive[drive.length - 1].at + 60_000 }), '지금');
-  assert.equal(liveMotionLabel({ located: true, moving: false, points: recorded, now: drive[drive.length - 1].at + STAY_LABEL_DWELL_MS }), '머무름');
+  assert.equal(liveMotionLabel({ located: true, moving: false, points: recorded, now: drive[drive.length - 1].at + WALK_STAY_LABEL_MS }), '지금');
+  assert.equal(liveMotionLabel({ located: true, moving: false, points: recorded, now: drive[drive.length - 1].at + RIDE_STAY_LABEL_MS }), '머무름');
 
   const quiet = drive.map((point) => ({ ...point, speedMps: null, staying: true }));
   assert.equal(isRideStep(quiet[0], quiet[1]), true);
@@ -307,8 +319,11 @@ test('a walk keeps 지금 through sensor gaps and a peer trail uses the same dwe
   assert.equal(liveMotionLabel({ located: true, moving: false, points: walk, now: end + 2_000 }), '지금');
   assert.equal(liveMotionLabel({ located: true, moving: true, points: walk, now: end + 2_000 }), '지금');
   assert.equal(liveMotionLabel({ located: true, moving: null, points: walk, now: end + 30_000 }), '지금');
-  assert.equal(liveMotionLabel({ located: true, moving: false, points: walk, now: end + 60_000 }), '지금');
-  assert.equal(liveMotionLabel({ located: true, moving: null, points: walk, now: end + STAY_LABEL_DWELL_MS }), '머무름');
+  assert.equal(liveMotionLabel({ located: true, moving: false, points: walk, now: end + 30_000 }), '지금');
+  assert.equal(lastTravelWasRide(walk), false);
+  assert.equal(stayLabelDwellMs(walk), WALK_STAY_LABEL_MS);
+  assert.equal(liveMotionLabel({ located: true, moving: false, points: walk, now: end + 60_000 }), '머무름');
+  assert.equal(liveMotionLabel({ located: true, moving: null, points: walk, now: end + WALK_STAY_LABEL_MS }), '머무름');
   assert.equal(liveMotionLabel({ located: true, moving: true, points: [], now: end }), '지금');
   const quiet = { ...offset(origin, 4, 2, t + 12_000), accuracyM: 12, speedMps: 0, staying: true };
   assert.equal(lastTravelAt([origin, quiet]), null);
@@ -540,7 +555,7 @@ function staySamples(point, from, until, stepMs = 60_000) {
   return points;
 }
 
-test('a 2.5s walk keeps a curve and a 7 minute stay archives it', () => {
+test('a 2.5s walk keeps a curve and a 5 minute stay archives it', () => {
   const t = Date.UTC(2026, 9, 27, 23, 34);
   const origin = { lat: 37.55, lng: 127.07, at: t, accuracyM: 12, speedMps: 1.2, staying: false };
   const radius = 28;
@@ -572,10 +587,10 @@ test('a 2.5s walk keeps a curve and a 7 minute stay archives it', () => {
     });
   }
   const arrive = walk[walk.length - 1].at;
-  const early = [...walk, ...staySamples(walk[walk.length - 1], arrive, arrive + 4 * 60 * 1000, 60_000)];
-  const tooSoon = splitClosedJourneys(early, arrive + 4 * 60 * 1000);
+  const early = [...walk, ...staySamples(walk[walk.length - 1], arrive, arrive + 2 * 60 * 1000, 60_000)];
+  const tooSoon = splitClosedJourneys(early, arrive + 2 * 60 * 1000);
   assert.equal(tooSoon.journeys.length, 0);
-  assert.equal(liveTrailPoints(early, arrive + 4 * 60 * 1000).length, early.length);
+  assert.equal(liveTrailPoints(early, arrive + 2 * 60 * 1000).length, early.length);
 
   const closed = [...walk, ...staySamples(walk[walk.length - 1], arrive, arrive + JOURNEY_STAY_MS, 60_000)];
   const split = splitClosedJourneys(closed, arrive + JOURNEY_STAY_MS);
@@ -600,6 +615,35 @@ test('a 2.5s walk keeps a curve and a 7 minute stay archives it', () => {
   const fresh = staySamples(origin, t, t + 6 * 60 * 1000, 3 * 60 * 1000);
   const wall = splitClosedJourneys([...walk, ...fresh.map((point) => ({ ...point, at: point.at - t + arrive }))], arrive + JOURNEY_STAY_MS);
   assert.equal(wall.journeys.length, 1);
+  assert.equal(liveTrailDrawable(early, arrive + 2 * 60 * 1000), true);
+  assert.equal(liveTrailDrawable(closed, arrive + JOURNEY_STAY_MS), false);
+});
+
+test('a vehicle stop waits longer than a walk before the live line is archived', () => {
+  const t = Date.UTC(2026, 9, 27, 23, 34);
+  const origin = { lat: 37.55, lng: 127.07, at: t, accuracyM: 12, speedMps: 12, staying: false };
+  const drive = [];
+  for (let index = 0; index <= 30; index += 1) {
+    drive.push({
+      ...offset(origin, 0, index * 40, t + index * 2_500),
+      accuracyM: 12,
+      speedMps: 12,
+      staying: true,
+    });
+  }
+  const arrive = drive[drive.length - 1].at;
+  assert.equal(WALK_JOURNEY_STAY_MS, 5 * 60 * 1000);
+  assert.equal(RIDE_JOURNEY_STAY_MS, 12 * 60 * 1000);
+  assert.ok(RIDE_JOURNEY_STAY_MS > WALK_JOURNEY_STAY_MS);
+  const shortStop = [...drive, ...staySamples(drive[drive.length - 1], arrive, arrive + WALK_JOURNEY_STAY_MS, 60_000)];
+  assert.equal(splitClosedJourneys(shortStop, arrive + WALK_JOURNEY_STAY_MS).journeys.length, 0);
+  assert.equal(liveTrailDrawable(shortStop, arrive + WALK_JOURNEY_STAY_MS), true);
+  const parked = [...drive, ...staySamples(drive[drive.length - 1], arrive, arrive + RIDE_JOURNEY_STAY_MS, 60_000)];
+  const split = splitClosedJourneys(parked, arrive + RIDE_JOURNEY_STAY_MS);
+  assert.equal(split.journeys.length, 1);
+  assert.ok(split.journeys[0].distanceM >= 80);
+  assert.equal(liveTrailDrawable(parked, arrive + RIDE_JOURNEY_STAY_MS), false);
+  assert.equal(liveTrailPoints(parked, arrive + RIDE_JOURNEY_STAY_MS).some((point) => point.at === drive[0].at), false);
 });
 
 test('a short hop after a stay does not become a journey card', () => {

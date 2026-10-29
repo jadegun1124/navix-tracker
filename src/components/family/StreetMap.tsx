@@ -38,13 +38,13 @@ export const StreetMap = forwardRef<StreetMapHandle, {
   zoom: number;
   members: Member[];
   home: HomeZone | null;
-  trail: TrackPoint[];
+  trails: TrackPoint[][];
   trailColor: string;
   selectedId?: string;
   playback?: { lat: number; lng: number; label: string } | null;
   onSelect: (id: string) => void;
   onMove?: (center: { lat: number; lng: number }) => void;
-}>(function StreetMap({ center, zoom, members, home, trail, trailColor, selectedId, playback, onSelect, onMove }, ref) {
+}>(function StreetMap({ center, zoom, members, home, trails, trailColor, selectedId, playback, onSelect, onMove }, ref) {
   const nodeRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
   const layersRef = useRef<L.LayerGroup | null>(null);
@@ -235,47 +235,50 @@ export const StreetMap = forwardRef<StreetMapHandle, {
     const trailGroup = trailRef.current;
     if (!ready || !trailGroup) return;
     trailGroup.clearLayers();
-    if (trail.length < 2) return;
     const stroke = { smoothFactor: 0, lineCap: 'round' as const, lineJoin: 'round' as const };
-    const parts = trailDrawParts(trail);
-    for (const part of parts) {
-      if (part.points.length < 2) continue;
-      const latlngs = part.points.map((point) => [point.lat, point.lng] as [number, number]);
-      const dashed = part.dashed;
-      L.polyline(latlngs, {
-        ...stroke,
-        color: '#ffffff',
-        weight: dashed ? 7 : 9,
-        opacity: 0.9,
-        dashArray: dashed ? '6 8' : undefined,
-      }).addTo(trailGroup);
-      L.polyline(latlngs, {
-        ...stroke,
+    for (const trail of trails) {
+      if (!trail || trail.length < 2) continue;
+      const parts = trailDrawParts(trail);
+      for (const part of parts) {
+        if (part.points.length < 2) continue;
+        const latlngs = part.points.map((point) => [point.lat, point.lng] as [number, number]);
+        const dashed = part.dashed;
+        L.polyline(latlngs, {
+          ...stroke,
+          color: '#ffffff',
+          weight: dashed ? 7 : 9,
+          opacity: 0.9,
+          dashArray: dashed ? '6 8' : undefined,
+        }).addTo(trailGroup);
+        L.polyline(latlngs, {
+          ...stroke,
+          color: trailColor,
+          weight: dashed ? 4 : 6,
+          opacity: dashed ? 0.85 : 1,
+          dashArray: dashed ? '6 8' : undefined,
+        }).addTo(trailGroup);
+      }
+      const start = parts[0]?.points[0] ?? trail[0];
+      if (!start) continue;
+      L.circleMarker([start.lat, start.lng], {
+        radius: 5,
         color: trailColor,
-        weight: dashed ? 4 : 6,
-        opacity: dashed ? 0.85 : 1,
-        dashArray: dashed ? '6 8' : undefined,
-      }).addTo(trailGroup);
-    }
-    const start = parts[0]?.points[0] ?? trail[0];
-    L.circleMarker([start.lat, start.lng], {
-      radius: 5,
-      color: trailColor,
-      weight: 2,
-      fillColor: trailColor,
-      fillOpacity: 1,
-    }).addTo(trailGroup);
-    const end = parts[parts.length - 1]?.points.at(-1) ?? trail[trail.length - 1];
-    if (end && (end.lat !== start.lat || end.lng !== start.lng)) {
-      L.circleMarker([end.lat, end.lng], {
-        radius: 6,
-        color: trailColor,
-        weight: 3,
-        fillColor: '#ffffff',
+        weight: 2,
+        fillColor: trailColor,
         fillOpacity: 1,
       }).addTo(trailGroup);
+      const end = parts[parts.length - 1]?.points.at(-1) ?? trail[trail.length - 1];
+      if (end && (end.lat !== start.lat || end.lng !== start.lng)) {
+        L.circleMarker([end.lat, end.lng], {
+          radius: 6,
+          color: trailColor,
+          weight: 3,
+          fillColor: '#ffffff',
+          fillOpacity: 1,
+        }).addTo(trailGroup);
+      }
     }
-  }, [ready, trail, trailColor]);
+  }, [ready, trails, trailColor]);
 
   const missingKey = !key;
 
