@@ -1,7 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Bell, BatteryCharging, ChevronLeft, Footprints, MapPin, Shield } from 'lucide-react';
-import { localProfile } from '../../lib/localProfile.mjs';
-import { signInWithGoogle } from '../../services/googleSignIn';
+import { deviceProfileKey, localProfile } from '../../lib/localProfile.mjs';
+import { GOOGLE_SETUP_MESSAGE } from '../../lib/googleAuth.mjs';
+import { persistAccountResult, recoverFamilyAccount } from '../../services/familyAccount';
+import { configuredGoogleWebClientId, signInWithGoogle } from '../../services/googleSignIn';
 import { KEEP_PERMISSION_ASKED_KEY, markSessionFlag } from '../../lib/systemSettings.mjs';
 import { askAlwaysLocation, askBattery, askMotion, askNotifications, askWhileUsing } from '../../services/systemPermissions';
 import { overlayPermissionGranted, umapLocationNative } from '../../services/umapLocation';
@@ -76,28 +78,53 @@ function Splash({ onDone }: { onDone: () => void }) {
 }
 
 function Login({ onSubmit }: { onSubmit: (profile: Profile) => void }) {
+  const family = useFamily();
   const [name, setName] = useState('');
+  const [recovery, setRecovery] = useState('');
+  const [recoverOpen, setRecoverOpen] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const trimmed = name.trim();
+  const googleId = configuredGoogleWebClientId();
 
   return (
     <div className="flex h-full flex-col px-6 pb-10 pt-16">
       <img src={iconSrc} alt="" className="h-16 w-16 rounded-2xl shadow-md" />
       <h1 className="mt-6 text-[28px] font-black leading-tight">이 폰에서 쓸 이름</h1>
       <p className="mt-3 text-sm leading-6 text-slate-600">
-        가족 지도에 보이는 이름입니다. Google로 로그인하면 같은 계정이 이 기기의 표시 이름을 이어서 씁니다. 전화번호는 쓰지 않습니다.
+        가족 지도에 보이는 이름입니다. Google로 로그인하거나 복구 코드를 넣으면 같은 사람과 가족 방으로 돌아갑니다. 전화번호는 쓰지 않습니다.
       </p>
       <button
         type="button"
-        disabled={busy}
+        disabled={busy || !googleId}
         onClick={() => {
+          if (!googleId) {
+            setMessage(GOOGLE_SETUP_MESSAGE);
+            return;
+          }
           setBusy(true);
           setMessage(null);
-          void signInWithGoogle().then((result) => {
+          const typed = localProfile(trimmed);
+          const snapshot = typed && family.state.inviteCode && family.state.syncWriteKey && family.state.syncReadKey
+            ? {
+              memberId: typed.id,
+              profileKey: deviceProfileKey(family.state.profile?.profileKey),
+              profile: { name: typed.name },
+              room: {
+                code: family.state.inviteCode,
+                writeKey: family.state.syncWriteKey,
+                readKey: family.state.syncReadKey,
+              },
+            }
+            : null;
+          void signInWithGoogle(snapshot).then((result) => {
             setBusy(false);
             if (!result.ok || !result.profile) {
               setMessage(result.message || 'Google 로그인을 마치지 못했습니다. 이 상태로 시작하지 않습니다.');
+              return;
+            }
+            if (result.snapshot) {
+              family.restoreAccount(result.snapshot);
               return;
             }
             onSubmit(result.profile);
@@ -107,6 +134,55 @@ function Login({ onSubmit }: { onSubmit: (profile: Profile) => void }) {
       >
         {busy ? 'Google 확인 중' : 'Google로 계속'}
       </button>
+      {!googleId && <p className="mt-3 whitespace-pre-line text-sm leading-6 text-slate-600">{GOOGLE_SETUP_MESSAGE}</p>}
+      <button
+        type="button"
+        disabled={busy}
+        onClick={() => {
+          setRecoverOpen(true);
+          setMessage(null);
+        }}
+        className="mt-3 w-full rounded-full bg-slate-100 py-3 text-sm font-bold text-slate-700 disabled:opacity-40"
+      >
+        복구 코드로 불러오기
+      </button>
+      {recoverOpen && (
+        <form
+          className="mt-4"
+          onSubmit={(event) => {
+            event.preventDefault();
+            setBusy(true);
+            setMessage(null);
+            void recoverFamilyAccount(recovery).then((result) => {
+              setBusy(false);
+              if (!result.ok || !result.account) {
+                setMessage(result.message || '복구 코드를 확인하지 못했습니다. 코드를 다시 입력해 주세요.');
+                return;
+              }
+              void persistAccountResult(result);
+              family.restoreAccount(result.account);
+            }).catch(() => {
+              setBusy(false);
+              setMessage('복구 코드를 확인하지 못했습니다. 위치 서버에 다시 연결해 주세요.');
+            });
+          }}
+        >
+          <label className="block text-xs font-bold text-slate-400" htmlFor="recovery-code">
+            복구 코드
+          </label>
+          <input
+            id="recovery-code"
+            value={recovery}
+            onChange={(event) => setRecovery(event.target.value)}
+            placeholder="XXXX-XXXX-XXXX"
+            autoComplete="one-time-code"
+            className="mt-1 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 tracking-[0.2em] outline-none focus:border-[#0084FF]"
+          />
+          <button type="submit" disabled={busy || recovery.trim().length < 12} className="mt-3 w-full rounded-full bg-[#0084FF] py-3 text-sm font-bold text-white disabled:opacity-40">
+            이 사람으로 불러오기
+          </button>
+        </form>
+      )}
       {message && <p className="mt-3 whitespace-pre-line text-sm leading-6 text-slate-600">{message}</p>}
       <form
         className="mt-8"
@@ -209,13 +285,13 @@ const TERM_COPY: { id: string; title: string; required: boolean; body: string }[
     id: 'location',
     title: '위치기반서비스 이용약관 동의',
     required: true,
-    body: '가족 지도, 우리 집 안심존, 들어오고 나간 알림, 이 기기에 남기는 이동 경로에 위치를 사용합니다. 경로는 서버로 보내지 않습니다.',
+    body: '가족 지도, 우리 집 안심존, 들어오고 나간 알림, 이 기기에 남기는 이동 경로에 위치를 사용합니다. 최근 30일 여정·방문은 다시 설치해도 찾을 수 있게 가족 서버 계정에 백업합니다.',
   },
   {
     id: 'privacy',
     title: '개인정보 수집·이용 동의',
     required: true,
-    body: '이 기기에 저장한 표시 이름, 선택한 위치 권한, 가족 이름, 이동 경로를 이 기기에 둡니다. 전화번호는 받지 않습니다. Google로 로그인하면 계정 연결에만 쓰고, 가족 지도에는 표시 이름이 보입니다.',
+    body: '표시 이름, 가족 방 키, 최근 30일 여정·방문을 이 기기와 가족 서버 계정에 둡니다. 전화번호는 받지 않습니다. Google 로그인 또는 복구 코드로 같은 사람을 다시 불러옵니다.',
   },
   {
     id: 'guardian',

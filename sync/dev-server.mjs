@@ -1,5 +1,6 @@
 import { createServer } from 'node:http';
 import { pathToFileURL } from 'node:url';
+import { createMemoryAccountStore } from './account.mjs';
 import { createMemoryStore, handleSyncRequest, withCors } from './protocol.mjs';
 
 function headerObject(incoming) {
@@ -19,6 +20,8 @@ async function readBody(incoming) {
 
 export function startSyncServer(port = 0) {
   const store = createMemoryStore();
+  const accounts = createMemoryAccountStore();
+  const googleClientId = process.env.GOOGLE_WEB_CLIENT_ID || process.env.VITE_GOOGLE_WEB_CLIENT_ID || '';
   const server = createServer(async (incoming, outgoing) => {
     try {
       const host = incoming.headers.host || '127.0.0.1';
@@ -30,7 +33,7 @@ export function startSyncServer(port = 0) {
         headers: headerObject(incoming.headers),
         body: body && body.length ? body : undefined,
       });
-      const response = withCors(await handleSyncRequest(store, request));
+      const response = withCors(await handleSyncRequest(store, request, { accounts, googleClientId }));
       const payload = Buffer.from(await response.arrayBuffer());
       outgoing.writeHead(response.status, Object.fromEntries(response.headers.entries()));
       outgoing.end(payload);

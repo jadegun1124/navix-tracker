@@ -108,7 +108,7 @@ export function withCors(response) {
   const headers = new Headers(response.headers);
   headers.set('access-control-allow-origin', '*');
   headers.set('access-control-allow-methods', 'GET, PUT, POST, DELETE, OPTIONS');
-  headers.set('access-control-allow-headers', 'content-type, x-umap-sync-key, x-umap-read-key, x-umap-profile-key');
+  headers.set('access-control-allow-headers', 'content-type, x-umap-sync-key, x-umap-read-key, x-umap-profile-key, x-umap-account-key');
   headers.set('access-control-max-age', '86400');
   headers.set('cache-control', 'no-store');
   return new Response(response.body, { status: response.status, headers });
@@ -787,6 +787,10 @@ export async function parseOperation(request) {
     return { kind: 'health' };
   }
 
+  const { parseAccountOperation } = await import('./account.mjs');
+  const accountOp = await parseAccountOperation(request);
+  if (accountOp) return accountOp;
+
   if (request.method === 'GET' && (url.pathname === '/v1/push/vapid' || url.pathname === '/v1/push/vapid/')) {
     return { kind: 'vapid-public' };
   }
@@ -930,12 +934,21 @@ export function alertPushPayload(alert) {
   };
 }
 
-export async function handleSyncRequest(store, request) {
+export async function handleSyncRequest(store, request, extras = {}) {
   if (request.method === 'OPTIONS') return new Response(null, { status: 204 });
   const op = await parseOperation(request);
   if (op instanceof Response) return op;
   if (op.kind === 'health') return json({ ok: true, service: 'umap-family-sync' });
   if (op.kind === 'vapid-public') return json({ error: 'vapid' }, 501);
+  if (typeof op.kind === 'string' && op.kind.startsWith('account-')) {
+    const { createMemoryAccountStore, handleAccountOperation } = await import('./account.mjs');
+    const accounts = extras.accounts || extras.accountStore || createMemoryAccountStore();
+    return handleAccountOperation(accounts, op, {
+      clientId: extras.clientId || extras.googleClientId || '',
+      fetchCerts: extras.fetchCerts,
+      now: extras.now,
+    });
+  }
 
   const room = (await store.read(op.token)) || emptyRoom();
   if (op.kind === 'get') return json(viewRoom(room, op.since));

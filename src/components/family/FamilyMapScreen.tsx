@@ -32,6 +32,7 @@ import { askAlwaysLocation, askBattery, askNotifications } from '../../services/
 import { useFamilyTracking } from './useFamilyTracking';
 import { useFamily } from './session';
 import { consumeAndroidBack } from '../../platform/androidExit';
+import { readStoredRecoveryCode } from '../../lib/accountRestore.mjs';
 
 export function FamilyMapScreen() {
   const family = useFamily();
@@ -1237,6 +1238,7 @@ export function FamilyMapScreen() {
           <Sheet title="설정" onClose={() => setManagedSettings(false)}>
             <p className="text-sm leading-6 text-slate-500">위치는 초대를 수락하고 공유를 허용한 뒤에만 나갑니다. 위치 유지를 켠 뒤에는 이 화면에서 끄지 않습니다.</p>
             <AppVersionLine />
+            <RecoveryCodePanel />
             <button
               type="button"
               onClick={openLocationSettings}
@@ -1295,6 +1297,7 @@ export function FamilyMapScreen() {
           <Sheet title="설정" onClose={() => setAdminSettings(false)}>
             <p className="text-sm leading-6 text-slate-500">가족은 같은 방에서 위치를 나눕니다. 위치 유지를 켠 뒤에는 이 화면에서 끄지 않습니다.</p>
             <AppVersionLine />
+            <RecoveryCodePanel />
             {!state.shareSelfWithFamily && (
               <button
                 type="button"
@@ -2313,6 +2316,37 @@ function RoundButton({ children, onClick, label }: { children: React.ReactNode; 
 
 function AppVersionLine() {
   return <p className="mt-2 text-xs font-semibold text-slate-500">{currentAppVersionLabel()}</p>;
+}
+
+function RecoveryCodePanel() {
+  const [copied, setCopied] = useState(false);
+  const code = readStoredRecoveryCode(typeof localStorage === 'undefined' ? null : localStorage);
+  if (!code) {
+    return (
+      <p className="mt-3 text-xs leading-5 text-slate-500">
+        앱을 지운 뒤에도 같은 사람과 가족으로 돌아오려면 Google 로그인 또는 복구 코드를 쓰세요. 코드는 이 폰이 서버에 계정을 만든 뒤 여기에 나타납니다.
+      </p>
+    );
+  }
+  return (
+    <div className="mt-3 rounded-2xl bg-slate-50 px-3 py-3">
+      <p className="text-xs font-bold text-slate-500">복구 코드</p>
+      <p className="mt-1 font-mono text-base font-black tracking-[0.18em] text-slate-800">{code}</p>
+      <p className="mt-1 text-xs leading-5 text-slate-500">앱을 다시 설치한 뒤 「복구 코드로 불러오기」에 넣으면 같은 사람과 가족 방으로 돌아갑니다.</p>
+      <button
+        type="button"
+        onClick={() => {
+          void navigator.clipboard?.writeText(code).then(() => {
+            setCopied(true);
+            window.setTimeout(() => setCopied(false), 1500);
+          }).catch(() => undefined);
+        }}
+        className="mt-2 text-xs font-bold text-[#0084FF]"
+      >
+        {copied ? '복사했습니다' : '코드 복사'}
+      </button>
+    </div>
+  );
 }
 
 function Line({ k, v }: { k: string; v: string }) {

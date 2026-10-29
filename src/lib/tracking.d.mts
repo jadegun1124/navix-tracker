@@ -94,6 +94,12 @@ export function trailDecision(last: TrailSample | null | undefined, point: Trail
 export function shouldKeepTrailPoint(last: TrailSample | null | undefined, point: TrailSample): boolean;
 export function collapseStayTrail(points: TrailSample[] | null | undefined): TrailSample[];
 export function collapseIndoorStayDisplay(points: TrailSample[] | null | undefined): TrailSample[];
+
+export function stayLabelPoint(
+  points: Array<{ lat: number; lng: number; at?: number; staying?: boolean; stayEnd?: boolean }> | null | undefined,
+  fallback: { lat?: number | null; lng?: number | null } | null | undefined,
+  moving?: boolean | null,
+): { lat: number; lng: number } | null;
 export const TRAIL_GAP_M: number;
 export const TRAIL_GAP_MS: number;
 export function trailSegmentDashed(start: TrailSample | null | undefined, end: TrailSample | null | undefined): boolean;

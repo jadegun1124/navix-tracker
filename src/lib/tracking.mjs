@@ -830,6 +830,27 @@ function stayCentroid(cluster) {
   };
 }
 
+/** GPS jitter snaps to the stay-cluster centroid so a pin does not jump to the next POI. */
+export function stayLabelPoint(points, fallback, moving) {
+  const lat = Number(fallback?.lat);
+  const lng = Number(fallback?.lng);
+  const backup = Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : null;
+  if (moving === true) return backup;
+  const source = Array.isArray(points) ? points : [];
+  const cluster = [];
+  for (let index = source.length - 1; index >= 0; index -= 1) {
+    const point = source[index];
+    if (!point || !Number.isFinite(point.lat) || !Number.isFinite(point.lng)) continue;
+    if (point.stayEnd === true) break;
+    if (point.staying !== true && cluster.length === 0) break;
+    if (cluster.length && haversineMeters(cluster[0], point) > STAY_BOUND_RADIUS_M) break;
+    cluster.push(point);
+  }
+  if (cluster.length < 3) return backup;
+  const center = stayCentroid(cluster);
+  return { lat: center.lat, lng: center.lng };
+}
+
 function travelShape(points) {
   const path = pathDistance(points);
   const net = haversineMeters(points[0], points[points.length - 1]);
