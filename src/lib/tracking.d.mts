@@ -92,6 +92,7 @@ export function trailMoveGate(last: TrailSample | null | undefined, point: Trail
 export function trailDecision(last: TrailSample | null | undefined, point: TrailSample | null | undefined): TrailDecision;
 export function shouldKeepTrailPoint(last: TrailSample | null | undefined, point: TrailSample): boolean;
 export function collapseStayTrail(points: TrailSample[] | null | undefined): TrailSample[];
+export function collapseIndoorStayDisplay(points: TrailSample[] | null | undefined): TrailSample[];
 export const TRAIL_GAP_M: number;
 export const TRAIL_GAP_MS: number;
 export function trailSegmentDashed(start: TrailSample | null | undefined, end: TrailSample | null | undefined): boolean;

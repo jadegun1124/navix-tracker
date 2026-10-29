@@ -56,6 +56,20 @@ export const TRAIL_STILL_CONFIRM_M = 80;
  */
 export const TRAIL_RELOCATION_M = 120;
 /**
+ * Indoor and courtyard multipath while the phone is still.
+ * A near-zero-speed fix inside this of the stay is not a vertex. Wider than
+ * the 50m stop cluster: a building canyon often jumps 50–200m.
+ * A neighborhood relocation (about 1km) stays outside and is still kept.
+ */
+const INDOOR_STAY_RADIUS_M = 220;
+/** One stationary step longer than a walked vertex (~30m) is a multipath leap on the drawing pass. */
+const INDOOR_LEAP_M = 48;
+/**
+ * A still phone can still be walking. 70m in about 45s is that walk.
+ * Farther than this, with no walking speed, is building multipath.
+ */
+const INDOOR_WALK_STEP_M = 110;
+/**
  * Display simplify only drops wobble under this many meters.
  * It does not grow with the accuracy bubble. A tighter epsilon keeps the
  * denser 2.5m walk samples, so a building corner stays a curve.
@@ -517,6 +531,60 @@ export function staySnapGate(last, point) {
   return Math.max(STOP_RADIUS_M, accuracy * 2);
 }
 
+/** Still phone: the stay flag, or a reported speed under a walk. A missing speed is not still by itself. */
+function stationarySample(point) {
+  if (speedShowsMoving(point)) return false;
+  if (point?.staying === true) return true;
+  const speed = pointSpeed(point);
+  return speed != null && speed < TRAIL_STAY_SPEED_MPS;
+}
+
+/**
+ * Walk-sized progress off a stay. A corner stays. A leap, or a step that
+ * folds back on the previous vertex, does not.
+ * After the phone has already rested on the anchor, the next walk-sized
+ * step may leave in any direction.
+ */
+function continuesStillWalk(points, point) {
+  const anchor = drawnAnchor(points);
+  if (!anchor) return false;
+  const pace = stepPace(anchor, point);
+  if (!pace || pace.moved < TRAIL_DEPART_STAY_M || pace.moved > INDOOR_WALK_STEP_M) return false;
+  if (pace.speed < 0.75 || pace.speed > 2.8 || pace.dt < 1_200 || pace.dt > 60_000) return false;
+  const prev = previousVertex(points);
+  if (!prev) return true;
+  if (anchor.at - prev.at >= STOP_MIN_MS) return true;
+  const marked = Array.isArray(points) ? points[points.length - 1] : null;
+  if (marked?.stayEnd && marked.at >= anchor.at) return true;
+  const turn = Math.abs(signedTurnDeg(prev, anchor, point));
+  if (!Number.isFinite(turn) || turn > 115) return false;
+  if (haversineMeters(prev, point) + 6 < haversineMeters(prev, anchor)) return false;
+  return true;
+}
+
+/**
+ * Stationary indoor drift. Poor accuracy or a near-zero-speed fix inside
+ * the stay radius does not extend the line. A real walk or ride still does.
+ */
+function indoorStayDrift(points, point) {
+  if (!point || point.stayEnd || !stationarySample(point)) return false;
+  const anchor = drawnAnchor(points);
+  if (!anchor || isRideStep(anchor, point)) return false;
+  const moved = haversineMeters(anchor, point);
+  if (!Number.isFinite(moved) || moved > INDOOR_STAY_RADIUS_M) return false;
+  if (continuesStillWalk(points, point)) return false;
+  if (positiveMeters(point.accuracyM) >= 30 && moved >= TRAIL_WALK_VERTEX_M) return true;
+  if (moved >= INDOOR_LEAP_M) return true;
+  return point.staying === true && moved >= TRAIL_WALK_VERTEX_M;
+}
+
+function resolvedTrailDecision(points, point) {
+  const anchor = drawnAnchor(Array.isArray(points) ? points : []);
+  const decision = trailDecision(anchor, point);
+  if (decision === 'keep' && indoorStayDrift(points, point)) return 'snap';
+  return decision;
+}
+
 /**
  * Live pin and the coordinate published to the family.
  * Holds only inside the stay bubble. Bus, subway, and a sparse GPS jump past that
@@ -627,7 +695,7 @@ export function collapseStayTrail(points) {
         continue;
       }
     }
-    const decision = trailDecision(anchor, point);
+    const decision = resolvedTrailDecision(kept, point);
     if (decision === 'drop' || decision === 'snap') {
       changed = true;
       if (decision === 'snap') rememberStay(kept, anchor, point);
@@ -690,8 +758,115 @@ function smoothShallowBends(points) {
   return next;
 }
 
+function clusterSpread(points) {
+  let lat = 0;
+  let lng = 0;
+  for (const point of points) {
+    lat += point.lat;
+    lng += point.lng;
+  }
+  const center = { lat: lat / points.length, lng: lng / points.length };
+  let max = 0;
+  for (const point of points) max = Math.max(max, haversineMeters(center, point));
+  return max;
+}
+
+function stayCentroid(cluster) {
+  let lat = 0;
+  let lng = 0;
+  for (const point of cluster) {
+    lat += point.lat;
+    lng += point.lng;
+  }
+  const last = cluster[cluster.length - 1];
+  return {
+    ...last,
+    lat: lat / cluster.length,
+    lng: lng / cluster.length,
+    at: last.at,
+    speedMps: 0,
+    staying: true,
+  };
+}
+
+function travelShape(points) {
+  const path = pathDistance(points);
+  const net = haversineMeters(points[0], points[points.length - 1]);
+  return { path, net, ratio: path > 0 ? net / path : 1 };
+}
+
+/** Net progress, not a cloud that folds back on itself. */
+function isDirectionalTravel(points) {
+  if (!Array.isArray(points) || points.length < 3) return false;
+  const { path, net, ratio } = travelShape(points);
+  if (path < 28) return false;
+  return net >= 30 && ratio >= 0.62;
+}
+
+/** A cloud that stays inside the building radius and does not make net progress. */
+function isIndoorScribble(points) {
+  if (!Array.isArray(points) || points.length < 3) return false;
+  for (let index = 1; index < points.length; index += 1) {
+    if (isRideStep(points[index - 1], points[index])) return false;
+    if (speedShowsMoving(points[index]) && points[index].staying !== true) return false;
+  }
+  if (clusterSpread(points) > INDOOR_STAY_RADIUS_M) return false;
+  const { path, net, ratio } = travelShape(points);
+  if (path < 40) return false;
+  if (net >= 35 && ratio >= 0.5) return false;
+  return true;
+}
+
+function extendsIndoorScribble(cluster, point) {
+  const prev = cluster[cluster.length - 1];
+  if (!prev) return false;
+  if (isRideStep(prev, point)) return false;
+  if (speedShowsMoving(point) && point.staying !== true) return false;
+  const trial = cluster.concat([point]);
+  if (clusterSpread(trial) > INDOOR_STAY_RADIUS_M) return false;
+  if (isDirectionalTravel(trial)) return false;
+  return true;
+}
+
+/**
+ * Draw a stay cloud as one centroid. Stored journey points often have no
+ * speed, so the sampler's stay flag cannot see them. A walk or ride whose
+ * net progress is real is left point for point.
+ */
+export function collapseIndoorStayDisplay(points) {
+  if (!Array.isArray(points) || points.length < 3) return Array.isArray(points) ? points : [];
+  const source = [];
+  for (const point of points) {
+    if (!point || point.stayEnd || !Number.isFinite(point.lat) || !Number.isFinite(point.lng)) continue;
+    source.push(point);
+  }
+  if (source.length < 3) return points;
+  const output = [];
+  let cluster = [];
+  const flush = () => {
+    if (cluster.length === 0) return;
+    if (isIndoorScribble(cluster)) output.push(stayCentroid(cluster));
+    else output.push(...cluster);
+    cluster = [];
+  };
+  for (const point of source) {
+    if (cluster.length === 0) {
+      cluster.push(point);
+      continue;
+    }
+    if (extendsIndoorScribble(cluster, point)) cluster.push(point);
+    else {
+      flush();
+      cluster.push(point);
+    }
+  }
+  flush();
+  if (output.length === source.length && output.every((point, index) => point === source[index])) return points;
+  return output;
+}
+
 function sampledTrail(points) {
-  const collapsed = collapseStayTrail(points);
+  const collapsed = collapseIndoorStayDisplay(collapseStayTrail(points));
   const drawn = [];
   for (const point of collapsed) {
     if (!point || point.stayEnd) continue;
@@ -789,7 +964,7 @@ export function trailDrawParts(points) {
 
 /**
  * Polyline vertices for every member.
- * Stay markers, accuracy-bubble wiggles, and thin there-and-back spikes are not drawn.
+ * Stay markers, indoor drift inside the stay radius, and thin there-and-back spikes are not drawn.
  * Walking corners stay. Douglas–Peucker runs only here so stored history can still rebuild a bend.
  */
 export function visibleTrail(points) {
@@ -820,7 +995,7 @@ export function settleTrailPoint(points, point, now) {
   const existing = Array.isArray(points) ? points : [];
   const collapsed = collapseStayTrail(existing);
   const anchor = drawnAnchor(collapsed);
-  const decision = trailDecision(anchor, point);
+  const decision = resolvedTrailDecision(collapsed, point);
   const pin = liveCoordinate(anchor, point);
   if (decision !== 'keep') {
     const next = decision === 'snap' ? appendHistoryPoint(collapsed, point, now) : collapsed;
@@ -955,7 +1130,7 @@ export function appendHistoryPoint(points, point, now) {
     if (tip) base = withoutVertex(base, tip);
   }
   const anchor = drawnAnchor(base);
-  const decision = trailDecision(anchor, point);
+  const decision = resolvedTrailDecision(base, point);
   if (decision === 'drop' || !point || !Number.isFinite(point.at)) {
     const trimmed = trimMemberPoints(base, anchorNow);
     return trimmed === points ? points : trimmed;

@@ -37,6 +37,7 @@ import {
   STAY_LABEL_DWELL_MS,
   WALK_JOURNEY_STAY_MS,
   RIDE_JOURNEY_STAY_MS,
+  collapseIndoorStayDisplay,
   visibleTrail,
   trailDrawParts,
   trailSegmentDashed,
@@ -471,6 +472,66 @@ test('a 5s walk along a bend stays off the straight chord and a continuous run i
   };
   const withHole = settleTrailPoint(recorded, hole, hole.at).points;
   assert.equal(trailDrawParts(withHole).some((part) => part.dashed), true);
+});
+
+test('indoor stay drift is not a dashed zigzag or a records scribble, and a real departure still is', () => {
+  const t = Date.UTC(2026, 9, 28, 0, 42, 0);
+  const origin = { lat: 37.6365, lng: 127.0678, at: t, accuracyM: 18, speedMps: 0, staying: true };
+  const hops = [
+    [0, 0, 0],
+    [40, 70, 120_000],
+    [-30, 20, 300_000],
+    [80, -60, 480_000],
+    [10, 30, 700_000],
+    [-50, 90, 900_000],
+    [20, -20, 1_100_000],
+  ];
+  let recorded = [];
+  const raw = [];
+  for (const [north, east, dt] of hops) {
+    const point = { ...offset(origin, north, east, t + dt), accuracyM: 22, speedMps: 0, staying: true };
+    raw.push(point);
+    const settled = settleTrailPoint(recorded, point, point.at);
+    if (dt > 0) assert.equal(settled.decision, 'snap', `indoor hop ${north},${east} was ${settled.decision}`);
+    recorded = settled.points;
+  }
+  assert.equal(visibleTrail(recorded).length, 1);
+  assert.equal(trailDrawParts(raw).some((part) => part.dashed), false);
+  assert.equal(visibleTrail(raw).length, 1);
+  assert.equal(liveTrailDrawable(recorded, t + 1_200_000), false);
+  assert.equal(liveMotionLabel({ located: true, moving: false, points: recorded, now: t + 1_200_000 }), '머무름');
+
+  const archived = raw.map(({ lat, lng, at }) => ({ lat, lng, at }));
+  const drawn = visibleTrail(archived);
+  assert.equal(drawn.length, 1);
+  assert.equal(trailDrawParts(archived).some((part) => part.points.length >= 2), false);
+  const center = collapseIndoorStayDisplay(archived)[0];
+  assert.ok(Math.abs((center.lat - origin.lat) * 111_320) < 80);
+  assert.ok(Math.abs((center.lng - origin.lng) * 111_320 * Math.cos((origin.lat * Math.PI) / 180)) < 80);
+
+  const poor = { ...offset(origin, 35, 12, t + 20_000), accuracyM: 36, speedMps: 0, staying: true };
+  assert.equal(settleTrailPoint([origin], poor, poor.at).decision, 'snap');
+  assert.equal(visibleTrail([origin, poor]).length, 1);
+
+  const far = { ...offset(origin, 1000, 40, t + 90_000), accuracyM: 12, speedMps: 0, staying: true };
+  const moved = settleTrailPoint([origin], far, far.at);
+  assert.equal(moved.decision, 'keep');
+  assert.ok(visibleTrail(moved.points).length >= 2);
+
+  const walk = [origin];
+  for (let index = 1; index <= 16; index += 1) {
+    walk.push({
+      ...offset(origin, 0, index * 8, t + index * 6_000),
+      accuracyM: 12,
+      speedMps: 1.3,
+      staying: false,
+    });
+  }
+  const walked = visibleTrail(walk);
+  assert.ok(walked.length >= 2);
+  const endEast = (walked[walked.length - 1].lng - origin.lng) * 111_320 * Math.cos((origin.lat * Math.PI) / 180);
+  assert.ok(endEast > 100, `walk collapsed, east ${endEast.toFixed(1)}`);
+  assert.equal(trailDrawParts(walk).some((part) => part.dashed), false);
 });
 
 test('stay multipath does not zigzag and a fix outside the stay bubble still moves the pin', () => {
