@@ -1,4 +1,5 @@
 import { rememberPlaceName } from '../lib/placeAlias.mjs';
+import { optionalRouteMissing } from '../lib/syncRoute.mjs';
 import type { FamilyAlert } from './familyAlert';
 import { chatName, isFamilyChatMessage, type FamilyChatMessage } from './familyChat';
 import type { SharedPlace, SharedProfile } from './familyShare';
@@ -335,10 +336,10 @@ async function sendQueued(path: string, token: string, body: unknown, drop: () =
     drop();
     return true;
   }
-  const staleProfile = path.endsWith('/profile') && response.status === 404;
-  if (!staleProfile) classify(response);
-  if (response.ok || staleProfile || response.status === 400 || response.status === 401 || response.status === 403 || response.status === 413) drop();
-  return response.ok || staleProfile;
+  const optionalMissing = optionalRouteMissing(path, response.status);
+  if (!optionalMissing) classify(response);
+  if (response.ok || optionalMissing || response.status === 400 || response.status === 401 || response.status === 403 || response.status === 413) drop();
+  return response.ok || optionalMissing;
 }
 
 async function flushQueues() {
