@@ -14,13 +14,13 @@ function text(path) {
 }
 
 test('설정 shows versionName and versionCode', () => {
-  assert.equal(APP_VERSION_NAME, '1.32.0');
-  assert.equal(APP_VERSION_CODE, 36);
-  assert.equal(formatAppVersion(), '앱 버전 1.32.0 (36)');
-  assert.equal(formatAppVersion('1.32.0', ''), '앱 버전 1.32.0');
+  assert.equal(APP_VERSION_NAME, '1.33.0');
+  assert.equal(APP_VERSION_CODE, 37);
+  assert.equal(formatAppVersion(), '앱 버전 1.33.0 (37)');
+  assert.equal(formatAppVersion('1.33.0', ''), '앱 버전 1.33.0');
   assert.equal(labelFromInstalled('1.10.0 10'), '앱 버전 1.10.0 (10)');
-  assert.equal(labelFromInstalled(''), '앱 버전 1.32.0 (36)');
-  assert.equal(labelFromInstalled('not-a-version'), '앱 버전 1.32.0 (36)');
+  assert.equal(labelFromInstalled(''), '앱 버전 1.33.0 (37)');
+  assert.equal(labelFromInstalled('not-a-version'), '앱 버전 1.33.0 (37)');
 });
 
 test('an installed APK version replaces the bundled label', () => {
@@ -29,41 +29,41 @@ test('an installed APK version replaces the bundled label', () => {
   try {
     assert.equal(currentAppVersionLabel(), '앱 버전 1.10.0 (10)');
     globalThis.window = { UmapAndroid: { appVersion: () => '' } };
-    assert.equal(currentAppVersionLabel(), '앱 버전 1.32.0 (36)');
+    assert.equal(currentAppVersionLabel(), '앱 버전 1.33.0 (37)');
     globalThis.window = {};
-    assert.equal(currentAppVersionLabel(), '앱 버전 1.32.0 (36)');
+    assert.equal(currentAppVersionLabel(), '앱 버전 1.33.0 (37)');
   } finally {
     if (previous === undefined) delete globalThis.window;
     else globalThis.window = previous;
   }
 });
 
-test('package.json, Gradle, and the release workflow stay on 1.32.0 / 36', () => {
+test('package.json, Gradle, and the release workflow stay on 1.33.0 / 37', () => {
   const pkg = JSON.parse(text('../../package.json'));
   const lock = JSON.parse(text('../../package-lock.json'));
-  assert.equal(pkg.version, '1.32.0');
-  assert.equal(lock.version, '1.32.0');
-  assert.equal(lock.packages[''].version, '1.32.0');
+  assert.equal(pkg.version, '1.33.0');
+  assert.equal(lock.version, '1.33.0');
+  assert.equal(lock.packages[''].version, '1.33.0');
 
   const gradle = text('../../android/app/build.gradle');
-  assert.match(gradle, /versionCode 36\b/);
-  assert.match(gradle, /versionName "1\.32\.0"/);
-  assert.match(text('../../android/app/src/main/res/values/strings.xml'), /<string name="version_name">1\.32\.0<\/string>/);
+  assert.match(gradle, /versionCode 37\b/);
+  assert.match(gradle, /versionName "1\.33\.0"/);
+  assert.match(text('../../android/app/src/main/res/values/strings.xml'), /<string name="version_name">1\.33\.0<\/string>/);
 
   const workflow = text('../../.github/workflows/build-apk.yml');
-  assert.match(workflow, /tag_name: v1\.32\.0/);
-  assert.match(workflow, /versionName: 1\.32\.0/);
-  assert.match(workflow, /versionCode: 36/);
-  assert.match(workflow, /kinnex-v1\.32\.0\.apk/);
+  assert.match(workflow, /tag_name: v1\.33\.0/);
+  assert.match(workflow, /versionName: 1\.33\.0/);
+  assert.match(workflow, /versionCode: 37/);
+  assert.match(workflow, /kinnex-v1\.33\.0\.apk/);
   assert.match(workflow, /keytool/);
   assert.match(workflow, /SHA1/);
   assert.equal(workflow.includes('1.26.0'), false);
 
   const readme = text('../../README.md');
-  assert.match(readme, /versionName`은 `1\.32\.0`/);
-  assert.match(readme, /versionCode`는 36입니다/);
+  assert.match(readme, /versionName`은 `1\.33\.0`/);
+  assert.match(readme, /versionCode`는 37입니다/);
   assert.match(readme, /`v1\.26\.0`/);
-  assert.match(text('../../PRD.md'), /kinnex-v1\.32\.0\.apk/);
+  assert.match(text('../../PRD.md'), /kinnex-v1\.33\.0\.apk/);
 
   const home = text('../components/home/CompanyHome.tsx');
   assert.match(home, /APP_VERSION_NAME/);
@@ -80,6 +80,10 @@ test('package.json, Gradle, and the release workflow stay on 1.32.0 / 36', () =>
   const screen = text('../components/family/FamilyMapScreen.tsx');
   assert.equal((screen.match(/<AppVersionLine \/>/g) || []).length, 2);
   assert.match(screen, /복구 코드/);
+  assert.match(text('../components/family/Onboarding.tsx'), /카카오로 시작/);
+  assert.match(text('../components/family/Onboarding.tsx'), /네이버로 시작/);
+  assert.match(text('../components/family/Onboarding.tsx'), /Google로 시작/);
+  assert.match(text('../components/family/Onboarding.tsx'), /복구 코드로 불러오기/);
 
   const manifest = text('../../android/app/src/main/AndroidManifest.xml');
   assert.match(manifest, /android:allowBackup="true"/);

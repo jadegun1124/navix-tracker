@@ -5,7 +5,7 @@
 - React 19, TypeScript, Vite, Tailwind CSS v4
 - 웹: 회사 홈페이지. 가족 지도는 `?app=1` 또는 Capacitor 네이티브에서만 연다.
 - 지도: Leaflet. 바탕은 국토교통부 VWorld 2D Base 한 종류. 키는 `import.meta.env.VITE_VWORLD_API_KEY`만 읽는다. 로컬은 gitignore된 `.env`의 `VITE_VWORLD_API_KEY`. Actions에는 `VITE_VWORLD_API_KEY`와 `VWORLD_API_KEY`가 있고, APK와 Pages 빌드가 Vite 이름으로 넘겨 결과물에 포함한다. 키가 없으면 한국어 안내를 보여 주고 타일을 요청하지 않는다. 위성·CARTO·OSM 전환은 없다. 이동 경로는 `localStorage` 세션에 둔다. 메인 지도는 아직 기록으로 넘기지 않은 이동 중 궤적만 그린다. 걸음은 5분, 시속 약 7km 이상은 12분 머물면 그 구간을 기록으로 넘기고 메인 선에서는 뺀다. 기록 화면은 고른 사람의 그날 저장 궤적을 그린다. 샘플 사람·예시 궤적은 넣지 않는다. 핀·구성원 카드·기록·방문한 곳 이름은 아파트/주거 단지 폴리곤 안(또는 약 30m)이면 단지명+동을 쓰고, 단지가 아닐 때만 아주 가까운 POI를 쓴다. 머무름이면 체류 중심점에 맞춘다.
-- 로그인: 가족 지도의 표시 이름은 이 기기에 저장한다. Google 로그인은 계정 연결용이고, Worker가 ID 토큰을 Google JWKS로 확인한다. 클라이언트 ID가 없으면 버튼을 누르지 않는다. 공개 웹 클라이언트 ID는 `VITE_GOOGLE_WEB_CLIENT_ID`이다. 복구 코드로도 같은 사람과 가족 방을 불러온다. 전화번호는 신원으로 받지 않는다. Google subject는 구성원 ID로 쓰지 않는다.
+- 로그인: 가족 지도의 표시 이름은 이 기기에 저장한다. 카카오·네이버·Google 로그인은 계정 연결용이고, Worker가 토큰을 확인한다. 해당 키가 없으면 그 버튼은 비활성이다. 공개 값은 `VITE_GOOGLE_WEB_CLIENT_ID`, `VITE_KAKAO_NATIVE_APP_KEY`, `VITE_NAVER_CLIENT_ID`이다. 네이버 Client Secret은 Worker에만 둔다. 복구 코드로도 같은 사람과 가족 방을 불러온다. 전화번호는 신원으로 받지 않는다. Google subject·카카오 id·네이버 id는 구성원 ID로 쓰지 않는다.
 - 앱 셸: Capacitor Android. 표시 이름 Kinnex. 패키지 `kr.co.umap.tracker`.
 - 아이콘: `python3 scripts/render-umap-icon.py` 가 `resources/icon.svg` 의 파란 그라데이션 타일(남색→시안)과 흰 위치 핀(파란 고리, 흰 점)을 런처·스플래시·파비콘에 넣는다. 적응형 아이콘은 그라데이션이 캔버스를 채우고, 핀만 66dp 안전 영역 안에 둔다.
 
