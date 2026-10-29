@@ -31,6 +31,7 @@ public class UmapAuthPlugin extends Plugin {
     private static volatile UmapAuthPlugin instance;
     private PluginCall pendingNaver;
     private String pendingNaverState = "";
+    private final android.os.Handler naverCancel = new android.os.Handler(android.os.Looper.getMainLooper());
 
     @Override
     public void load() {
@@ -39,6 +40,8 @@ public class UmapAuthPlugin extends Plugin {
 
     @Override
     protected void handleOnDestroy() {
+        naverCancel.removeCallbacksAndMessages(null);
+        if (pendingNaver != null) resolveNaverCanceled();
         if (instance == this) instance = null;
         super.handleOnDestroy();
     }
@@ -143,6 +146,7 @@ public class UmapAuthPlugin extends Plugin {
             call.resolve(failed);
             return;
         }
+        if (pendingNaver != null) resolveNaverCanceled();
         String state = randomState();
         pendingNaver = call;
         pendingNaverState = state;
@@ -167,7 +171,32 @@ public class UmapAuthPlugin extends Plugin {
         activity.runOnUiThread(() -> plugin.finishNaver(data));
     }
 
+    @Override
+    protected void handleOnResume() {
+        super.handleOnResume();
+        if (pendingNaver == null) return;
+        naverCancel.removeCallbacksAndMessages(null);
+        naverCancel.postDelayed(this::cancelNaverIfStillPending, 400);
+    }
+
+    private void cancelNaverIfStillPending() {
+        if (pendingNaver == null) return;
+        resolveNaverCanceled();
+    }
+
+    private void resolveNaverCanceled() {
+        PluginCall call = pendingNaver;
+        pendingNaver = null;
+        pendingNaverState = "";
+        naverCancel.removeCallbacksAndMessages(null);
+        if (call == null) return;
+        JSObject payload = failure("canceled");
+        payload.put("error", "canceled");
+        call.resolve(payload);
+    }
+
     private void finishNaver(Uri data) {
+        naverCancel.removeCallbacksAndMessages(null);
         PluginCall call = pendingNaver;
         pendingNaver = null;
         if (call == null) return;

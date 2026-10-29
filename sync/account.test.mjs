@@ -347,8 +347,14 @@ test('Kakao and Naver tokens restore the same book and can share one account', a
       if (token !== 'naver-access-ok') throw new Error('naver');
       return { resultcode: '00', response: { id: 'naver-user-88', nickname: '엄마' } };
     },
-    exchangeNaverCode: async ({ code, state, clientId, clientSecret }) => {
-      if (code !== 'naver-code-1' || state !== 'state-1' || clientId !== 'naverclientid1' || clientSecret !== 'naversecret1') {
+    exchangeNaverCode: async ({ code, state, redirectUri, clientId, clientSecret }) => {
+      if (
+        code !== 'naver-code-1'
+        || state !== 'state-1'
+        || redirectUri !== 'kinnex://naver'
+        || clientId !== 'naverclientid1'
+        || clientSecret !== 'naversecret1'
+      ) {
         return null;
       }
       return { access_token: 'naver-access-ok' };
@@ -368,7 +374,7 @@ test('Kakao and Naver tokens restore the same book and can share one account', a
 
   const naver = await accountCall(accounts, 'POST', '/v1/account/naver', {
     accountKey: kakao.body.account.accountKey,
-    body: { code: 'naver-code-1', state: 'state-1' },
+    body: { code: 'naver-code-1', state: 'state-1', redirectUri: 'kinnex://naver' },
     extras,
   });
   assert.equal(naver.status, 200);
@@ -391,10 +397,22 @@ test('Kakao and Naver tokens restore the same book and can share one account', a
   assert.equal(forged.status, 401);
 
   const missingSecret = await accountCall(accounts, 'POST', '/v1/account/naver', {
-    body: { code: 'naver-code-1', state: 'state-1' },
+    body: { code: 'naver-code-1', state: 'state-1', redirectUri: 'kinnex://naver' },
     extras: { ...extras, naverClientSecret: '' },
   });
   assert.equal(missingSecret.status, 503);
+
+  const missingRedirect = await accountCall(accounts, 'POST', '/v1/account/naver', {
+    body: { code: 'naver-code-1', state: 'state-1' },
+    extras,
+  });
+  assert.equal(missingRedirect.status, 401);
+
+  const forgedRedirect = await accountCall(accounts, 'POST', '/v1/account/naver', {
+    body: { code: 'naver-code-1', state: 'state-1', redirectUri: 'https://evil.example/callback' },
+    extras,
+  });
+  assert.equal(forgedRedirect.status, 401);
 });
 
 test('logout wipes the stored account key so the next sign-in does not reuse the previous person', () => {

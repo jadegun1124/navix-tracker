@@ -85,15 +85,19 @@ async function browserAuthCode(clientId: string): Promise<{ code: string; state:
   });
 }
 
-export async function signInWithNaver(snapshot?: AccountSnapshot | null): Promise<ProviderSignInResult> {
+export async function signInWithNaver(
+  snapshot?: AccountSnapshot | null,
+  options: { persist?: boolean } = {},
+): Promise<ProviderSignInResult> {
   const clientId = configuredNaverClientId();
   if (!clientId) return { ok: false, message: NAVER_SETUP_MESSAGE };
   if (!familySyncUrl()) return { ok: false, message: NAVER_VERIFY_MESSAGE };
   let code = '';
   let state = '';
   let accessToken = '';
+  let redirectUri = NAVER_REDIRECT;
   if (Capacitor.isNativePlatform()) {
-    const result = await nativeAuth.signInNaver({ clientId, redirectUri: NAVER_REDIRECT }).catch(() => ({ ok: false as const, error: 'failed' }));
+    const result = await nativeAuth.signInNaver({ clientId, redirectUri }).catch(() => ({ ok: false as const, error: 'failed' }));
     if (!result.ok) {
       if (result.error === 'missing-client') return { ok: false, message: NAVER_SETUP_MESSAGE };
       if (result.error === 'canceled') return { ok: false, message: NAVER_CANCEL_MESSAGE };
@@ -103,6 +107,7 @@ export async function signInWithNaver(snapshot?: AccountSnapshot | null): Promis
     state = result.state || '';
     accessToken = result.accessToken || '';
   } else {
+    redirectUri = naverRedirectUri();
     try {
       const granted = await browserAuthCode(clientId);
       code = granted.code;
@@ -112,12 +117,12 @@ export async function signInWithNaver(snapshot?: AccountSnapshot | null): Promis
       return { ok: false, message: message === 'canceled' ? NAVER_CANCEL_MESSAGE : NAVER_VERIFY_MESSAGE };
     }
   }
-  const linked = await linkNaverAccount({ accessToken, code, state }, snapshot).catch(() => ({
+  const linked = await linkNaverAccount({ accessToken, code, state, redirectUri }, snapshot).catch(() => ({
     ok: false as const,
     message: NAVER_VERIFY_MESSAGE,
   }));
   if (!linked.ok || !linked.account) return { ok: false, message: linked.message || NAVER_VERIFY_MESSAGE };
-  await persistAccountResult(linked);
+  if (options.persist !== false) await persistAccountResult(linked);
   const profile = profileFromAccount(linked.account);
   if (!profile) return { ok: false, message: NAVER_VERIFY_MESSAGE };
   return { ok: true, profile, snapshot: linked.account, restored: linked.restored === true };

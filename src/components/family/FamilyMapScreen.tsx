@@ -5,7 +5,8 @@ import { looksLikePhone, localProfile } from '../../lib/localProfile.mjs';
 import { GOOGLE_SETUP_MESSAGE } from '../../lib/googleAuth.mjs';
 import { KAKAO_SETUP_MESSAGE } from '../../lib/kakaoAuth.mjs';
 import { NAVER_SETUP_MESSAGE } from '../../lib/naverAuth.mjs';
-import { snapshotFromSession } from '../../lib/accountRestore.mjs';
+import { ACCOUNT_LINKED_OTHER_MESSAGE, linkedAccountWouldSwitch, rememberAccountSecrets, snapshotFromSession } from '../../lib/accountRestore.mjs';
+import type { AccountSnapshot } from '../../services/familyAccount';
 import { buildInviteLink, formatClock, hasLocation, haversineMeters, shouldAlertLeave } from '../../lib/geo';
 import { ALWAYS_GUIDE_DISMISSED_KEY, CHAT_NOTIFY_ASKED_KEY, KEEP_PERMISSION_ASKED_KEY, KEEP_START_ASKED_KEY, keepEntryPrompt, markSessionFlag, readSessionFlag } from '../../lib/systemSettings.mjs';
 import { familyMapShowsTrail, mainOverviewTrails, recordsDayTrails } from '../../lib/mapTrail.mjs';
@@ -38,7 +39,7 @@ import { useFamily } from './session';
 import { consumeAndroidBack } from '../../platform/androidExit';
 import { readStoredRecoveryCode } from '../../lib/accountRestore.mjs';
 import { configuredGoogleWebClientId, signInWithGoogle } from '../../services/googleSignIn';
-import { configuredKakaoNativeAppKey, signInWithKakao } from '../../services/kakaoSignIn';
+import { configuredKakaoLoginKey, signInWithKakao } from '../../services/kakaoSignIn';
 import { configuredNaverClientId, signInWithNaver } from '../../services/naverSignIn';
 
 export function FamilyMapScreen() {
@@ -2331,13 +2332,14 @@ function RecoveryCodePanel() {
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const code = readStoredRecoveryCode(typeof localStorage === 'undefined' ? null : localStorage);
-  const kakaoKey = configuredKakaoNativeAppKey();
+  const kakaoKey = configuredKakaoLoginKey();
   const naverId = configuredNaverClientId();
   const googleId = configuredGoogleWebClientId();
   const snapshot = snapshotFromSession(family.state);
+  const persistOnly = { persist: false as const };
 
   const linkProvider = (
-    start: () => Promise<{ ok: boolean; snapshot?: { memberId?: string }; message?: string }>,
+    start: () => Promise<{ ok: boolean; snapshot?: AccountSnapshot; message?: string }>,
     setup: string,
     configured: string,
     missing: string,
@@ -2354,7 +2356,11 @@ function RecoveryCodePanel() {
         setNote(result.message || missing);
         return;
       }
-      if (result.snapshot && result.snapshot.memberId) family.restoreAccount(result.snapshot as Parameters<typeof family.restoreAccount>[0]);
+      if (linkedAccountWouldSwitch(family.state.profile?.id, result.snapshot)) {
+        setNote(ACCOUNT_LINKED_OTHER_MESSAGE);
+        return;
+      }
+      if (result.snapshot) rememberAccountSecrets(localStorage, result.snapshot);
       setNote('이 계정에 연결했습니다. 다시 설치한 뒤에도 같은 사람으로 돌아옵니다.');
     });
   };
@@ -2389,7 +2395,7 @@ function RecoveryCodePanel() {
         <button
           type="button"
           disabled={busy || !kakaoKey}
-          onClick={() => linkProvider(() => signInWithKakao(snapshot), KAKAO_SETUP_MESSAGE, kakaoKey, '카카오 연결에 실패했습니다.')}
+          onClick={() => linkProvider(() => signInWithKakao(snapshot, persistOnly), KAKAO_SETUP_MESSAGE, kakaoKey, '카카오 연결에 실패했습니다.')}
           className="w-full rounded-full bg-[#FEE500] py-2.5 text-xs font-bold text-[#191919] disabled:opacity-40"
         >
           카카오 연결
@@ -2397,7 +2403,7 @@ function RecoveryCodePanel() {
         <button
           type="button"
           disabled={busy || !naverId}
-          onClick={() => linkProvider(() => signInWithNaver(snapshot), NAVER_SETUP_MESSAGE, naverId, '네이버 연결에 실패했습니다.')}
+          onClick={() => linkProvider(() => signInWithNaver(snapshot, persistOnly), NAVER_SETUP_MESSAGE, naverId, '네이버 연결에 실패했습니다.')}
           className="w-full rounded-full bg-[#03C75A] py-2.5 text-xs font-bold text-white disabled:opacity-40"
         >
           네이버 연결
@@ -2405,7 +2411,7 @@ function RecoveryCodePanel() {
         <button
           type="button"
           disabled={busy || !googleId}
-          onClick={() => linkProvider(() => signInWithGoogle(snapshot), GOOGLE_SETUP_MESSAGE, googleId, 'Google 연결에 실패했습니다.')}
+          onClick={() => linkProvider(() => signInWithGoogle(snapshot, persistOnly), GOOGLE_SETUP_MESSAGE, googleId, 'Google 연결에 실패했습니다.')}
           className="w-full rounded-full border border-slate-200 bg-white py-2.5 text-xs font-bold text-slate-800 disabled:opacity-40"
         >
           Google 연결

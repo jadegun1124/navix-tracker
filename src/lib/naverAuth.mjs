@@ -23,7 +23,31 @@ export function naverRedirectUri() {
   const origin = window.location.origin;
   const path = window.location.pathname || '/';
   if (origin.startsWith('https://') || origin.startsWith('http://localhost') || origin.startsWith('http://127.0.0.1')) {
-    return `${origin}${path}`;
+    return allowedNaverRedirect(`${origin}${path}`) || NAVER_REDIRECT;
   }
   return NAVER_REDIRECT;
+}
+
+export function allowedNaverRedirect(value) {
+  const uri = typeof value === 'string' ? value.trim() : '';
+  if (!uri || uri.length > 200) return '';
+  if (uri === NAVER_REDIRECT) return uri;
+  let parsed;
+  try {
+    parsed = new URL(uri);
+  } catch {
+    return '';
+  }
+  if (parsed.protocol === 'kinnex:' && parsed.host === 'naver') return NAVER_REDIRECT;
+  if (parsed.protocol === 'https:' && parsed.hostname === 'jadegun1124.github.io') {
+    if (parsed.pathname === '/kinnex' || parsed.pathname === '/kinnex/' || parsed.pathname.startsWith('/kinnex/')) return uri;
+    return '';
+  }
+  if (
+    (parsed.protocol === 'http:' || parsed.protocol === 'https:')
+    && (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1')
+  ) {
+    return uri;
+  }
+  return '';
 }

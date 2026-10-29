@@ -35,6 +35,8 @@ export function persistAccountSecretsIfCurrent(
 ): boolean;
 export function logoutLocalAccount(storage: StorageLike): void;
 export function rememberAccountSecrets(storage: StorageLike, account: AccountSnapshot | null | undefined): void;
+export const ACCOUNT_LINKED_OTHER_MESSAGE: string;
+export function linkedAccountWouldSwitch(currentMemberId: unknown, account: { memberId?: string } | null | undefined): boolean;
 
 export function snapshotFromSession(state: unknown): AccountSnapshot | null;
 export function applyAccountSnapshot<T>(state: T, account: AccountSnapshot | null | undefined): T;

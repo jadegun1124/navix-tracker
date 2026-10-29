@@ -118,9 +118,9 @@ npm run dev
 무료 카카오 로그인만 씁니다. Worker는 액세스 토큰을 `https://kapi.kakao.com/v1/user/access_token_info`와 `https://kapi.kakao.com/v2/user/me`로 확인하고, 카카오 사용자 id로 같은 계정을 찾습니다.
 
 1. [Kakao Developers](https://developers.kakao.com/) → 내 애플리케이션 추가 → **카카오 로그인** 활성화.
-2. 앱 키의 **네이티브 앱 키**를 `VITE_KAKAO_NATIVE_APP_KEY`와 `KAKAO_NATIVE_APP_KEY`에 넣습니다. 시크릿이 아닙니다. 저장소에 커밋하지 않습니다. Pages와 APK 빌드는 Actions secret `VITE_KAKAO_NATIVE_APP_KEY`를, Gradle은 `KAKAO_NATIVE_APP_KEY`를 읽습니다.
+2. 앱 키의 **네이티브 앱 키**를 `VITE_KAKAO_NATIVE_APP_KEY`와 `KAKAO_NATIVE_APP_KEY`에 넣습니다. **JavaScript 키**는 `VITE_KAKAO_JAVASCRIPT_KEY`에 넣습니다. 시크릿이 아닙니다. 저장소에 커밋하지 않습니다. Pages와 APK 빌드는 Actions secret `VITE_KAKAO_NATIVE_APP_KEY`와 `VITE_KAKAO_JAVASCRIPT_KEY`를, Gradle은 `KAKAO_NATIVE_APP_KEY`를 읽습니다.
 3. 플랫폼 → Android. 패키지 이름 `kr.co.umap.tracker`. 키 해시 `AFc3NSJwuEx/tgFhKb2po80JNQw=` (사이드로드 SHA-1 `00:57:37:35:22:70:B8:4C:7F:B6:01:61:29:BD:A9:A3:CD:09:35:0C`의 Base64).
-4. Redirect URI 스킴은 `kakao{네이티브앱키}://oauth` 입니다. 카카오 계정으로 로그인, 닉네임만 받으면 됩니다.
+4. 플랫폼 → Web. 사이트 도메인 `jadegun1124.github.io`. Redirect URI 스킴은 `kakao{네이티브앱키}://oauth` 입니다. 카카오 계정으로 로그인, 닉네임만 받으면 됩니다.
 
 ### 네이버 로그인 (네아로)
 

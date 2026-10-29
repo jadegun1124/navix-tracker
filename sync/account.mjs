@@ -3,6 +3,7 @@
 // journey/visit backup. Provider ids are never the family member id.
 
 import { verifyGoogleIdToken, googleWebClientId, GOOGLE_SETUP_MESSAGE, GOOGLE_VERIFY_MESSAGE } from '../src/lib/googleAuth.mjs';
+import { allowedNaverRedirect } from '../src/lib/naverAuth.mjs';
 
 const MEMBER_ID = /^local-[a-z0-9]{3,64}$/;
 const KEY_PART = /^[A-Za-z0-9_-]{16,64}$/;
@@ -620,13 +621,14 @@ async function defaultFetchNaverUser(accessToken) {
   return response.json();
 }
 
-async function defaultExchangeNaverCode({ code, state, clientId, clientSecret }) {
+async function defaultExchangeNaverCode({ code, state, clientId, clientSecret, redirectUri }) {
   const body = new URLSearchParams({
     grant_type: 'authorization_code',
     client_id: clientId,
     client_secret: clientSecret,
     code,
     state,
+    redirect_uri: redirectUri,
   });
   const response = await fetch('https://nid.naver.com/oauth2.0/token', {
     method: 'POST',
@@ -664,15 +666,22 @@ export async function verifyNaverAccessToken(accessToken, options = {}) {
   return { ok: true, id, name };
 }
 
-export async function exchangeNaverAuthCode({ code, state, clientId, clientSecret, exchangeNaverCode }) {
+export async function exchangeNaverAuthCode({ code, state, redirectUri, clientId, clientSecret, exchangeNaverCode }) {
   const authCode = typeof code === 'string' ? code.trim() : '';
   const csrf = typeof state === 'string' ? state.trim() : '';
+  const redirect = allowedNaverRedirect(redirectUri);
   const id = naverClientId(clientId);
   const secret = naverClientSecret(clientSecret);
   if (!id || !secret) return { error: 'setup' };
-  if (!authCode || authCode.length > 256 || !csrf || csrf.length > 128) return { error: 'token' };
+  if (!authCode || authCode.length > 256 || !csrf || csrf.length > 128 || !redirect) return { error: 'token' };
   const exchange = typeof exchangeNaverCode === 'function' ? exchangeNaverCode : defaultExchangeNaverCode;
-  const issued = await exchange({ code: authCode, state: csrf, clientId: id, clientSecret: secret }).catch(() => null);
+  const issued = await exchange({
+    code: authCode,
+    state: csrf,
+    redirectUri: redirect,
+    clientId: id,
+    clientSecret: secret,
+  }).catch(() => null);
   const access = bearerToken(issued && issued.access_token);
   if (!access) return { error: 'token' };
   return { accessToken: access };
@@ -721,12 +730,13 @@ export async function linkKakaoAccount(store, { accessToken, snapshot, accountKe
   });
 }
 
-export async function linkNaverAccount(store, { accessToken, code, state, snapshot, accountKey }, options = {}) {
+export async function linkNaverAccount(store, { accessToken, code, state, redirectUri, snapshot, accountKey }, options = {}) {
   let token = bearerToken(accessToken);
   if (!token && (code || state)) {
     const exchanged = await exchangeNaverAuthCode({
       code,
       state,
+      redirectUri,
       clientId: options.naverClientId,
       clientSecret: options.naverClientSecret,
       exchangeNaverCode: options.exchangeNaverCode,
@@ -827,6 +837,7 @@ export async function parseAccountOperation(request) {
       accessToken: typeof value.accessToken === 'string' ? value.accessToken : '',
       code: typeof value.code === 'string' ? value.code : '',
       state: typeof value.state === 'string' ? value.state : '',
+      redirectUri: typeof value.redirectUri === 'string' ? value.redirectUri : '',
       snapshot: cleaned.snapshot,
       accountKey: typeof value.accountKey === 'string' ? value.accountKey : accountKey,
     };

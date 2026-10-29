@@ -41,11 +41,15 @@ function profileFromAccount(account: AccountSnapshot) {
   return restoredProfile(account) || localProfile(account.profile?.name || '가족', account.memberId);
 }
 
-async function acceptToken(idToken: string, snapshot?: AccountSnapshot | null): Promise<GoogleSignInResult> {
+async function acceptToken(
+  idToken: string,
+  snapshot?: AccountSnapshot | null,
+  options: { persist?: boolean } = {},
+): Promise<GoogleSignInResult> {
   if (familySyncUrl()) {
     const linked = await linkGoogleAccount(idToken, snapshot).catch(() => ({ ok: false as const, message: GOOGLE_VERIFY_MESSAGE }));
     if (!linked.ok || !linked.account) return { ok: false, message: linked.message || GOOGLE_VERIFY_MESSAGE };
-    await persistAccountResult(linked);
+    if (options.persist !== false) await persistAccountResult(linked);
     const profile = profileFromAccount(linked.account);
     if (!profile) return { ok: false, message: GOOGLE_VERIFY_MESSAGE };
     return { ok: true, profile, snapshot: linked.account, restored: linked.restored === true };
@@ -119,7 +123,10 @@ async function browserIdToken(webClientId: string): Promise<string> {
   });
 }
 
-export async function signInWithGoogle(snapshot?: AccountSnapshot | null): Promise<GoogleSignInResult> {
+export async function signInWithGoogle(
+  snapshot?: AccountSnapshot | null,
+  options: { persist?: boolean } = {},
+): Promise<GoogleSignInResult> {
   const webClientId = configuredGoogleWebClientId();
   if (!webClientId) return { ok: false, message: GOOGLE_SETUP_MESSAGE };
   let idToken = '';
@@ -139,5 +146,5 @@ export async function signInWithGoogle(snapshot?: AccountSnapshot | null): Promi
       return { ok: false, message: message === 'canceled' ? GOOGLE_CANCEL_MESSAGE : GOOGLE_VERIFY_MESSAGE };
     }
   }
-  return acceptToken(idToken, snapshot);
+  return acceptToken(idToken, snapshot, options);
 }

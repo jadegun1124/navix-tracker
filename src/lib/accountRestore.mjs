@@ -68,6 +68,14 @@ export function rememberAccountSecrets(storage, account) {
   if (account.recoveryCode) writeStoredRecoveryCode(storage, account.recoveryCode);
 }
 
+export const ACCOUNT_LINKED_OTHER_MESSAGE = '이 로그인은 다른 사람에 이미 연결되어 있습니다. 이 폰의 지도를 바꾸지 않았습니다.';
+
+export function linkedAccountWouldSwitch(currentMemberId, account) {
+  const current = typeof currentMemberId === 'string' ? currentMemberId : '';
+  const next = account && typeof account.memberId === 'string' ? account.memberId : '';
+  return Boolean(current && next && current !== next);
+}
+
 function selfJourneys(journeys, memberId) {
   if (!journeys || typeof journeys !== 'object') return [];
   if (Array.isArray(journeys.self) && journeys.self.length) return journeys.self;

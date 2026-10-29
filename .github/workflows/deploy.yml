@@ -41,6 +41,7 @@ jobs:
           VITE_FAMILY_SYNC_URL: ${{ secrets.VITE_FAMILY_SYNC_URL != '' && secrets.VITE_FAMILY_SYNC_URL || 'https://umap-family-sync.umap-jadegun.workers.dev' }}
           VITE_GOOGLE_WEB_CLIENT_ID: ${{ secrets.VITE_GOOGLE_WEB_CLIENT_ID }}
           VITE_KAKAO_NATIVE_APP_KEY: ${{ secrets.VITE_KAKAO_NATIVE_APP_KEY }}
+          VITE_KAKAO_JAVASCRIPT_KEY: ${{ secrets.VITE_KAKAO_JAVASCRIPT_KEY }}
           VITE_NAVER_CLIENT_ID: ${{ secrets.VITE_NAVER_CLIENT_ID }}
           VITE_BASE: /kinnex/
         run: |

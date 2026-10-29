@@ -6,7 +6,7 @@ import { KAKAO_SETUP_MESSAGE } from '../../lib/kakaoAuth.mjs';
 import { NAVER_SETUP_MESSAGE } from '../../lib/naverAuth.mjs';
 import { persistAccountResult, recoverFamilyAccount, type AccountSnapshot } from '../../services/familyAccount';
 import { configuredGoogleWebClientId, signInWithGoogle } from '../../services/googleSignIn';
-import { configuredKakaoNativeAppKey, signInWithKakao } from '../../services/kakaoSignIn';
+import { configuredKakaoLoginKey, signInWithKakao } from '../../services/kakaoSignIn';
 import { configuredNaverClientId, signInWithNaver } from '../../services/naverSignIn';
 import { KEEP_PERMISSION_ASKED_KEY, markSessionFlag } from '../../lib/systemSettings.mjs';
 import { askAlwaysLocation, askBattery, askMotion, askNotifications, askWhileUsing } from '../../services/systemPermissions';
@@ -90,7 +90,7 @@ function Login({ onSubmit }: { onSubmit: (profile: Profile) => void }) {
   const [busy, setBusy] = useState(false);
   const trimmed = name.trim();
   const googleId = configuredGoogleWebClientId();
-  const kakaoKey = configuredKakaoNativeAppKey();
+  const kakaoKey = configuredKakaoLoginKey();
   const naverId = configuredNaverClientId();
 
   const loginSnapshot = (): AccountSnapshot | null => {

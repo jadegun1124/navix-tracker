@@ -125,7 +125,7 @@ export async function linkKakaoAccount(accessToken: string, snapshot?: AccountSn
 }
 
 export async function linkNaverAccount(
-  payload: { accessToken?: string; code?: string; state?: string },
+  payload: { accessToken?: string; code?: string; state?: string; redirectUri?: string },
   snapshot?: AccountSnapshot | null,
 ) {
   const accountKey = readStoredAccountKey(typeof localStorage === 'undefined' ? null : localStorage);
@@ -136,6 +136,7 @@ export async function linkNaverAccount(
       ...(payload.accessToken ? { accessToken: payload.accessToken } : {}),
       ...(payload.code ? { code: payload.code } : {}),
       ...(payload.state ? { state: payload.state } : {}),
+      ...(payload.redirectUri ? { redirectUri: payload.redirectUri } : {}),
       ...(snapshot ? { snapshot } : {}),
       ...(accountKey ? { accountKey } : {}),
     }),
