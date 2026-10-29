@@ -54,3 +54,30 @@ export function cleanDepartedIds(values) {
   }
   return ids;
 }
+
+/** sharing:false is a stop-reporting heartbeat, not an explicit leave. */
+export function sharedPlaceStopsReporting(place) {
+  return !!place && place.sharing === false;
+}
+
+/**
+ * Take the departed member off the roster. Keep tracks, journeys, visits.
+ * Do not write hiddenMemberIds so a later live place can return.
+ */
+export function hideLeftPublishers(state, memberIds) {
+  const gone = new Set(cleanDepartedIds(memberIds));
+  if (!state || gone.size === 0) return state;
+  const members = Array.isArray(state.members) ? state.members : [];
+  const removed = members.filter((member) => (
+    member
+    && !isSelfRow(member)
+    && typeof member.publisherId === 'string'
+    && gone.has(member.publisherId)
+  ));
+  if (removed.length === 0) return state;
+  const dropIds = new Set(removed.map((member) => member.id));
+  return {
+    ...state,
+    members: members.filter((member) => !dropIds.has(member.id)),
+  };
+}

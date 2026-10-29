@@ -7,6 +7,7 @@ import {
   applyPlace,
   chatPushPayload,
   createMemoryStore,
+  departedMemberIds,
   emptyRoom,
   handleSyncRequest,
   pushesForAlert,
@@ -395,6 +396,51 @@ test('a family leave with a member id is departed immediately', async () => {
   const after = await call(store, 'GET', `/v1/rooms/${code}/family`, { token });
   assert.deepEqual(after.body.places, []);
   assert.deepEqual(after.body.departed, [memberId]);
+});
+
+test('a stale sharing-false alias does not mark a live member departed', () => {
+  const room = emptyRoom();
+  const memberId = 'local-live1';
+  const live = {
+    code: '48291',
+    name: '민지',
+    memberId,
+    lat: 37.63,
+    lng: 127.06,
+    accuracyM: 8,
+    at: 2_000,
+    sharing: true,
+    audience: 'family',
+  };
+  const stale = {
+    code: '48291',
+    name: '민지',
+    memberId,
+    lat: null,
+    lng: null,
+    accuracyM: 0,
+    at: 1_000,
+    sharing: false,
+    audience: 'family',
+  };
+  const withLive = applyPlace(room, live).room;
+  const withAlias = {
+    ...withLive,
+    places: {
+      ...withLive.places,
+      'family\u0000민지': stale,
+    },
+  };
+  assert.deepEqual(departedMemberIds(withAlias, 'family'), []);
+  const onlyStop = applyPlace(emptyRoom(), { ...stale, at: 3_000 }).room;
+  assert.deepEqual(departedMemberIds(onlyStop, 'family'), [memberId]);
+  const adminStop = applyPlace(withLive, {
+    ...stale,
+    audience: 'admin',
+    at: 3_000,
+    sharing: false,
+  }).room;
+  assert.deepEqual(departedMemberIds(adminStop, 'family'), []);
 });
 
 test('bad battery and audience are rejected', async () => {

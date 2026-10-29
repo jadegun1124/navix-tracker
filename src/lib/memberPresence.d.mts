@@ -20,3 +20,9 @@ export function memberPresenceLabel(presence: MemberPresence | null | undefined)
 export function memberIsStale(presence: MemberPresence | null | undefined): boolean;
 
 export function cleanDepartedIds(values: unknown): string[];
+
+export function sharedPlaceStopsReporting(place: { sharing?: boolean } | null | undefined): boolean;
+
+export function hideLeftPublishers<T extends {
+  members?: Array<{ id?: string; role?: string; publisherId?: string }>;
+}>(state: T, memberIds: unknown): T;

@@ -4,10 +4,12 @@ import {
   MEMBER_DISCONNECTED_MS,
   MEMBER_STALE_MS,
   cleanDepartedIds,
+  hideLeftPublishers,
   memberIsStale,
   memberPresence,
   memberPresenceLabel,
   relativePlaceAge,
+  sharedPlaceStopsReporting,
 } from './memberPresence.mjs';
 
 test('a live member keeps the usual status and a stopped phone keeps last location', () => {
@@ -32,4 +34,71 @@ test('after seven days the card is 연결 끊김', () => {
 
 test('departed ids are member ids only', () => {
   assert.deepEqual(cleanDepartedIds(['local-aaa', 'local-aaa', '엄마', '', 'local-bbb']), ['local-aaa', 'local-bbb']);
+});
+
+function applySharedPlaceLikeSession(state, place) {
+  if (sharedPlaceStopsReporting(place)) return state;
+  if (place.audience === 'family') return state;
+  const publisher = typeof place.memberId === 'string' ? place.memberId : '';
+  return hideLeftPublishers(state, publisher ? [publisher] : []);
+}
+
+test('sharing false never drops the roster or local history', () => {
+  const leftover = {
+    id: 'family:48291:local-aaa',
+    role: 'child',
+    publisherId: 'local-aaa',
+    lat: 37.64,
+    lng: 127.08,
+  };
+  const tracks = { [leftover.id]: [{ lat: 37.64, lng: 127.08, at: 1 }] };
+  const journeys = { [leftover.id]: [{ id: 'j1', startedAt: 1, endedAt: 2 }] };
+  const visits = { [leftover.id]: [{ at: 1 }] };
+  const trailRevisions = { 'local-aaa': 4 };
+  const state = {
+    members: [{ id: 'self', role: 'self' }, leftover],
+    tracks,
+    journeys,
+    visits,
+    trailRevisions,
+    hiddenMemberIds: [],
+  };
+  const adminStop = { sharing: false, memberId: 'local-aaa', audience: 'admin' };
+  assert.equal(sharedPlaceStopsReporting(adminStop), true);
+  const afterAdmin = applySharedPlaceLikeSession(state, adminStop);
+  assert.equal(afterAdmin, state);
+  assert.equal(afterAdmin.members.length, 2);
+  assert.equal(afterAdmin.tracks[leftover.id], tracks[leftover.id]);
+  assert.equal(afterAdmin.journeys[leftover.id], journeys[leftover.id]);
+  assert.equal(afterAdmin.visits[leftover.id], visits[leftover.id]);
+  assert.deepEqual(afterAdmin.trailRevisions, trailRevisions);
+  const afterFamilyStop = applySharedPlaceLikeSession(state, { ...adminStop, audience: 'family' });
+  assert.equal(afterFamilyStop, state);
+});
+
+test('an explicit departed id hides the card and keeps history', () => {
+  const leftover = {
+    id: 'family:48291:local-aaa',
+    role: 'child',
+    publisherId: 'local-aaa',
+  };
+  const tracks = { [leftover.id]: [{ lat: 37.64, lng: 127.08, at: 1 }] };
+  const journeys = { [leftover.id]: [{ id: 'j1' }] };
+  const visits = { [leftover.id]: [{ at: 1 }] };
+  const trailRevisions = { 'local-aaa': 4 };
+  const hidden = hideLeftPublishers({
+    members: [{ id: 'self', role: 'self' }, leftover],
+    tracks,
+    journeys,
+    visits,
+    trailRevisions,
+    hiddenMemberIds: [],
+  }, ['local-aaa']);
+  assert.equal(hidden.members.some((member) => member.publisherId === 'local-aaa'), false);
+  assert.equal(hidden.members[0].id, 'self');
+  assert.deepEqual(hidden.tracks, tracks);
+  assert.deepEqual(hidden.journeys, journeys);
+  assert.deepEqual(hidden.visits, visits);
+  assert.deepEqual(hidden.trailRevisions, trailRevisions);
+  assert.deepEqual(hidden.hiddenMemberIds, []);
 });

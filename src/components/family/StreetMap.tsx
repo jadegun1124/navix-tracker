@@ -12,6 +12,7 @@ export interface StreetMapHandle {
   zoomBy: (delta: number) => void;
   fit: (points: { lat: number; lng: number }[]) => void;
   getCenter: () => { lat: number; lng: number };
+  invalidateSize: () => void;
   setPlayback: (frame: { lat: number; lng: number; label: string } | null, follow?: boolean) => void;
 }
 
@@ -90,6 +91,9 @@ export const StreetMap = forwardRef<StreetMapHandle, {
     getCenter() {
       const current = mapRef.current?.getCenter();
       return current ? { lat: current.lat, lng: current.lng } : center;
+    },
+    invalidateSize() {
+      mapRef.current?.invalidateSize();
     },
     setPlayback(frame, follow) {
       const map = mapRef.current;

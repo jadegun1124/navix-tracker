@@ -551,6 +551,10 @@ export function FamilyMapScreen() {
     ? dayJourneys.find((journey) => journey.id === detailId) ?? null
     : null;
   const detailOpen = viewingRecords && !!detailId && (detailId === 'open' ? !!openJourney : !!detailJourney);
+  useEffect(() => {
+    const id = window.setTimeout(() => mapRef.current?.invalidateSize(), 50);
+    return () => window.clearTimeout(id);
+  }, [viewingRecords, detailOpen]);
   const detailPoints = useMemo(
     () => collapseIndoorStayDisplay(detailId === 'open' ? liveLine : detailJourney?.points ?? []),
     [detailId, detailJourney, liveLine],
@@ -742,7 +746,7 @@ export function FamilyMapScreen() {
   return (
     <div className="flex h-full justify-center bg-[#d7e3ee]">
       <div className="relative flex h-full w-full max-w-[430px] flex-col overflow-hidden bg-white pb-[env(safe-area-inset-bottom)]">
-        <div className={`relative min-h-0 ${viewingRecords && !detailOpen ? 'hidden' : 'flex-1'}`}>
+        <div className={`relative min-h-0 flex-1 ${viewingRecords && !detailOpen ? 'invisible pointer-events-none' : ''}`}>
           <StreetMap
             ref={mapRef}
             center={center}
@@ -928,7 +932,7 @@ export function FamilyMapScreen() {
         )}
 
         {recordId && !placingHome && !detailOpen && (
-          <section className="flex min-h-0 flex-1 flex-col overflow-y-auto bg-white px-4 pb-3 pt-3">
+          <section className="absolute inset-0 z-20 flex min-h-0 flex-col overflow-y-auto bg-white px-4 pb-3 pt-3">
             <div className="mb-2 flex items-center justify-between gap-2">
               <h2 className="truncate text-lg font-black">{selected?.id === 'self' ? '내 기록' : `${selected?.name ?? ''} 기록`}</h2>
               <button type="button" onClick={() => { setRecordId(null); setDetailId(null); setPlaying(false); }} aria-label="기록 닫기" className="shrink-0 rounded-full bg-slate-100 px-3 py-1.5 text-xs font-bold">
