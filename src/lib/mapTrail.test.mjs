@@ -115,13 +115,49 @@ test('a moving overview keeps the dense curve, drops the dashed hole, and ends o
   for (let index = 1; index < lines[0].length; index += 1) {
     assert.equal(trailSegmentDashed(lines[0][index - 1], lines[0][index]), false);
   }
+  const jumpedPin = offset(end, 0, 400, end.at + 6_000);
   const jumped = mainOverviewTrails({
     points: walked,
-    pin: { ...offset(end, 0, 400, end.at + 6_000), speedMps: 0 },
+    pin: { ...jumpedPin, speedMps: 0 },
     moving: false,
     now: end.at + 2_000,
   });
-  assert.equal(jumped.length, 0);
+  assert.equal(jumped.length, 1);
+  assert.ok(jumped[0].length >= walked.length);
+  assert.equal(jumped[0][jumped[0].length - 1].lat, end.lat);
+  assert.equal(jumped[0][jumped[0].length - 1].lng, end.lng);
+  assert.equal(jumped[0].some((point) => point.lat === jumpedPin.lat && point.lng === jumpedPin.lng), false);
+});
+
+test('a gps hole hides the chord and keeps the solid trail until the next step', () => {
+  const now = Date.UTC(2026, 9, 28, 4, 10);
+  const walked = walkCurve(now);
+  const end = walked[walked.length - 1];
+  const hole = {
+    ...offset(end, 0, 90, end.at + 25_000),
+    accuracyM: 12,
+    speedMps: 1.2,
+    staying: false,
+  };
+  assert.equal(trailSegmentDashed(end, hole), true);
+  const during = mainOverviewTrails({
+    points: [...walked, hole],
+    pin: { lat: hole.lat, lng: hole.lng, at: hole.at, speedMps: hole.speedMps },
+    moving: null,
+    now: hole.at + 1_000,
+  });
+  assert.equal(during.length, 1);
+  assert.ok(during[0].length >= walked.length);
+  assert.equal(during[0].some((point) => point.lat === hole.lat && point.lng === hole.lng), false);
+  const resume = offset(hole, 0, 8, hole.at + 3_000);
+  const after = mainOverviewTrails({
+    points: [...walked, hole, { ...resume, accuracyM: 10, speedMps: 1.3, staying: false }],
+    pin: { lat: resume.lat, lng: resume.lng, at: resume.at },
+    moving: null,
+    now: resume.at + 1_000,
+  });
+  assert.ok(after.length >= 1);
+  assert.ok(after[0].length >= walked.length);
 });
 
 test('records include archived journeys even when the live segment is gone', () => {

@@ -71,7 +71,9 @@ function solidRuns(points) {
  * 「머무름」 returns none, even when the open segment has not archived yet.
  * While 「지금」, each returned line is a dense solid run. A dashed chord is
  * never included. The last vertex is the displayed pin when the pin is still
- * on that run. A pin across a hole or an impossible jump does not grow a connector.
+ * on that run. A pin across a hole or an impossible jump does not grow a
+ * connector, and it does not erase the solid run already drawn. The line
+ * stays until the next sample can join the pin.
  */
 export function mainOverviewTrails({ points, motionPoints, pin, moving, located = true, now }) {
   const label = liveMotionLabel({
@@ -99,6 +101,6 @@ export function mainOverviewTrails({ points, motionPoints, pin, moving, located 
     speedMps: pin.speedMps,
     accuracyM: pin.accuracyM,
   };
-  if (trailSegmentDashed(tip, leg) || isImpossibleJump(tip, leg)) return [];
+  if (trailSegmentDashed(tip, leg) || isImpossibleJump(tip, leg)) return runs;
   return runs.slice(0, -1).concat([lastRun.concat([leg])]);
 }
