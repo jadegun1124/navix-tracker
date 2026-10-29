@@ -34,6 +34,8 @@ export interface Journey {
   start: { lat: number; lng: number; label: string | null };
   end: { lat: number; lng: number; label: string | null };
   open?: boolean;
+  /** Dense-path stationary-cloud verdict saved at archive time. */
+  cloud?: boolean;
 }
 
 export type AppMode = 'admin' | 'managed';

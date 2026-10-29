@@ -153,6 +153,8 @@ export interface JourneyRecord {
   start: JourneyPlace;
   end: JourneyPlace;
   open?: boolean;
+  /** Dense-path stationary-cloud verdict. False means the trip was a real walk before compaction. */
+  cloud?: boolean;
 }
 
 export interface JourneySpot {

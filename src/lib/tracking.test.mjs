@@ -1062,3 +1062,100 @@ test('a straight walk over 300m survives trimJourneyList after compaction', () =
   assert.equal(kept.length, 1);
   assert.ok(kept[0].distanceM >= 300);
 });
+
+test('a 1km loop inside 200m of its centroid survives trim after compaction', () => {
+  const t = Date.UTC(2026, 9, 28, 8, 0, 0);
+  const origin = { lat: 37.58, lng: 127.02, at: t, accuracyM: 8, speedMps: 1.2, staying: false };
+  const radius = 90;
+  const laps = 2;
+  const steps = 280;
+  const walk = [];
+  for (let index = 0; index <= steps; index += 1) {
+    const theta = laps * 2 * Math.PI * (index / steps);
+    walk.push({
+      ...offset(origin, radius * Math.sin(theta), radius * Math.cos(theta), t + index * 4_700),
+      accuracyM: 8,
+      speedMps: 1.2,
+      staying: false,
+    });
+  }
+  const arrive = walk[walk.length - 1].at;
+  assert.ok(arrive - t >= 21 * 60_000);
+  const stay = staySamples(walk[walk.length - 1], arrive, arrive + WALK_JOURNEY_STAY_MS, 60_000);
+  const split = splitClosedJourneys([...walk, ...stay], arrive + WALK_JOURNEY_STAY_MS);
+  assert.equal(split.journeys.length, 1);
+  const card = split.journeys[0];
+  assert.ok(card.distanceM >= 1000, `loop distance ${card.distanceM}`);
+  assert.equal(card.cloud, false);
+  assert.ok(card.points.length < walk.length);
+  const kept = trimJourneyList([card], arrive + WALK_JOURNEY_STAY_MS);
+  assert.equal(kept.length, 1);
+  assert.ok(kept[0].distanceM >= 1000);
+
+  const legacy = {
+    id: 'neighborhood-loop',
+    startedAt: t,
+    endedAt: t + 25 * 60_000,
+    distanceM: 1000,
+    points: [0, 90, 180, 270, 30].map((deg, index) => {
+      const theta = (deg * Math.PI) / 180;
+      return offset(origin, radius * Math.sin(theta), radius * Math.cos(theta), t + index * 5 * 60_000);
+    }),
+    start: { lat: origin.lat, lng: origin.lng, label: null },
+    end: { lat: origin.lat, lng: origin.lng, label: null },
+  };
+  assert.equal(trimJourneyList([legacy], t + 25 * 60_000).length, 1);
+});
+
+test('a 2h stay then a 15 minute walk is a 15 minute card', () => {
+  const t = Date.UTC(2026, 9, 28, 1, 0, 0);
+  const origin = { lat: 37.57, lng: 127.05, at: t, accuracyM: 14, speedMps: 0, staying: true };
+  const home = [];
+  for (let index = 0; index <= 120; index += 1) {
+    const north = index % 2 === 0 ? 28 : -28;
+    const east = (index % 3) * 12 - 12;
+    home.push({
+      ...offset(origin, north, east, t + index * 60_000),
+      accuracyM: 14,
+      speedMps: 0,
+      staying: true,
+    });
+  }
+  const depart = home[home.length - 1].at;
+  const walk = [];
+  for (let index = 1; index <= 75; index += 1) {
+    walk.push({
+      ...offset(home[home.length - 1], 0, index * 10, depart + index * 12_000),
+      accuracyM: 12,
+      speedMps: 1.3,
+      staying: false,
+    });
+  }
+  const arrive = walk[walk.length - 1].at;
+  assert.equal(arrive - depart, 15 * 60_000);
+  const away = staySamples(walk[walk.length - 1], arrive, arrive + 30 * 60_000, 60_000);
+  const now = away[away.length - 1].at;
+  const open = previewOpenJourney([...home, ...walk], arrive);
+  assert.ok(open);
+  const openMinutes = (open.endedAt - open.startedAt) / 60_000;
+  assert.ok(openMinutes >= 14 && openMinutes <= 16, `open preview ${openMinutes.toFixed(1)} min`);
+  assert.ok(open.startedAt >= depart);
+  assert.ok(open.startedAt < depart + 2 * 60_000);
+  assert.ok(open.points.every((point) => point.at >= depart));
+  assert.ok(open.points.every((point) => point.at <= arrive));
+
+  const split = splitClosedJourneys([...home, ...walk, ...away], now);
+  assert.equal(split.journeys.length, 1);
+  const card = split.journeys[0];
+  const minutes = (card.endedAt - card.startedAt) / 60_000;
+  assert.ok(minutes >= 14 && minutes <= 16, `card ${minutes.toFixed(1)} min`);
+  assert.ok(card.startedAt >= depart);
+  assert.ok(card.startedAt < depart + 2 * 60_000);
+  assert.ok(card.endedAt <= arrive + 60_000);
+  assert.ok(card.points.every((point) => point.at >= card.startedAt && point.at <= card.endedAt));
+  assert.ok(card.points[0].at > t + 90 * 60_000);
+  assert.ok(card.distanceM >= 600 && card.distanceM < 900, `distance ${card.distanceM}`);
+  const kept = trimJourneyList(split.journeys, now);
+  assert.equal(kept.length, 1);
+  assert.ok((kept[0].endedAt - kept[0].startedAt) / 60_000 <= 16);
+});

@@ -1569,6 +1569,49 @@ function journeyPathRecordable(path, durationMs) {
   return true;
 }
 
+/**
+ * A step that leaves a stay. Still-phone jitter, even a long chord inside the
+ * block, is not movement. A walk pace or a ride is.
+ */
+function isMovingStep(prev, point) {
+  if (!prev || !point || prev.stayEnd || point.stayEnd) return false;
+  if (isImpossibleJump(prev, point)) return false;
+  if (isRideStep(prev, point)) return true;
+  const pace = stepPace(prev, point);
+  if (!pace || pace.dt < 800 || pace.moved < TRAIL_WALK_VERTEX_M || pace.speed < 0.7 || pace.speed > 12) return false;
+  if (point.staying === true && !speedShowsMoving(point)) return false;
+  if (pointSpeed(point) != null && pointSpeed(point) < TRAIL_STAY_SPEED_MPS) return false;
+  if (pace.dt > TRAIL_GAP_MS && !speedShowsMoving(point)) return false;
+  return true;
+}
+
+/**
+ * The trip is the movement between stays.
+ * Start at the departure sample — the last point still in the preceding stay —
+ * and end at the first sample of the next stay. Hours of 머무름 on either side
+ * are not part of the card.
+ */
+function clipStayEnds(points) {
+  if (!Array.isArray(points) || points.length < 2) return points;
+  let from = 0;
+  for (let index = 1; index < points.length; index += 1) {
+    if (isMovingStep(points[index - 1], points[index])) break;
+    from = index;
+  }
+  const leadMs = points[from].at - points[0].at;
+  if (leadMs < STOP_MIN_MS || from >= points.length - 1) from = 0;
+
+  let tail = points.length - 1;
+  for (let index = points.length - 2; index >= from; index -= 1) {
+    if (isMovingStep(points[index], points[index + 1])) break;
+    tail = index;
+  }
+  const tailMs = points[points.length - 1].at - points[tail].at;
+  if (tailMs < STOP_MIN_MS || tail <= from) tail = points.length - 1;
+  if (from === 0 && tail === points.length - 1) return points;
+  return points.slice(from, tail + 1);
+}
+
 function withoutSpikes(points) {
   const kept = [];
   let changed = false;
@@ -1629,18 +1672,22 @@ function buildClosedJourney(points, departAt, arriveAt) {
     if (prev && isImpossibleJump(prev, point)) continue;
     path.push(point);
   }
-  if (path.length < 2) return null;
-  const durationMs = arriveAt - departAt;
-  const distanceM = travelDistance(path);
-  if (!journeyPathRecordable(path, durationMs)) return null;
-  const start = path[0];
-  const end = path[path.length - 1];
+  const trip = clipStayEnds(path);
+  if (trip.length < 2) return null;
+  const startedAt = trip[0].at;
+  const endedAt = trip[trip.length - 1].at;
+  const durationMs = endedAt - startedAt;
+  const distanceM = travelDistance(trip);
+  if (!journeyPathRecordable(trip, durationMs)) return null;
+  const start = trip[0];
+  const end = trip[trip.length - 1];
   return {
-    id: stableJourneyId(start.at, start.lat, start.lng),
-    startedAt: start.at,
-    endedAt: arriveAt,
+    id: stableJourneyId(startedAt, start.lat, start.lng),
+    startedAt,
+    endedAt,
     distanceM: Math.round(distanceM),
-    points: compactJourneyPoints(path),
+    cloud: false,
+    points: compactJourneyPoints(trip),
     start: { lat: Number(start.lat.toFixed(6)), lng: Number(start.lng.toFixed(6)), label: null },
     end: { lat: Number(end.lat.toFixed(6)), lng: Number(end.lng.toFixed(6)), label: null },
   };
@@ -1664,7 +1711,8 @@ function closingStays(points, now) {
  * Split a trail at a stay long enough for that segment.
  * A walk closes after WALK_JOURNEY_STAY_MS. A ride at or above ~7 km/h closes
  * after RIDE_JOURNEY_STAY_MS. Silence that long closes the same way.
- * Journeys are real trips between those stays. A hole between two stay points,
+ * Journeys are real trips between those stays. The card starts when the stay
+ * ends and stops when the next stay begins. A hole between two stay points,
  * a near-stationary cloud, or a trip under JOURNEY_MIN_DISTANCE_M is not a card.
  * Remaining is the open move, or one anchor once that move is over.
  */
@@ -1723,25 +1771,19 @@ export function liveTrailDrawable(points, now = Date.now()) {
 /** Today's move that has not closed yet. A hole or a stay cloud stays off the 기록 list. */
 export function previewOpenJourney(points, now) {
   const path = liveTrailPoints(points, now).filter((point) => point && !point.stayEnd && Number.isFinite(point.lat) && Number.isFinite(point.lng) && Number.isFinite(point.at));
-  if (path.length < 2) return null;
-  const origin = path[0];
-  let depart = origin;
-  for (const point of path) {
-    if (haversineMeters(origin, point) <= STOP_RADIUS_M) depart = point;
-    else break;
-  }
-  const moving = path.filter((point) => point.at >= depart.at);
+  const moving = clipStayEnds(path);
   if (moving.length < 2) return null;
-  const endedAt = moving[moving.length - 1].at;
-  const durationMs = Math.max(0, endedAt - depart.at);
+  const depart = moving[0];
+  const end = moving[moving.length - 1];
+  const durationMs = Math.max(0, end.at - depart.at);
   const distanceM = travelDistance(moving);
   if (!journeyPathRecordable(moving, durationMs)) return null;
-  const end = moving[moving.length - 1];
   return {
     id: `open:${depart.at}`,
     startedAt: depart.at,
-    endedAt,
+    endedAt: end.at,
     distanceM: Math.round(distanceM),
+    cloud: false,
     points: compactJourneyPoints(moving),
     start: { lat: Number(depart.lat.toFixed(6)), lng: Number(depart.lng.toFixed(6)), label: null },
     end: { lat: Number(end.lat.toFixed(6)), lng: Number(end.lng.toFixed(6)), label: null },
@@ -1933,16 +1975,36 @@ export function mergeJourneyLists(existing, incoming) {
 }
 
 /**
+ * A loop can sit inside the indoor radius and still be a walked trip.
+ * Dense distance was stored at archive time. Compacted chords are not that distance.
+ */
+function loopDistanceBeatsSpread(distanceM, samples) {
+  if (!(distanceM >= 300)) return false;
+  const located = [];
+  for (const point of samples) {
+    if (!point || point.stayEnd || !Number.isFinite(point.lat) || !Number.isFinite(point.lng)) continue;
+    located.push(point);
+  }
+  if (located.length < 2) return false;
+  const spread = clusterSpread(located);
+  return Number.isFinite(spread) && distanceM >= spread * 3;
+}
+
+/**
  * Card gate for a journey that was already built.
- * distanceM is the dense-path verdict. Compacted chords have no speed and can
- * look like holes, so they are not measured again. A stationary cloud still drops.
+ * `cloud` is the dense-path verdict from archive time. Compacted chords have
+ * no speed and can look like holes, so they are not measured again.
+ * A stored loop whose distance clears about 3× its radius is a walk.
+ * A stationary cloud without that verdict still drops.
  */
 function storedJourneyRecordable(journey) {
   const samples = Array.isArray(journey?.points) ? journey.points : [];
   const durationMs = Number(journey?.endedAt) - Number(journey?.startedAt);
   if (!(durationMs >= JOURNEY_MIN_DURATION_MS)) return false;
+  if (journey?.cloud === true) return false;
   if (Number.isFinite(journey?.distanceM)) {
     if (journey.distanceM < JOURNEY_MIN_DISTANCE_M) return false;
+    if (journey.cloud === false || loopDistanceBeatsSpread(journey.distanceM, samples)) return true;
     if (isStationaryCloud(samples, durationMs)) return false;
     return true;
   }

@@ -288,7 +288,7 @@ function cleanJourneys(value: unknown): Record<string, Journey[]> {
       const points = Array.isArray(journey.points) ? journey.points.filter(isPoint).slice(-JOURNEY_POINT_CAP) : [];
       if (points.length < 2) continue;
       const placeLabel = (label: unknown) => (typeof label === 'string' && label.trim() ? label.trim().slice(0, 120) : null);
-      clean.push({
+      const stored: Journey = {
         id: journey.id.slice(0, 160),
         startedAt: journey.startedAt,
         endedAt: journey.endedAt,
@@ -296,7 +296,9 @@ function cleanJourneys(value: unknown): Record<string, Journey[]> {
         points,
         start: { lat: journey.start.lat, lng: journey.start.lng, label: placeLabel(journey.start.label) },
         end: { lat: journey.end.lat, lng: journey.end.lng, label: placeLabel(journey.end.label) },
-      });
+      };
+      if (journey.cloud === true || journey.cloud === false) stored.cloud = journey.cloud;
+      clean.push(stored);
     }
     if (clean.length > 0) journeys[id] = clean.slice(-80);
   }
