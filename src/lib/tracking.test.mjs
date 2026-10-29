@@ -1159,3 +1159,75 @@ test('a 2h stay then a 15 minute walk is a 15 minute card', () => {
   assert.equal(kept.length, 1);
   assert.ok((kept[0].endedAt - kept[0].startedAt) / 60_000 <= 16);
 });
+
+test('a stay-flagged walk with no speed still leaves the 2h stay', () => {
+  const t = Date.UTC(2026, 9, 28, 2, 0, 0);
+  const origin = { lat: 37.56, lng: 127.04, at: t, accuracyM: 12, speedMps: 0, staying: true };
+  const home = staySamples(origin, t, t + 2 * 60 * 60 * 1000, 60_000);
+  const depart = home[home.length - 1].at;
+  const walk = [];
+  for (let index = 1; index <= 75; index += 1) {
+    const step = offset(origin, 0, index * 10, depart + index * 12_000);
+    walk.push({ lat: step.lat, lng: step.lng, at: step.at, accuracyM: 12, staying: true });
+  }
+  const arrive = walk[walk.length - 1].at;
+  assert.equal(arrive - depart, 15 * 60_000);
+  const away = staySamples(walk[walk.length - 1], arrive, arrive + WALK_JOURNEY_STAY_MS, 60_000);
+  const now = away[away.length - 1].at;
+  const split = splitClosedJourneys([...home, ...walk, ...away], now);
+  assert.equal(split.journeys.length, 1);
+  const card = split.journeys[0];
+  const minutes = (card.endedAt - card.startedAt) / 60_000;
+  assert.ok(minutes >= 12 && minutes <= 17, `card ${minutes.toFixed(1)} min`);
+  assert.ok(card.startedAt > t + 90 * 60_000);
+  assert.ok(card.startedAt < depart + 3 * 60_000);
+  assert.ok(card.points[0].at > t + 90 * 60_000);
+  const open = previewOpenJourney([...home, ...walk], arrive);
+  assert.ok(open);
+  const openMinutes = (open.endedAt - open.startedAt) / 60_000;
+  assert.ok(openMinutes >= 12 && openMinutes <= 17, `open ${openMinutes.toFixed(1)} min`);
+});
+
+test('the clipped card replaces the longer card stored for the same walk', () => {
+  const t = Date.UTC(2026, 9, 28, 3, 0, 0);
+  const origin = { lat: 37.54, lng: 127.03, at: t, accuracyM: 12, speedMps: 0, staying: true };
+  const home = staySamples(origin, t, t + 2 * 60 * 60 * 1000, 60_000);
+  const depart = home[home.length - 1].at;
+  const walk = [];
+  for (let index = 1; index <= 75; index += 1) {
+    walk.push({
+      ...offset(origin, 0, index * 10, depart + index * 12_000),
+      accuracyM: 12,
+      speedMps: 1.3,
+      staying: false,
+    });
+  }
+  const arrive = walk[walk.length - 1].at;
+  const away = staySamples(walk[walk.length - 1], arrive, arrive + WALK_JOURNEY_STAY_MS, 60_000);
+  const now = away[away.length - 1].at;
+  const archived = storedTrackAfterArchive([...home, ...walk, ...away], now);
+  assert.equal(archived.journeys.length, 1);
+  const clipped = archived.journeys[0];
+  assert.ok((clipped.endedAt - clipped.startedAt) / 60_000 <= 17);
+  const legacy = {
+    id: `${Math.floor(t / 60_000)}:${origin.lat.toFixed(3)}:${origin.lng.toFixed(3)}`,
+    startedAt: t,
+    endedAt: clipped.endedAt,
+    distanceM: clipped.distanceM + 80,
+    points: [home[0], home[Math.floor(home.length / 2)], ...clipped.points],
+    start: { lat: origin.lat, lng: origin.lng, label: '우리 집' },
+    end: { ...clipped.end },
+  };
+  const merged = mergeJourneyLists([legacy], archived.journeys);
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0].startedAt, clipped.startedAt);
+  assert.equal(merged[0].endedAt, clipped.endedAt);
+  assert.equal(merged[0].distanceM, clipped.distanceM);
+  assert.equal(merged[0].start.label, '우리 집');
+  const again = mergeJourneyLists(merged, archived.journeys);
+  assert.equal(again.length, 1);
+  assert.equal(again[0].startedAt, clipped.startedAt);
+  const kept = trimJourneyList([legacy, clipped], now);
+  assert.equal(kept.length, 1);
+  assert.equal(kept[0].startedAt, clipped.startedAt);
+});

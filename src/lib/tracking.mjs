@@ -1585,11 +1585,55 @@ function isMovingStep(prev, point) {
   return true;
 }
 
+/** Centroid of the opening stay. Points already outside the stay radius stay out of it. */
+function openingStayCenter(samples) {
+  let lat = 0;
+  let lng = 0;
+  let count = 0;
+  for (const point of samples) {
+    if (!point || !Number.isFinite(point.lat) || !Number.isFinite(point.lng)) continue;
+    if (count > 0 && haversineMeters({ lat: lat / count, lng: lng / count }, point) > STOP_RADIUS_M) continue;
+    lat += point.lat;
+    lng += point.lng;
+    count += 1;
+  }
+  if (count === 0) return null;
+  return { lat: lat / count, lng: lng / count };
+}
+
+/**
+ * First sample that leaves the stay cluster and keeps going.
+ * A stay-flagged fix with no speed is still a departure once it is outside
+ * STOP_RADIUS_M and the next fixes do not fall back in.
+ */
+function geometricDeparture(points) {
+  const center = openingStayCenter(points);
+  if (!center) return 0;
+  for (let index = 1; index < points.length; index += 1) {
+    const distance = haversineMeters(center, points[index]);
+    if (!(distance > STOP_RADIUS_M)) continue;
+    const end = Math.min(points.length - 1, index + 3);
+    if (end === index) continue;
+    let previous = distance;
+    let held = true;
+    for (let cursor = index + 1; cursor <= end; cursor += 1) {
+      const next = haversineMeters(center, points[cursor]);
+      if (next <= STOP_RADIUS_M || next + 6 < previous) {
+        held = false;
+        break;
+      }
+      previous = next;
+    }
+    if (held) return index;
+  }
+  return 0;
+}
+
 /**
  * The trip is the movement between stays.
- * Start at the departure sample — the last point still in the preceding stay —
- * and end at the first sample of the next stay. Hours of 머무름 on either side
- * are not part of the card.
+ * Start at the departure sample — the last point still in the preceding stay,
+ * or the first fix that walks out of the stay radius — and end at the first
+ * sample of the next stay. Hours of 머무름 on either side are not part of the card.
  */
 function clipStayEnds(points) {
   if (!Array.isArray(points) || points.length < 2) return points;
@@ -1599,7 +1643,11 @@ function clipStayEnds(points) {
     from = index;
   }
   const leadMs = points[from].at - points[0].at;
-  if (leadMs < STOP_MIN_MS || from >= points.length - 1) from = 0;
+  if (leadMs < STOP_MIN_MS || from >= points.length - 1) {
+    const departed = geometricDeparture(points);
+    const departedMs = departed > 0 ? points[departed].at - points[0].at : 0;
+    from = departed > 0 && departed < points.length - 1 && departedMs >= STOP_MIN_MS ? departed : 0;
+  }
 
   let tail = points.length - 1;
   for (let index = points.length - 2; index >= from; index -= 1) {
@@ -1896,32 +1944,59 @@ export function labelJourneyPlace(place, spots) {
   return best ? { ...place, label: best } : place;
 }
 
+function journeyPointsOverlap(left, right) {
+  const a = Array.isArray(left?.points) ? left.points : [];
+  const b = Array.isArray(right?.points) ? right.points : [];
+  if (a.length < 2 || b.length < 2) return false;
+  const shorter = a.length <= b.length ? a : b;
+  const longer = shorter === a ? b : a;
+  const step = Math.max(1, Math.floor(shorter.length / 6));
+  let seen = 0;
+  let hits = 0;
+  for (let index = 0; index < shorter.length; index += step) {
+    const point = shorter[index];
+    if (!point || !Number.isFinite(point.lat) || !Number.isFinite(point.lng)) continue;
+    seen += 1;
+    if (longer.some((other) => other && haversineMeters(point, other) <= 120)) hits += 1;
+  }
+  return seen > 0 && hits >= Math.min(3, seen) && hits * 2 >= seen;
+}
+
 function sameTrip(left, right) {
   if (!left?.start || !right?.start || !Number.isFinite(left.startedAt) || !Number.isFinite(right.startedAt)) return false;
-  if (Math.abs(left.startedAt - right.startedAt) > 3 * 60_000) return false;
-  if (haversineMeters(left.start, right.start) > 250) return false;
+  if (!Number.isFinite(left.endedAt) || !Number.isFinite(right.endedAt)) return false;
+  const startsClose = Math.abs(left.startedAt - right.startedAt) <= 3 * 60_000;
+  const endsClose = Math.abs(left.endedAt - right.endedAt) <= 3 * 60_000;
+  const startsNear = haversineMeters(left.start, right.start) <= 250;
+  const endsNear = !!left.end && !!right.end && haversineMeters(left.end, right.end) <= 250;
   const overlap = Math.min(left.endedAt, right.endedAt) - Math.max(left.startedAt, right.startedAt);
-  const shorter = Math.min(
-    Math.max(1, left.endedAt - left.startedAt),
-    Math.max(1, right.endedAt - right.startedAt),
-  );
-  if (overlap >= shorter * 0.5) return true;
-  return Math.abs((left.endedAt || 0) - (right.endedAt || 0)) <= 3 * 60_000
-    && !!left.end && !!right.end
-    && haversineMeters(left.end, right.end) < 250;
+  if (startsClose && startsNear) {
+    const shorter = Math.min(
+      Math.max(1, left.endedAt - left.startedAt),
+      Math.max(1, right.endedAt - right.startedAt),
+    );
+    if (overlap >= shorter * 0.5) return true;
+    if (endsClose && endsNear) return true;
+  }
+  // A 1.27 card started at the stay. The clipped card starts at departure and ends together.
+  if (endsClose && overlap >= 60_000 && endsNear) return true;
+  if (overlap >= 60_000 && journeyPointsOverlap(left, right)) return true;
+  return false;
 }
 
 function preferJourney(left, right) {
+  const startGap = Math.abs(left.startedAt - right.startedAt);
+  const later = left.startedAt >= right.startedAt ? left : right;
   const richer = (right.distanceM || 0) > (left.distanceM || 0) ? right : left;
-  const other = richer === right ? left : right;
-  const startedAt = Math.min(left.startedAt, right.startedAt);
-  const lat = richer.start?.lat ?? other.start?.lat ?? 0;
-  const lng = richer.start?.lng ?? other.start?.lng ?? 0;
+  const preferred = startGap > 3 * 60_000 ? later : richer;
+  const other = preferred === left ? right : left;
+  const lat = preferred.start?.lat ?? other.start?.lat ?? 0;
+  const lng = preferred.start?.lng ?? other.start?.lng ?? 0;
   return {
-    ...richer,
-    id: stableJourneyId(startedAt, lat, lng),
-    start: { ...richer.start, label: richer.start?.label || other.start?.label || null },
-    end: { ...richer.end, label: richer.end?.label || other.end?.label || null },
+    ...preferred,
+    id: stableJourneyId(preferred.startedAt, lat, lng),
+    start: { ...preferred.start, label: preferred.start?.label || other.start?.label || null },
+    end: { ...preferred.end, label: preferred.end?.label || other.end?.label || null },
   };
 }
 
