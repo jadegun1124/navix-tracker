@@ -3,9 +3,9 @@ import { APP_VERSION_NAME } from '../../lib/appRelease.mjs';
 
 const iconSrc = `${import.meta.env.BASE_URL}umap-icon.png`;
 
-export const COMPANY_HOME_URL = 'https://jadegun1124.github.io/umap/';
-export const ANDROID_RELEASES_URL = `https://github.com/jadegun1124/umap/releases/tag/v${APP_VERSION_NAME}`;
-export const ANDROID_APK_URL = `https://github.com/jadegun1124/umap/releases/download/v${APP_VERSION_NAME}/umap-v${APP_VERSION_NAME}-tracker.apk`;
+export const COMPANY_HOME_URL = 'https://jadegun1124.github.io/kinnex/';
+export const ANDROID_RELEASES_URL = `https://github.com/jadegun1124/kinnex/releases/tag/v${APP_VERSION_NAME}`;
+export const ANDROID_APK_URL = `https://github.com/jadegun1124/kinnex/releases/download/v${APP_VERSION_NAME}/kinnex-v${APP_VERSION_NAME}.apk`;
 
 export function CompanyHome() {
   const [sent, setSent] = useState(false);
@@ -18,7 +18,7 @@ export function CompanyHome() {
         <div className="mx-auto flex max-w-5xl items-center justify-between px-5 py-3">
           <a href="#top" className="flex items-center gap-2 font-black">
             <img src={iconSrc} alt="" className="h-9 w-9 rounded-xl" />
-            Umap
+            Kinnex
           </a>
           <nav className="flex items-center gap-4 text-sm font-semibold text-slate-600">
             <a href="#product">서비스</a>
@@ -35,7 +35,7 @@ export function CompanyHome() {
             <p className="text-sm font-bold text-[#0084FF]">가족 위치 공유</p>
             <h1 className="mt-3 text-4xl font-black leading-tight md:text-5xl">허락한 가족과만 위치를 나눕니다.</h1>
             <p className="mt-4 max-w-xl text-base leading-7 text-slate-600">
-              Umap은 회사에 남긴 소개 페이지와, 휴대폰에서 쓰는 가족 지도로 이루어져 있습니다. 실시간 위치, 우리 집 안심존, 초대 코드가 전부입니다.
+              Kinnex은 회사에 남긴 소개 페이지와, 휴대폰에서 쓰는 가족 지도로 이루어져 있습니다. 실시간 위치, 우리 집 안심존, 초대 코드가 전부입니다.
             </p>
             <div className="mt-8 flex flex-wrap gap-3">
               <a href={ANDROID_APK_URL} className="inline-flex rounded-full bg-[#0084FF] px-5 py-3 text-sm font-bold text-white">
@@ -47,8 +47,8 @@ export function CompanyHome() {
             </div>
           </div>
           <div className="mx-auto w-full max-w-sm rounded-[36px] border border-slate-200 bg-[#f4f7fb] p-6 shadow-sm">
-            <img src={iconSrc} alt="Umap 앱 아이콘" className="h-20 w-20 rounded-[22px]" />
-            <p className="mt-4 text-2xl font-black">Umap</p>
+            <img src={iconSrc} alt="Kinnex 앱 아이콘" className="h-20 w-20 rounded-[22px]" />
+            <p className="mt-4 text-2xl font-black">Kinnex</p>
             <ul className="mt-4 space-y-2 text-sm leading-6 text-slate-600">
               <li>이 기기의 이름과 사진을 정하면 가족 폰에도 보입니다.</li>
               <li>가족 핀과 우리 집 원을 지도에서 봅니다.</li>
@@ -151,7 +151,7 @@ export function CompanyHome() {
 
       <footer className="border-t border-slate-200 px-5 py-8 text-sm text-slate-500">
         <div className="mx-auto flex max-w-5xl flex-col gap-2 md:flex-row md:items-center md:justify-between">
-          <p>© 2026 Umap. 회사 홈은 GitHub Pages, 안드로이드 앱은 GitHub Releases입니다.</p>
+          <p>© 2026 Kinnex. 회사 홈은 GitHub Pages, 안드로이드 앱은 GitHub Releases입니다.</p>
           <a href="?app=1" className="font-semibold text-[#0084FF]">
             모바일 앱 화면 미리보기
           </a>

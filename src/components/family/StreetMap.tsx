@@ -11,6 +11,7 @@ export interface StreetMapHandle {
   zoomBy: (delta: number) => void;
   fit: (points: { lat: number; lng: number }[]) => void;
   getCenter: () => { lat: number; lng: number };
+  setPlayback: (frame: { lat: number; lng: number; label: string } | null, follow?: boolean) => void;
 }
 
 function escapeHtml(value: string): string {
@@ -41,16 +42,17 @@ export const StreetMap = forwardRef<StreetMapHandle, {
   trails: TrackPoint[][];
   trailColor: string;
   selectedId?: string;
-  playback?: { lat: number; lng: number; label: string } | null;
   /** Family overview never paints a dashed hole. Records may still show one. */
   solidOnly?: boolean;
   onSelect: (id: string) => void;
   onMove?: (center: { lat: number; lng: number }) => void;
-}>(function StreetMap({ center, zoom, members, home, trails, trailColor, selectedId, playback, solidOnly = false, onSelect, onMove }, ref) {
+}>(function StreetMap({ center, zoom, members, home, trails, trailColor, selectedId, solidOnly = false, onSelect, onMove }, ref) {
   const nodeRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
   const layersRef = useRef<L.LayerGroup | null>(null);
   const trailRef = useRef<L.LayerGroup | null>(null);
+  const playbackRef = useRef<L.Marker | null>(null);
+  const playbackPanRef = useRef(0);
   const [ready, setReady] = useState(false);
   const [tileNote, setTileNote] = useState('');
   const key = vworldApiKey();
@@ -87,6 +89,43 @@ export const StreetMap = forwardRef<StreetMapHandle, {
     getCenter() {
       const current = mapRef.current?.getCenter();
       return current ? { lat: current.lat, lng: current.lng } : center;
+    },
+    setPlayback(frame, follow) {
+      const map = mapRef.current;
+      if (!map) return;
+      if (!frame) {
+        playbackRef.current?.remove();
+        playbackRef.current = null;
+        return;
+      }
+      let marker = playbackRef.current;
+      if (!marker) {
+        marker = L.marker([frame.lat, frame.lng], {
+          interactive: false,
+          zIndexOffset: 900,
+          icon: L.divIcon({
+            className: 'umap-playback',
+            html: `<div style="display:flex;flex-direction:column;align-items:center;transform:translate(-50%,-100%)">
+              <span data-playback-label style="margin-bottom:4px;padding:3px 8px;border-radius:999px;background:#0f172a;color:#fff;font-size:11px;font-weight:800;white-space:nowrap;box-shadow:0 1px 4px rgba(15,23,42,.2)"></span>
+              <span style="width:16px;height:16px;border-radius:999px;background:#0084FF;border:3px solid #fff;box-shadow:0 2px 6px rgba(15,23,42,.28)"></span>
+            </div>`,
+            iconSize: [0, 0],
+            iconAnchor: [0, 0],
+          }),
+        }).addTo(map);
+        playbackRef.current = marker;
+      }
+      marker.setLatLng([frame.lat, frame.lng]);
+      const caption = marker.getElement()?.querySelector('[data-playback-label]');
+      if (caption) caption.textContent = frame.label;
+      if (!follow) return;
+      const dragging = map.dragging as { _dragging?: boolean } | undefined;
+      if (dragging?._dragging) return;
+      if (map.getBounds().pad(-0.16).contains([frame.lat, frame.lng])) return;
+      const now = performance.now();
+      if (now - playbackPanRef.current < 700) return;
+      playbackPanRef.current = now;
+      map.panTo([frame.lat, frame.lng], { animate: true, duration: 0.45, easeLinearity: 0.25 });
     },
   }));
 
@@ -129,6 +168,7 @@ export const StreetMap = forwardRef<StreetMapHandle, {
       setReady(false);
       map.off('move');
       map.off('moveend');
+      playbackRef.current = null;
       map.remove();
       mapRef.current = null;
       layersRef.current = null;
@@ -189,29 +229,14 @@ export const StreetMap = forwardRef<StreetMapHandle, {
       }).addTo(group);
     }
 
-    if (playback) {
-      const caption = escapeHtml(playback.label);
-      L.marker([playback.lat, playback.lng], {
-        interactive: false,
-        zIndexOffset: 900,
-        icon: L.divIcon({
-          className: 'umap-playback',
-          html: `<div style="display:flex;flex-direction:column;align-items:center;transform:translate(-50%,-100%)">
-            <span style="margin-bottom:4px;padding:3px 8px;border-radius:999px;background:#0f172a;color:#fff;font-size:11px;font-weight:800;white-space:nowrap;box-shadow:0 1px 4px rgba(15,23,42,.2)">${caption}</span>
-            <span style="width:16px;height:16px;border-radius:999px;background:#0084FF;border:3px solid #fff;box-shadow:0 2px 6px rgba(15,23,42,.28)"></span>
-          </div>`,
-          iconSize: [0, 0],
-          iconAnchor: [0, 0],
-        }),
-      }).addTo(group);
-    }
-
     for (const member of members) {
       if (!hasLocation(member)) continue;
       const selected = member.id === selectedId;
       const color = '#0084FF';
       const self = member.role === 'self';
       const label = escapeHtml(self ? '나' : member.name);
+      const placeText = typeof member.place === 'string' ? member.place.trim() : '';
+      const place = placeText && placeText !== '근처' ? escapeHtml(placeText) : '';
       const initial = escapeHtml(self ? '나' : member.name.slice(0, 1));
       const battery = batteryMarkup(member, selected);
       const photo = typeof member.photo === 'string' && member.photo.startsWith('data:image/') && member.photo.length < 120_000
@@ -225,7 +250,7 @@ export const StreetMap = forwardRef<StreetMapHandle, {
         icon: L.divIcon({
           className: 'umap-member-pin',
           html: `<div style="display:flex;flex-direction:column;align-items:center;transform:translate(-50%,-100%)">
-            <span style="display:inline-flex;align-items:center;margin-bottom:4px;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;white-space:nowrap;box-shadow:0 1px 4px rgba(15,23,42,.16);background:${selected ? '#0084FF' : '#fff'};color:${selected ? '#fff' : '#0f172a'}">${label}${battery}</span>
+            <span style="display:inline-flex;flex-direction:column;align-items:center;margin-bottom:4px;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:700;max-width:180px;box-shadow:0 1px 4px rgba(15,23,42,.16);background:${selected ? '#0084FF' : '#fff'};color:${selected ? '#fff' : '#0f172a'}"><span style="display:inline-flex;align-items:center;white-space:nowrap">${label}${battery}</span>${place ? `<span style="display:block;max-width:164px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px;font-weight:600;opacity:.85">${place}</span>` : ''}</span>
             ${face}
           </div>`,
           iconSize: [0, 0],
@@ -235,7 +260,7 @@ export const StreetMap = forwardRef<StreetMapHandle, {
       marker.on('click', () => onSelectRef.current(member.id));
       marker.addTo(group);
     }
-  }, [home, members, playback, ready, selectedId]);
+  }, [home, members, ready, selectedId]);
 
   useEffect(() => {
     const trailGroup = trailRef.current;

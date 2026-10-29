@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, type RefObject } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { Bike, Car, ChevronRight, Footprints, Pause, Plane, Play } from 'lucide-react';
-import { classifyMode, formatJourneyDistance, modeLabel, playbackAnchor, visibleTrail, type TravelMode } from '../../lib/tracking.mjs';
+import { classifyJourneyMode, formatJourneyDistance, journeyPathDistance, modeLabel, playbackAnchor, visibleTrail, type TravelMode } from '../../lib/tracking.mjs';
 import { VWORLD_ATTRIBUTION, vworldApiKey, vworldBaseTileUrl } from '../../services/vworld';
 import type { Journey } from '../../types/family';
 
@@ -35,11 +35,12 @@ function realPlace(place: Place) {
   return '';
 }
 
-function seoulClock(at: number) {
+function seoulClock(at: number, seconds = false) {
   return new Intl.DateTimeFormat('en-GB', {
     timeZone: 'Asia/Seoul',
     hour: '2-digit',
     minute: '2-digit',
+    ...(seconds ? { second: '2-digit' as const } : {}),
     hourCycle: 'h23',
   }).format(at);
 }
@@ -63,18 +64,30 @@ function spacedDistance(meters: number) {
   return raw;
 }
 
-function journeyMode(distanceM: number, startedAt: number, endedAt: number): TravelMode {
-  const duration = Math.max(0, endedAt - startedAt);
-  const hours = duration / 3_600_000;
-  const speedKmh = hours > 0 ? (distanceM / 1000) / hours : 0;
-  return classifyMode(speedKmh, distanceM, duration);
+function journeyDistance(journey: { distanceM: number; points?: Sample[] }) {
+  const measured = journeyPathDistance(journey.points);
+  if (!Number.isFinite(measured) || measured <= 0) return journey.distanceM;
+  return Math.max(journey.distanceM, Math.round(measured));
 }
 
-export function playbackMark(points: Sample[], ratio: number): { lat: number; lng: number; label: string } | null {
+function journeyMode(journey: { distanceM: number; startedAt: number; endedAt: number; points?: Sample[] }): TravelMode {
+  const distanceM = journeyDistance(journey);
+  const duration = Math.max(0, journey.endedAt - journey.startedAt);
+  return classifyJourneyMode(journey.points, distanceM, duration);
+}
+
+export function playbackMark(points: Sample[], ratio: number): { lat: number; lng: number; label: string; at: number; speedKmh: number } | null {
   const anchor = playbackAnchor(points, ratio);
   if (!anchor) return null;
-  const kmh = Math.max(0, Math.round((anchor.speedMps || 0) * 3.6));
-  return { lat: anchor.lat, lng: anchor.lng, label: `${seoulClock(anchor.at)} / ${kmh} km/h` };
+  const speedKmh = Math.max(0, (anchor.speedMps || 0) * 3.6);
+  const kmh = Math.round(speedKmh);
+  return {
+    lat: anchor.lat,
+    lng: anchor.lng,
+    at: anchor.at,
+    speedKmh,
+    label: `${seoulClock(anchor.at, true)} / ${kmh} km/h`,
+  };
 }
 
 function ModeIcon({ mode }: { mode: TravelMode }) {
@@ -217,7 +230,8 @@ function TripCard({
   onSelect: () => void;
   onPlay: () => void;
 }) {
-  const mode = journeyMode(journey.distanceM, journey.startedAt, journey.endedAt);
+  const mode = journeyMode(journey);
+  const distanceM = journeyDistance(journey);
   const start = realPlace(journey.start);
   const end = realPlace(journey.end);
   return (
@@ -242,7 +256,7 @@ function TripCard({
       <span className="block text-[15px] font-black tracking-tight text-slate-900">{rangeLabel(journey.startedAt, journey.endedAt)}</span>
       <span className="mt-2 flex items-center gap-2 text-[22px] font-black leading-none text-slate-900">
         <ModeIcon mode={mode} />
-        {spacedDistance(journey.distanceM)}
+        {spacedDistance(distanceM)}
       </span>
       {(start || end) && (
         <span className="mt-2.5 block space-y-1">
@@ -269,41 +283,115 @@ function TripCard({
   );
 }
 
+const PLAY_MS = 9000;
+
+type PlaybackMap = {
+  setPlayback: (frame: { lat: number; lng: number; label: string } | null, follow?: boolean) => void;
+};
+
 export function JourneyScrubber({
   journey,
-  scrub,
-  label,
+  points,
   playing,
-  onScrub,
-  onTogglePlay,
+  mapRef,
+  onPlayingChange,
 }: {
   journey: OpenJourney | Journey;
-  scrub: number;
-  label: string;
+  points: Sample[];
   playing: boolean;
-  onScrub: (value: number) => void;
-  onTogglePlay: () => void;
+  mapRef: RefObject<PlaybackMap | null>;
+  onPlayingChange: (playing: boolean) => void;
 }) {
+  const sliderRef = useRef<HTMLInputElement>(null);
+  const labelRef = useRef<HTMLParagraphElement>(null);
+  const ratioRef = useRef(0);
+  const speedRef = useRef<number | null>(null);
+  const pointsRef = useRef(points);
+  const mapHandle = useRef(mapRef);
+  const playingRef = useRef(playing);
+  const onPlayingRef = useRef(onPlayingChange);
+  pointsRef.current = points;
+  mapHandle.current = mapRef;
+  playingRef.current = playing;
+  onPlayingRef.current = onPlayingChange;
+
+  const paint = (ratio: number, follow: boolean) => {
+    const clamped = Math.min(1, Math.max(0, ratio));
+    ratioRef.current = clamped;
+    const anchor = playbackAnchor(pointsRef.current, clamped);
+    if (sliderRef.current) sliderRef.current.value = String(Math.round(clamped * 1000));
+    if (!anchor) {
+      if (labelRef.current) labelRef.current.textContent = '재생';
+      mapHandle.current.current?.setPlayback(null);
+      return;
+    }
+    const raw = Math.max(0, (anchor.speedMps || 0) * 3.6);
+    const smoothed = speedRef.current == null ? raw : speedRef.current * 0.7 + raw * 0.3;
+    speedRef.current = smoothed;
+    const label = `${seoulClock(anchor.at, true)} / ${Math.round(smoothed)} km/h`;
+    if (labelRef.current) labelRef.current.textContent = label;
+    mapHandle.current.current?.setPlayback({ lat: anchor.lat, lng: anchor.lng, label }, follow);
+  };
+
+  useLayoutEffect(() => {
+    paint(ratioRef.current, false);
+  });
+
+  useEffect(() => {
+    ratioRef.current = 0;
+    speedRef.current = null;
+    paint(0, false);
+    return () => {
+      mapHandle.current.current?.setPlayback(null);
+    };
+  }, [journey.id]);
+
+  useEffect(() => {
+    if (!playing) return;
+    let from = ratioRef.current;
+    if (from >= 0.999) {
+      from = 0;
+      ratioRef.current = 0;
+      speedRef.current = null;
+    }
+    const started = performance.now();
+    let frame = 0;
+    const step = (mark: number) => {
+      if (!playingRef.current) return;
+      const progress = Math.min(1, (mark - started) / PLAY_MS);
+      paint(from + (1 - from) * progress, true);
+      if (progress < 1) frame = requestAnimationFrame(step);
+      else onPlayingRef.current(false);
+    };
+    frame = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(frame);
+  }, [playing, journey.id]);
+
   return (
     <div className="rounded-3xl bg-slate-50 px-3 py-3">
       <div className="flex items-center gap-3">
         <button
           type="button"
           aria-label={playing ? '일시정지' : '재생'}
-          onClick={onTogglePlay}
+          onClick={() => onPlayingChange(!playing)}
           className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#0084FF] text-white"
         >
           {playing ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5 translate-x-0.5" />}
         </button>
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-black text-slate-900">{label}</p>
+          <p ref={labelRef} className="text-sm font-black text-slate-900">재생</p>
           <input
+            ref={sliderRef}
             type="range"
             min={0}
             max={1000}
-            value={scrub}
+            defaultValue={0}
             aria-label="여정 시간"
-            onChange={(event) => onScrub(Number(event.target.value))}
+            onChange={(event) => {
+              onPlayingChange(false);
+              speedRef.current = null;
+              paint(Number(event.target.value) / 1000, false);
+            }}
             className="mt-2 w-full accent-[#0084FF]"
           />
         </div>

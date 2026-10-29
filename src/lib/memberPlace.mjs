@@ -4,7 +4,7 @@ export function cleanPlace(value) {
   if (typeof value !== 'string') return '';
   const text = value.trim().replace(/\s+/g, ' ');
   if (!text || text === '근처' || text.split(' ').every((part) => part === '근처')) return '';
-  return text.slice(0, 40);
+  return text.slice(0, 56);
 }
 
 export function samePlaceBucket(aLat, aLng, bLat, bLng) {

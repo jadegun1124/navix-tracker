@@ -203,39 +203,12 @@ def pin_fractions(master: Image.Image) -> tuple[float, float, float, float]:
 
 
 def adaptive_placement(master: Image.Image) -> tuple[float, float, float]:
-    """Scale and offsets that keep the pin inside the adaptive safe zone."""
-    top, bottom, left, right = pin_fractions(master)
-    safe_top = (1 - SAFE_DIAMETER) / 2 + SAFE_MARGIN
-    safe_bottom = (1 + SAFE_DIAMETER) / 2 - SAFE_MARGIN
-    span = bottom - top
-    scale = min(0.90, (safe_bottom - safe_top) / span)
-    pin_mid = (top + bottom) / 2
-    safe_mid = (safe_top + safe_bottom) / 2
-    offset_y = safe_mid - pin_mid * scale
-    offset_x = (1 - scale) / 2
-    offset_y = min(max(offset_y, 0.0), 1 - scale)
-    placed_top = offset_y + top * scale
-    placed_bottom = offset_y + bottom * scale
-    placed_left = offset_x + left * scale
-    placed_right = offset_x + right * scale
-    safe0 = (1 - SAFE_DIAMETER) / 2
-    safe1 = 1 - safe0
-    inside = (
-        placed_top >= safe0 - 0.004
-        and placed_bottom <= safe1 + 0.004
-        and placed_left >= safe0
-        and placed_right <= safe1
-    )
-    if not inside:
-        raise SystemExit(
-            f"pin falls outside the adaptive safe zone: top {placed_top:.3f} bottom {placed_bottom:.3f} "
-            f"left {placed_left:.3f} right {placed_right:.3f}"
-        )
-    print(
-        f"adaptive scale {scale:.3f} offset ({offset_x:.3f}, {offset_y:.3f}) "
-        f"pin y {placed_top:.3f}-{placed_bottom:.3f}"
-    )
-    return scale, offset_x, offset_y
+    """Fit the whole tile inside the adaptive safe circle. The artwork has no white pin."""
+    del master
+    scale = SAFE_DIAMETER
+    offset = (1 - scale) / 2
+    print(f"adaptive scale {scale:.3f} offset ({offset:.3f}, {offset:.3f}) full tile in safe zone")
+    return scale, offset, offset
 
 
 def adaptive_foreground(
@@ -248,13 +221,15 @@ def adaptive_foreground(
 ) -> Image.Image:
     inner = max(1, round(size * scale))
     art = rounded_from(full, master, inner)
-    canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    red, green, blue = bytes.fromhex(edge_hex(master.convert("RGBA"))[1:])
+    canvas = Image.new("RGBA", (size, size), (red, green, blue, 255))
     canvas.alpha_composite(art, (round(size * offset_x), round(size * offset_y)))
-    return extend_smooth(canvas)
+    return canvas
 
 
 def splash(width: int, height: int, icon: Image.Image) -> Image.Image:
-    canvas = Image.new("RGBA", (width, height), (255, 255, 255, 255))
+    red, green, blue = bytes.fromhex(edge_hex(icon.convert("RGBA"))[1:])
+    canvas = Image.new("RGBA", (width, height), (red, green, blue, 255))
     side = int(min(width, height) * 0.62)
     tile = icon.resize((side, side), Image.Resampling.LANCZOS)
     canvas.alpha_composite(tile, ((width - side) // 2, (height - side) // 2))

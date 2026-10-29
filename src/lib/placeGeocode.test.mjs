@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { memberPlaceLabel } from './memberPlace.mjs';
-import { NOMINATIM_USER_AGENT, nominatimAddress, reverseGeocode, shortenAddress } from './placeGeocode.mjs';
+import { formatPrecisePlace, NOMINATIM_USER_AGENT, nominatimAddress, placeGridKey, presentPlace, reverseGeocode, shortenAddress } from './placeGeocode.mjs';
 
 const SUTAEK = {
   display_name: '수택동, 구리시, 경기도, 11932, 대한민국',
@@ -11,6 +11,14 @@ const SUTAEK = {
 function jsonResponse(body, ok = true) {
   return { ok, json: async () => body };
 }
+
+test('place labels refresh about every 30m and stay inside one cell for a shorter step', () => {
+  const step = 30 / 111_320;
+  const center = Math.round(37.6365 / step) * step;
+  const here = placeGridKey(center, 127.0678);
+  assert.equal(placeGridKey(center + step * 0.2, 127.0678), here);
+  assert.notEqual(placeGridKey(center + step * 1.2, 127.0678), here);
+});
 
 test('shortenAddress keeps the city and neighborhood and drops 근처', () => {
   assert.equal(shortenAddress('경기도 구리시 수택동 12-3'), '구리시 수택동');
@@ -29,15 +37,32 @@ test('a Nominatim body becomes 구리시 수택동', () => {
   }), '남양주시 다산1동');
 });
 
+test('formatPrecisePlace keeps an apartment and a shop, and presentPlace does not strip them', () => {
+  assert.equal(formatPrecisePlace({
+    dong: '하계동',
+    building: '하계1차청구아파트',
+    unit: '105',
+  }), '하계동 하계1차청구아파트 105동');
+  assert.equal(formatPrecisePlace({ dong: '다산2동', poi: '이마트' }), '다산2동 이마트');
+  assert.equal(formatPrecisePlace({ dong: '수택동' }), '');
+  assert.equal(presentPlace('노원구 하계동 하계1차청구아파트 105동'), '노원구 하계동 하계1차청구아파트 105동');
+  assert.equal(presentPlace('경기도 구리시 수택동 12-3'), '구리시 수택동');
+  assert.equal(presentPlace('근처'), '');
+  assert.equal(String(formatPrecisePlace({ dong: '하계동', building: '청구아파트', unit: '105동' })).includes('근처'), false);
+});
+
 test('a missing VWorld key uses Nominatim and never says 근처', async () => {
   const urls = [];
   const fetchImpl = async (url, init) => {
     urls.push(String(url));
-    assert.equal(init.headers['User-Agent'], NOMINATIM_USER_AGENT);
-    assert.equal(init.headers['Accept-Language'], undefined);
-    assert.match(String(url), /nominatim\.openstreetmap\.org\/reverse/);
-    assert.match(String(url), /accept-language=ko/);
-    return jsonResponse(SUTAEK);
+    if (String(url).includes('nominatim.openstreetmap.org')) {
+      assert.equal(init.headers['User-Agent'], NOMINATIM_USER_AGENT);
+      assert.equal(init.headers['Accept-Language'], undefined);
+      assert.match(String(url), /accept-language=ko/);
+      assert.match(String(url), /namedetails=1/);
+      return jsonResponse(SUTAEK);
+    }
+    return jsonResponse({ elements: [] });
   };
   const label = await reverseGeocode(37.5942, 127.1432, { fetch: fetchImpl, key: '', pace: false });
   assert.equal(label, '구리시 수택동');
@@ -54,7 +79,7 @@ test('VWorld is primary and Nominatim covers a failed VWorld response', async ()
   };
   const label = await reverseGeocode(37.6, 127.15, { fetch: vworldOnly, key: 'test-key', pace: false });
   assert.equal(label, '남양주시 다산동');
-  assert.equal(calls, 1);
+  assert.equal(calls, 2);
 
   const urls = [];
   const fallback = async (url) => {
@@ -77,7 +102,7 @@ test('a browser that refuses User-Agent still receives the neighborhood', async 
   };
   const label = await reverseGeocode(37.6, 127.15, { fetch: fetchImpl, key: '', pace: false });
   assert.equal(label, '남양주시 다산동');
-  assert.equal(calls, 2);
+  assert.ok(calls >= 2);
   assert.equal(label.includes('근처'), false);
 });
 

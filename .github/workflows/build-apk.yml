@@ -1,4 +1,4 @@
-name: Build Android APK (Umap)
+name: Build Android APK (Kinnex)
 
 on:
   push:
@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   build-apk:
-    name: Build Umap Android APK
+    name: Build Kinnex Android APK
     runs-on: ubuntu-latest
     env:
       ANDROID_HOME: /usr/local/lib/android/sdk
@@ -94,7 +94,7 @@ jobs:
         run: |
           mkdir -p output
           find android/ -name "*.apk" -ls
-          find android/ -name "*.apk" -exec cp {} output/umap-v1.28.0-tracker.apk \;
+          find android/ -name "*.apk" -exec cp {} output/kinnex-v1.29.0.apk \;
           echo "Output directory contents:"
           ls -lh output/
 
@@ -103,7 +103,7 @@ jobs:
           set -euo pipefail
           BUILD_TOOLS="$(ls -1 "$ANDROID_HOME/build-tools" | sort -V | tail -n 1)"
           APKSIGNER="$ANDROID_HOME/build-tools/${BUILD_TOOLS}/apksigner"
-          "$APKSIGNER" verify --print-certs output/umap-v1.28.0-tracker.apk | tee output/apk-certs.txt
+          "$APKSIGNER" verify --print-certs output/kinnex-v1.29.0.apk | tee output/apk-certs.txt
           python3 - <<'PY'
           import pathlib, re, subprocess
           certs = pathlib.Path("output/apk-certs.txt").read_text()
@@ -133,40 +133,40 @@ jobs:
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: umap-v1.28.0-tracker-apk
-          path: output/umap-v1.28.0-tracker.apk
+          name: kinnex-v1.29.0-apk
+          path: output/kinnex-v1.29.0.apk
           retention-days: 30
 
       - name: Create or Update GitHub Release with APK
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.28.0
-          name: 'Umap Android APK v1.28.0'
+          tag_name: v1.29.0
+          name: 'Kinnex Android APK v1.29.0'
           make_latest: true
           body: |
-            ### Umap 안드로이드 앱 1.28.0
+            ### Kinnex 안드로이드 앱 1.29.0
             - 메인 지도는 가족 카드가 「지금」인 동안만 이동 중 실선을 그립니다. 「머무름」이면 선이 없고, 점선으로 이은 빈 구간도 메인에 그리지 않습니다. 이동 중 선의 끝은 그 사람 핀과 같습니다. 걷거나 시속 약 7km 이상으로 움직인 점은 촘촘히 남고, 순식간에 멀리 튄 점과 제자리 흔들림만 뺍니다. 걸음 5분, 시속 약 7km 이상은 12분이 지나면 그 구간을 기록으로 넘기고 메인 선에서는 뺍니다. 같은 동네에 머문 GPS 흔들림이나 점만 두 개인 빈 구간은 여정 카드로 남기지 않습니다. 재생은 이어진 점만 따라갑니다.
             - 실내·건물 옆에서 머무는 동안 GPS가 흔들려도 메인 지도와 기록 재생에 지그재그나 낙서를 그리지 않습니다. 시속이 거의 0이거나 정확도가 나쁜 점은 체류 반경 안에 있으면 궤적에 넣지 않고, 이미 쌓인 머무름 구간은 한 점으로 모읍니다. 걷거나 차량으로 움직이는 선은 그대로입니다. 걸음 5분, 시속 약 7km 이상 12분 기록 넘김도 그대로입니다.
             - 기록의 각 여정 카드는 시간, 이동 수단과 거리, 출발·도착 주소 아래에 그 구간의 파란 경로를 지도 미리보기로 보여 줍니다. 선은 구간에 맞춰 들어갑니다.
             - 메뉴의 움직임 알림에서 고른 가족에게만 「○○님이 움직이기 시작했어요」「○○님이 멈췄어요」를 보냅니다. 아무도 고르지 않으면 보내지 않습니다. 걸음은 약 45초, 시속 약 7km 이상은 약 3분 넘게 머물면 멈춤이고, 실제로 이동한 뒤에만 시작입니다. GPS 간격은 그대로입니다.
-            - 설정에 앱 버전이 보입니다. 예: 앱 버전 1.28.0 (29).
+            - 설정에 앱 버전이 보입니다. 예: 앱 버전 1.29.0 (30).
             - 설정과 메뉴의 「가족 방 지우기」로 이 폰의 가족 목록과 동기화를 지웁니다. 이 폰이 만든 방은 서버에서도 지우고, 초대로 들어간 방은 이 폰에서만 나갑니다.
             - 가족 카드의 「지금」과 「머무름」은 이동 중에 왔다 갔다 하지 않습니다. 걸음이 보인 뒤 45초, 시속 약 7km 이상이 보인 뒤 3분 동안은 「지금」입니다.
             - 위치 공유는 처음 권한 안내를 마치면 허용됩니다. 이미 허용한 뒤에는 메뉴와 설정에 「내 위치 공유」 토글과 「내 위치를 가족에게 보여주는 중」을 두지 않습니다.
             - 지도의 + 버튼에서 초대하기와 초대 수락을 고릅니다.
-            - 회사 홈 (GitHub Pages): https://jadegun1124.github.io/umap/
+            - 회사 홈 (GitHub Pages): https://jadegun1124.github.io/kinnex/
             - 이 파일: GitHub Releases APK. Google Play에는 없습니다.
-            - 다운로드: https://github.com/jadegun1124/umap/releases/download/v1.28.0/umap-v1.28.0-tracker.apk
-            - 표시 이름: Umap
+            - 다운로드: https://github.com/jadegun1124/kinnex/releases/download/v1.29.0/kinnex-v1.29.0.apk
+            - 표시 이름: Kinnex
             - 패키지: `kr.co.umap.tracker`
-            - versionName: 1.28.0
-            - versionCode: 29
+            - versionName: 1.29.0
+            - versionCode: 30
             - 움직이는 동안 가족 전체 지도에 아직 기록으로 넘기지 않은 실시간 궤적을 그립니다. 걸음은 5분, 시속 약 7km 이상은 12분 머물면 그 구간을 기록으로 넘기고 메인 선에서는 뺍니다. 기록 화면은 고른 날짜의 저장된 궤적을 그립니다. 기록을 닫아도 아직 이동 중인 선은 메인 지도에 남습니다.
-            - 항상 허용은 먼저 「앱 사용 중에만 허용」을 고르고, 삼성 「위치 액세스 권한」 화면 위에 「Umap 항상 허용으로 설정」 안내를 띄웁니다. 다른 앱 위에 표시를 거절해도 그 화면은 열리고, 앱 안 세 줄 안내가 남습니다.
+            - 항상 허용은 먼저 「앱 사용 중에만 허용」을 고르고, 삼성 「위치 액세스 권한」 화면 위에 「Kinnex 항상 허용으로 설정」 안내를 띄웁니다. 다른 앱 위에 표시를 거절해도 그 화면은 열리고, 앱 안 세 줄 안내가 남습니다.
             - Google 로그인은 확인된 계정만 통과합니다. 웹 클라이언트 ID가 없으면 로그인으로 넘어가지 않습니다. 표시 이름은 그대로 이 기기에 둡니다.
             - 가족 카드의 현위치는 핀의 주소입니다. 예: 「구리시 수택동 · 지금」, 「남양주시 다산동 · 머무름」. VWorld 주소가 우선이고, 키가 없거나 실패하면 OpenStreetMap Nominatim으로 시·동을 채웁니다. 「근처」는 쓰지 않습니다.
             - 가족 방의 구성원은 같은 역할입니다. 예전 관리자·피관리자 저장은 한 가족으로 합치고, 구성원은 그대로 둡니다.
-            - 런처, 스플래시, 파비콘을 파스텔 그라데이션 핀(산호 하트와 세 사람)으로 바꿨습니다.
+            - 런처, 스플래시, 파비콘을 남색 타일과 민트 위치 핀(가족과 코기, 캐리어)으로 바꿨습니다.
             - 항상 허용은 삼성 권한 컨트롤러의 「위치 액세스 권한」 화면을 바로 엽니다. 라디오는 항상 허용, 앱 사용 중에만, 그리고 「정확한 위치 사용」입니다. 그 화면이 열린 뒤에는 앱 정보로 덮지 않습니다.
             - 1.17.0부터 사이드로드 APK는 저장소의 같은 서명으로 만듭니다. 새 APK를 받아 기존 앱 위에 설치하면 데이터가 남습니다. 1.16.0 이하(빌드마다 다른 디버그 서명)는 서명이 달라 한 번은 지운 뒤 설치해야 합니다. 그 다음부터는 지우지 않고 업데이트됩니다.
             - 최근 여정 카드 안에 경로 미리보기가 있고, 카드를 누르면 지도에서 ▶ 로 재생합니다. 출발·도착은 주소로 보이고, 같은 이동은 카드 하나로 합칩니다.
@@ -183,7 +183,7 @@ jobs:
             - 가족 서버는 이동 중 8초 또는 25m, 머무름 중 2분에 한 번만 올립니다. 이 폰의 궤적은 받은 점마다 잇습니다.
             - 걸어서 한곳에 5분, 시속 약 7km 이상으로 이동한 뒤에는 12분 머물면 그 이동을 최근 여정 카드로 남기고 메인 지도의 실시간 선에서는 뺍니다. 카드에는 시간, 거리, 출발·도착이 보이고, 전체 기록을 누르면 시간을 따라 마커가 움직입니다. 진행 중인 길은 메인 지도와 기록에 지금으로 보입니다. 80m 미만이거나 1분 미만은 카드로 만들지 않습니다. 기록은 이 폰에만 30일 남고 서버로 보내지 않습니다.
             - 가족 카드에 마지막 위치를 「방금 업데이트」 또는 「3분 전 업데이트」로 보여 줍니다.
-            - 위치 공유 중에도 알림 목록에 Umap 상시 카드가 나오지 않습니다. 1.6.0의 빈 포그라운드 서비스 알림을 뺐습니다.
+            - 위치 공유 중에도 알림 목록에 Kinnex 상시 카드가 나오지 않습니다. 1.6.0의 빈 포그라운드 서비스 알림을 뺐습니다.
             - 앱을 열면 예전 채널 `umap_location`, `umap_location_quiet`, `umap_alert_watch` 를 지웁니다.
             - 가족 위치와 배터리는 초대 동기화 키로 위치 서버에 올라가고, 관리자 지도가 그 서버에서 받아 표시합니다. 예시 좌표는 없습니다.
             - SOS는 앱이 꺼져 있어도 Web Push 또는 알림 대기로 가족에게 갑니다. 대기 중에는 알림 카드를 올리지 않습니다. SOS, 집 반경, 고른 가족의 움직임 시작·멈춤이 그 채널로 옵니다. 움직임 알림은 고른 사람이 있을 때만 갑니다.
@@ -195,7 +195,7 @@ jobs:
             - 머무름 중 정확도 반경 안의 위치 흔들림은 이동 경로에 잇지 않습니다.
             - iOS 앱은 App Store / TestFlight에 없습니다.
             - 마이크, 문자, 주변 소리, 원격 경보음은 요청하지 않습니다.
-            - 이전 파일: https://github.com/jadegun1124/umap/releases/tag/v1.18.0
-          files: output/umap-v1.28.0-tracker.apk
+            - 이전 파일: https://github.com/jadegun1124/kinnex/releases/tag/v1.18.0
+          files: output/kinnex-v1.29.0.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

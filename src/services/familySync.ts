@@ -108,6 +108,7 @@ function classify(response: Response) {
 }
 
 let placeQueue: { code: string; token: string; body: Record<string, unknown>; profileKey: string } | null = null;
+let trailQueue: { code: string; token: string; body: Record<string, unknown>; profileKey: string } | null = null;
 let profileQueue: { code: string; token: string; body: Record<string, unknown>; profileKey: string } | null = null;
 let alertQueue: { alert: FamilyAlert; token: string } | null = null;
 let flushing = false;
@@ -117,7 +118,7 @@ let syncEpoch = 0;
 const MAX_PROFILE_PHOTO = 24_000;
 
 function hasPending() {
-  return placeQueue != null || alertQueue != null || profileQueue != null;
+  return placeQueue != null || alertQueue != null || profileQueue != null || trailQueue != null;
 }
 
 export function publishPlaceRemote(place: SharedPlace, syncToken?: string | null, profileKey?: string | null): boolean {
@@ -143,6 +144,19 @@ export function publishPlaceRemote(place: SharedPlace, syncToken?: string | null
   const priorName = typeof place.priorName === 'string' ? place.priorName.trim().slice(0, 80) : '';
   if (priorName && priorName !== name) body.priorName = priorName;
   placeQueue = { code: place.code, token: syncToken, body, profileKey: memberId ? key : '' };
+  void flushQueues();
+  return true;
+}
+
+export function publishTrailRemote(
+  code: string,
+  syncToken: string | null | undefined,
+  body: Record<string, unknown>,
+  profileKey: string | null | undefined,
+): boolean {
+  if (!syncToken || !splitSyncToken(syncToken) || !familySyncUrl() || !/^\d{4,6}$/.test(code)) return false;
+  if (!profileKey || typeof body.memberId !== 'string') return false;
+  trailQueue = { code, token: syncToken, body, profileKey };
   void flushQueues();
   return true;
 }
@@ -254,6 +268,7 @@ export async function abandonFamilySync(): Promise<void> {
   placeQueue = null;
   profileQueue = null;
   alertQueue = null;
+  trailQueue = null;
   const started = Date.now();
   while (flushing && Date.now() - started < 8000) {
     await new Promise((resolve) => window.setTimeout(resolve, 20));
@@ -352,6 +367,13 @@ async function flushQueues() {
       }, profile.profileKey);
       if (!ok) failed = true;
     }
+    const trail = trailQueue;
+    if (trail) {
+      const ok = await sendQueued(`/v1/rooms/${trail.code}/trail`, trail.token, trail.body, () => {
+        if (trailQueue === trail) trailQueue = null;
+      }, trail.profileKey);
+      if (!ok) failed = true;
+    }
     const alert = alertQueue;
     if (alert) {
       const ok = await sendQueued(`/v1/rooms/${alert.alert.code}/alert`, alert.token, alert.alert, () => {
@@ -433,6 +455,59 @@ function isSharedProfile(value: unknown): value is SharedProfile {
   return true;
 }
 
+export interface SharedTrail {
+  memberId: string;
+  at: number;
+  moving: boolean;
+  points: { lat: number; lng: number; at: number; speedMps?: number; accuracyM?: number; staying?: boolean; stayEnd?: boolean }[];
+  journeys: {
+    id: string;
+    startedAt: number;
+    endedAt: number;
+    distanceM: number;
+    points: { lat: number; lng: number; at: number; speedMps?: number; accuracyM?: number; staying?: boolean; stayEnd?: boolean }[];
+    start: { lat: number; lng: number; label: string | null };
+    end: { lat: number; lng: number; label: string | null };
+  }[];
+}
+
+function isTrailPoint(value: unknown): value is SharedTrail['points'][number] {
+  if (!value || typeof value !== 'object') return false;
+  const point = value as { lat?: unknown; lng?: unknown; at?: unknown };
+  return typeof point.lat === 'number' && typeof point.lng === 'number' && typeof point.at === 'number';
+}
+
+function readTrails(body: unknown): SharedTrail[] {
+  if (!body || typeof body !== 'object' || !Array.isArray((body as { trails?: unknown }).trails)) return [];
+  const trails: SharedTrail[] = [];
+  for (const item of (body as { trails: unknown[] }).trails) {
+    if (!item || typeof item !== 'object') continue;
+    const trail = item as { memberId?: unknown; at?: unknown; moving?: unknown; points?: unknown; journeys?: unknown };
+    if (typeof trail.memberId !== 'string' || !/^local-[a-z0-9]{3,64}$/.test(trail.memberId)) continue;
+    if (typeof trail.at !== 'number' || !Number.isFinite(trail.at)) continue;
+    const points = Array.isArray(trail.points) ? trail.points.filter(isTrailPoint).slice(0, 800) : [];
+    const journeys = Array.isArray(trail.journeys)
+      ? trail.journeys.flatMap((journey) => {
+          if (!journey || typeof journey !== 'object') return [];
+          const card = journey as SharedTrail['journeys'][number];
+          if (typeof card.id !== 'string' || typeof card.startedAt !== 'number' || typeof card.endedAt !== 'number') return [];
+          if (!card.start || !card.end || !Array.isArray(card.points)) return [];
+          return [{
+            id: card.id,
+            startedAt: card.startedAt,
+            endedAt: card.endedAt,
+            distanceM: typeof card.distanceM === 'number' ? card.distanceM : 0,
+            points: card.points.filter(isTrailPoint).slice(0, 240),
+            start: card.start,
+            end: card.end,
+          }];
+        }).slice(0, 16)
+      : [];
+    trails.push({ memberId: trail.memberId, at: trail.at, moving: trail.moving === true, points, journeys });
+  }
+  return trails;
+}
+
 function readProfiles(body: unknown): SharedProfile[] {
   if (!body || typeof body !== 'object' || !Array.isArray((body as { profiles?: unknown }).profiles)) return [];
   return (body as { profiles: unknown[] }).profiles.filter(isSharedProfile).map((profile) => ({
@@ -449,6 +524,7 @@ export function startAdminRemoteSync(
     onPlace: (place: SharedPlace) => void;
     onAlert: (alert: FamilyAlert) => void;
     onProfiles?: (profiles: SharedProfile[]) => void;
+    onTrails?: (trails: SharedTrail[]) => void;
   },
 ): () => void {
   if (!link || !familySyncUrl() || !isKeyPart(link.writeKey) || !isKeyPart(link.readKey) || !/^\d{4,6}$/.test(link.code)) return () => {};
@@ -484,6 +560,7 @@ export function startAdminRemoteSync(
           if (isSharedPlace(place)) handlers.onPlace(place);
         }
         handlers.onProfiles?.(readProfiles(body));
+        handlers.onTrails?.(readTrails(body));
         for (const alert of alerts) {
           if (!isRemoteAlert(alert)) continue;
           handlers.onAlert(alert);
@@ -543,7 +620,7 @@ export async function familyEndpointAvailable(code: string, token: string): Prom
 
 export function startManagedFamilySync(
   links: { code: string; token: string }[],
-  onRoom: (code: string, places: SharedPlace[], profiles: SharedProfile[]) => void,
+  onRoom: (code: string, places: SharedPlace[], profiles: SharedProfile[], trails: SharedTrail[]) => void,
 ): () => void {
   const usable = links.filter((link) => splitSyncToken(link.token) && /^\d{4,6}$/.test(link.code));
   if (!familySyncUrl() || usable.length === 0) return () => {};
@@ -569,7 +646,7 @@ export function startManagedFamilySync(
         const body: unknown = await response.json();
         const raw = body && typeof body === 'object' && Array.isArray((body as { places?: unknown[] }).places) ? (body as { places: unknown[] }).places : [];
         const places = raw.filter((place): place is SharedPlace => isSharedPlace(place) && place.audience === 'family' && place.sharing);
-        onRoom(link.code, places, readProfiles(body));
+        onRoom(link.code, places, readProfiles(body), readTrails(body));
       }
     } catch {
       if (!stopped && familySyncUrl()) setPhase('down');

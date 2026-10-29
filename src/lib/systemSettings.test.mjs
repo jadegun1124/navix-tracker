@@ -103,7 +103,7 @@ test('chat shade notification is one event and opens that conversation', () => {
   assert.equal(watch.includes('startForeground('), false);
   assert.equal(watch.includes('Umap 위치 공유'), false);
   assert.match(watch, /CHAT_CHANNEL = "umap_chat"/);
-  assert.match(watch, /가족 대화/);
+  assert.match(watch, /Kinnex 대화/);
   assert.match(watch, /\/chat\?me=/);
   assert.match(watch, /umap_chat_peer/);
   assert.match(watch, /CATEGORY_MESSAGE/);

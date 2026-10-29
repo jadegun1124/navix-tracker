@@ -35,7 +35,7 @@ test('while-using coach and overlay copy stay short', () => {
   assert.equal(OVERLAY_ASK_TITLE, '다른 앱 위에 표시');
   assert.equal(OVERLAY_ALLOW, '표시 허용');
   assert.equal(OVERLAY_SKIP, '건너뛰기');
-  assert.equal(OVERLAY_BANNER, 'Umap 항상 허용으로 설정');
+  assert.equal(OVERLAY_BANNER, 'Kinnex 항상 허용으로 설정');
   assert.equal(PRECISE_HINT, '정확한 위치 사용도 켜기');
   assert.deepEqual(alwaysAllowSteps(), [
     '「항상 허용」 고르기',
@@ -48,7 +48,7 @@ test('native overlay uses the same banner and does not grant background location
   const overlay = readFileSync(new URL('../../android/app/src/main/java/kr/co/umap/tracker/AlwaysAllowOverlay.java', import.meta.url), 'utf8');
   const manifest = readFileSync(new URL('../../android/app/src/main/AndroidManifest.xml', import.meta.url), 'utf8');
   const plugin = readFileSync(new URL('../../android/app/src/main/java/kr/co/umap/tracker/UmapLocationPlugin.java', import.meta.url), 'utf8');
-  assert.match(overlay, /Umap 항상 허용으로 설정/);
+  assert.match(overlay, /Kinnex 항상 허용으로 설정/);
   assert.match(overlay, /정확한 위치 사용도 켜기/);
   assert.match(overlay, /TYPE_APPLICATION_OVERLAY/);
   assert.match(overlay, /canDrawOverlays/);

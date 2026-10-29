@@ -5,6 +5,8 @@ import {
   HISTORY_DAYS,
   buildDayRecord,
   classifyMode,
+  classifyJourneyMode,
+  journeyPathDistance,
   estimateSteps,
   formatDurationMs,
   formatJourneyDistance,
@@ -584,7 +586,8 @@ test('fix age says when the pin last updated', () => {
 
 test('mode thresholds and step estimate', () => {
   assert.equal(classifyMode(4, 800, 12 * 60 * 1000), 'walk');
-  assert.equal(classifyMode(15, 3_000, 12 * 60 * 1000), 'bike');
+  assert.equal(classifyMode(10, 2_000, 12 * 60 * 1000), 'bike');
+  assert.equal(classifyMode(15, 3_000, 12 * 60 * 1000), 'vehicle');
   assert.equal(classifyMode(60, 10_000, 10 * 60 * 1000), 'vehicle');
   assert.equal(classifyMode(360, 30_000, 5 * 60 * 1000), 'plane');
   assert.equal(classifyMode(360, 500, 5_000), 'vehicle');
@@ -1230,4 +1233,133 @@ test('the clipped card replaces the longer card stored for the same walk', () =>
   const kept = trimJourneyList([legacy, clipped], now);
   assert.equal(kept.length, 1);
   assert.equal(kept[0].startedAt, clipped.startedAt);
+});
+
+test('a short stop at the destination does not replace the commute', () => {
+  const start = Date.UTC(2026, 9, 28, 4, 28, 0);
+  const end = start + 32 * 60_000;
+  const origin = { lat: 37.6542, lng: 127.0624, at: start };
+  const dest = offset(origin, 4000, 7000, end);
+  const commute = {
+    id: 'commute',
+    startedAt: start,
+    endedAt: end,
+    distanceM: 9500,
+    points: [
+      { lat: origin.lat, lng: origin.lng, at: start },
+      offset(origin, 2000, 3500, start + 16 * 60_000),
+      { lat: dest.lat, lng: dest.lng, at: end },
+    ],
+    start: { lat: origin.lat, lng: origin.lng, label: '노원구 상계6·7동' },
+    end: { lat: dest.lat, lng: dest.lng, label: '구리시 인창동' },
+  };
+  const yardStart = end - 90_000;
+  const yardEnd = end + 2 * 60_000;
+  const yard = {
+    id: 'yard',
+    startedAt: yardStart,
+    endedAt: yardEnd,
+    distanceM: 160,
+    points: [
+      { lat: dest.lat, lng: dest.lng, at: yardStart },
+      offset(dest, 40, 20, yardStart + 60_000),
+      offset(dest, 20, 40, yardEnd),
+    ],
+    start: { lat: dest.lat, lng: dest.lng, label: null },
+    end: { ...offset(dest, 20, 40, yardEnd), label: null },
+  };
+  const merged = mergeJourneyLists([commute], [yard]);
+  assert.equal(merged.length, 2);
+  assert.ok(merged.some((item) => item.distanceM === 9500 && item.startedAt === start));
+  const kept = trimJourneyList([commute, yard], yardEnd + 60_000);
+  assert.equal(kept.length, 2);
+  assert.ok(kept.some((item) => item.distanceM === 9500));
+});
+
+test('playback interpolates a segment midpoint and stays on an L-shaped corner', () => {
+  const t = Date.UTC(2026, 9, 28, 3, 0, 0);
+  const origin = { lat: 37.55, lng: 127.07, at: t, accuracyM: 8, speedMps: 8, staying: false };
+  const end = { ...offset(origin, 0, 100, t + 10_000), accuracyM: 8, speedMps: 8, staying: false };
+  const mid = playbackAnchor([origin, end], 0.5);
+  assert.ok(Math.abs(mid.lng - (origin.lng + end.lng) / 2) < 0.00002);
+  assert.ok(Math.abs(mid.lat - origin.lat) < 0.00002);
+  assert.ok(Math.abs(mid.at - (t + 5_000)) < 80);
+
+  const corner = { ...offset(origin, 0, 120, t + 10_000), accuracyM: 8, speedMps: 8, staying: false };
+  const north = { ...offset(corner, 120, 0, t + 20_000), accuracyM: 8, speedMps: 8, staying: false };
+  const bend = playbackAnchor([origin, corner, north], 0.5);
+  assert.ok(Math.abs(bend.lat - corner.lat) < 0.00003, `lat ${bend.lat} vs ${corner.lat}`);
+  assert.ok(Math.abs(bend.lng - corner.lng) < 0.00003, `lng ${bend.lng} vs ${corner.lng}`);
+  const chordLat = (origin.lat + north.lat) / 2;
+  const chordLng = (origin.lng + north.lng) / 2;
+  assert.ok(Math.abs(bend.lat - chordLat) + Math.abs(bend.lng - chordLng) > 0.0003);
+});
+
+test('a 32 minute drive counts dashed gaps and is a vehicle, not a 3.2 km walk', () => {
+  const start = Date.UTC(2026, 9, 28, 4, 28, 0);
+  const origin = { lat: 37.6542, lng: 127.0624, at: start, accuracyM: 12, speedMps: 8.9, staying: false };
+  const points = [{ ...origin }];
+  let north = 0;
+  let east = 0;
+  let at = start;
+  const push = (dn, de, dt, speed) => {
+    north += dn;
+    east += de;
+    at += dt;
+    points.push({
+      ...offset(origin, north, east, at),
+      accuracyM: 12,
+      speedMps: speed,
+      staying: false,
+    });
+  };
+  const solid = (steps) => {
+    for (let index = 0; index < steps; index += 1) push(6, 16, 2_000, 8.9);
+  };
+  solid(40);
+  push(1100, 2200, 8 * 60 * 1000, 9.2);
+  solid(40);
+  push(1100, 2200, 8 * 60 * 1000, 9.2);
+  solid(40);
+  push(900, 1800, 12 * 60 * 1000, 8.5);
+  solid(20);
+  const duration = points[points.length - 1].at - points[0].at;
+  assert.ok(duration >= 31 * 60 * 1000 && duration <= 34 * 60 * 1000, `duration ${Math.round(duration / 1000)}s`);
+  let solidOnly = 0;
+  for (let index = 1; index < points.length; index += 1) {
+    if (!trailSegmentDashed(points[index - 1], points[index])) solidOnly += journeyPathDistance([points[index - 1], points[index]]);
+  }
+  const measured = journeyPathDistance(points);
+  assert.ok(solidOnly > 2_000 && solidOnly < 4_000, `solid ${Math.round(solidOnly)}`);
+  assert.ok(measured >= 9_000 && measured <= 11_000, `distance ${Math.round(measured)}`);
+  assert.ok(Math.abs(measured - 3_200) > 2_000);
+  assert.equal(classifyJourneyMode(points, measured, duration), 'vehicle');
+});
+
+test('one short GPS spike does not turn a walk into a vehicle', () => {
+  const t = Date.UTC(2026, 9, 28, 6, 0, 0);
+  const origin = { lat: 37.55, lng: 127.07, at: t, accuracyM: 10, speedMps: 1.4, staying: false };
+  const walk = [];
+  for (let index = 0; index <= 40; index += 1) {
+    walk.push({
+      ...offset(origin, 0, index * 4, t + index * 3_000),
+      accuracyM: 10,
+      speedMps: 1.4,
+      staying: false,
+    });
+  }
+  const last = walk[walk.length - 1];
+  const spike = { ...offset(last, 0, 80, last.at + 2_000), accuracyM: 10, speedMps: 40, staying: false };
+  const back = { ...offset(spike, 0, 4, spike.at + 3_000), accuracyM: 10, speedMps: 1.4, staying: false };
+  const points = [...walk, spike, back];
+  const distance = journeyPathDistance(points);
+  assert.equal(classifyJourneyMode(points, distance, back.at - walk[0].at), 'walk');
+});
+
+test('a stay-to-stay hole adds nothing to the trip distance', () => {
+  const start = Date.UTC(2026, 9, 28, 0, 20, 0);
+  const end = start + 89 * 60 * 1000;
+  const origin = { lat: 37.6365, lng: 127.0678, at: start, accuracyM: 16, speedMps: 0, staying: true };
+  const hole = [origin, { ...offset(origin, 0, 140, end), accuracyM: 16, speedMps: 0, staying: true }];
+  assert.ok(journeyPathDistance(hole) < 20);
 });

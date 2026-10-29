@@ -67,7 +67,7 @@ function Splash({ onDone }: { onDone: () => void }) {
     <button type="button" onClick={onDone} className="flex h-full flex-col items-center justify-center gap-4 px-8 text-center">
       <img src={iconSrc} alt="" className="h-28 w-28 rounded-[28px] shadow-lg" />
       <div>
-        <p className="text-3xl font-black tracking-tight">Umap</p>
+        <p className="text-3xl font-black tracking-tight">Kinnex</p>
         <p className="mt-2 text-sm leading-6 text-slate-600">동의한 가족의 위치를 함께 봅니다.</p>
       </div>
       <p className="text-xs text-slate-400">화면을 누르면 바로 시작합니다.</p>
@@ -203,7 +203,7 @@ const TERM_COPY: { id: string; title: string; required: boolean; body: string }[
     id: 'terms',
     title: '이용약관 동의',
     required: true,
-    body: 'Umap은 초대한 가족의 위치를 나누는 앱입니다. 동의하지 않은 사람을 찾거나, 주변 소리와 메시지를 읽지 않습니다.',
+    body: 'Kinnex은 초대한 가족의 위치를 나누는 앱입니다. 동의하지 않은 사람을 찾거나, 주변 소리와 메시지를 읽지 않습니다.',
   },
   {
     id: 'location',
@@ -221,7 +221,7 @@ const TERM_COPY: { id: string; title: string; required: boolean; body: string }[
     id: 'guardian',
     title: '만 14세 미만 법정대리인 정보 수집 동의',
     required: true,
-    body: '아이의 위치를 보려면 보호자가 초대하고, 아이 기기도 Umap에서 위치 공유에 동의해야 합니다.',
+    body: '아이의 위치를 보려면 보호자가 초대하고, 아이 기기도 Kinnex에서 위치 공유에 동의해야 합니다.',
   },
   {
     id: 'marketing',
@@ -348,7 +348,7 @@ function Permissions({
           <h1 className="mt-4 text-[26px] font-black leading-snug">가족 위치 공유를 시작할까요?</h1>
           <p className="mt-2 text-sm leading-6 text-slate-500">쓰는 권한만 차례로 묻습니다. 마이크, 문자, 주변 소리는 요청하지 않습니다.</p>
           <div className="mt-5 space-y-3 rounded-3xl bg-white p-4 shadow-sm">
-            <Row icon={<Bell className="h-5 w-5" />} title="알림" body="SOS와 집 반경 알림에 씁니다. 위치 공유 중에는 알림 목록에 Umap 카드가 나오지 않습니다." />
+            <Row icon={<Bell className="h-5 w-5" />} title="알림" body="SOS와 집 반경 알림에 씁니다. 위치 공유 중에는 알림 목록에 Kinnex 카드가 나오지 않습니다." />
             <Row icon={<MapPin className="h-5 w-5" />} title="위치" body="정확한 위치 또는 대략적인 위치를 고릅니다. 항상 허용은 설정 화면에서 직접 바꿉니다." />
             <Row icon={<Footprints className="h-5 w-5" />} title="움직임" body="안드로이드에서는 신체 활동 권한 창을 엽니다. 선택입니다." />
             <Row icon={<BatteryCharging className="h-5 w-5" />} title="배터리" body="항상 허용을 고르면 배터리 제한 없음 창을 엽니다. 스위치는 직접 고릅니다." />
@@ -365,7 +365,7 @@ function Permissions({
         <Dialog
           icon={<Bell className="h-7 w-7 text-[#0084FF]" />}
           title="알림을 허용할까요?"
-          body="알림 권한은 SOS, 집 반경, 새 대화에 씁니다. 허용을 누르면 알림 창이 열립니다. 위치 공유 중에는 알림 목록에 Umap 카드가 나오지 않습니다. 앱이 혼자 위치를 백그라운드로 올리지 않습니다. 전화번호는 쓰지 않습니다."
+          body="알림 권한은 SOS, 집 반경, 새 대화에 씁니다. 허용을 누르면 알림 창이 열립니다. 위치 공유 중에는 알림 목록에 Kinnex 카드가 나오지 않습니다. 앱이 혼자 위치를 백그라운드로 올리지 않습니다. 전화번호는 쓰지 않습니다."
           note={note}
           busy={busy}
           primary="알림 허용"
@@ -392,7 +392,7 @@ function Permissions({
           <div className="mt-2 flex justify-center text-[#0084FF]">
             <MapPin className="h-8 w-8" />
           </div>
-          <h1 className="mt-3 text-center text-xl font-black leading-snug">Umap이 이 기기의 위치에 접근하도록 허용하시겠습니까?</h1>
+          <h1 className="mt-3 text-center text-xl font-black leading-snug">Kinnex이 이 기기의 위치에 접근하도록 허용하시겠습니까?</h1>
           <div className="mt-4 grid grid-cols-2 gap-3">
             <AccuracyCard
               selected={draft.accuracy === 'precise'}
@@ -412,7 +412,7 @@ function Permissions({
           </p>
           <p className="mt-2 text-center text-xs leading-5 text-slate-500">
             {draft.notifications === 'granted'
-              ? '알림을 허용했습니다. 항상 허용을 고른 뒤 지도에서 위치 유지를 켭니다. 알림 목록에 Umap 카드는 나오지 않습니다.'
+              ? '알림을 허용했습니다. 항상 허용을 고른 뒤 지도에서 위치 유지를 켭니다. 알림 목록에 Kinnex 카드는 나오지 않습니다.'
               : draft.notifications === 'denied'
                 ? '알림을 허용하지 않았습니다. 위치 유지는 항상 허용 뒤에 켤 수 있습니다. SOS와 새 대화 알림은 알림 권한이 필요합니다.'
                 : '이 브라우저에는 알림 창이 없습니다.'}

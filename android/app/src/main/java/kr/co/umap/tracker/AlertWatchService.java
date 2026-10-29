@@ -212,11 +212,11 @@ public class AlertWatchService {
         if (Build.VERSION.SDK_INT < 26) return;
         NotificationManager manager = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
         if (manager == null) return;
-        NotificationChannel alert = new NotificationChannel(ALERT_CHANNEL, "가족 알림", NotificationManager.IMPORTANCE_HIGH);
+        NotificationChannel alert = new NotificationChannel(ALERT_CHANNEL, "Kinnex 알림", NotificationManager.IMPORTANCE_HIGH);
         alert.setDescription("SOS, 집 반경, 움직임 시작과 멈춤을 알려 줍니다.");
         alert.enableVibration(true);
         manager.createNotificationChannel(alert);
-        NotificationChannel chat = new NotificationChannel(CHAT_CHANNEL, "가족 대화", NotificationManager.IMPORTANCE_HIGH);
+        NotificationChannel chat = new NotificationChannel(CHAT_CHANNEL, "Kinnex 대화", NotificationManager.IMPORTANCE_HIGH);
         chat.setDescription("새 대화가 오면 보낸 사람과 짧은 내용을 알려 줍니다.");
         chat.enableVibration(true);
         manager.createNotificationChannel(chat);

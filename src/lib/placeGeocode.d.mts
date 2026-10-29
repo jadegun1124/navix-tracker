@@ -1,5 +1,16 @@
 export function shortenAddress(text: unknown): string;
 
+export function formatPrecisePlace(parts?: {
+  dong?: string;
+  building?: string;
+  unit?: string | number;
+  poi?: string;
+}): string;
+
+export function presentPlace(text: unknown): string;
+
+export function placeGridKey(lat: number, lng: number): string;
+
 export function nominatimAddress(body: unknown): string;
 
 export function vworldAddress(body: unknown): string;

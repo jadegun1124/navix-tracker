@@ -1,12 +1,12 @@
 {
-  "name": "Umap",
-  "short_name": "Umap",
+  "name": "Kinnex",
+  "short_name": "Kinnex",
   "start_url": "./",
   "display": "standalone",
-  "background_color": "#0084FF",
-  "theme_color": "#0084FF",
+  "background_color": "#0B1E38",
+  "theme_color": "#0B1E38",
   "orientation": "portrait",
-  "description": "동의한 가족의 위치를 함께 보는 Umap",
+  "description": "동의한 가족의 위치를 함께 보는 Kinnex",
   "icons": [
     {
       "src": "umap-icon-192.png",

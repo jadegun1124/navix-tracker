@@ -2,13 +2,13 @@ import { useEffect, useRef, useState } from 'react';
 import { hasLocation, haversineMeters } from '../../lib/geo';
 import { isSelfEchoPlace } from '../../lib/peerFamily.mjs';
 import { placePriorName } from '../../lib/placeAlias.mjs';
-import { buildDayRecord } from '../../lib/tracking.mjs';
+import { buildDayRecord, liveMotionLabel } from '../../lib/tracking.mjs';
 import type { AcceptedFix } from '../../lib/tracking.mjs';
 import { readSharedPlaces, publishSharedPlace, subscribeSharedPlaces, type SharedPlace } from '../../services/familyShare';
-import { familyEndpointAvailable, familySyncUrl, publishProfileRemote, splitSyncToken, startManagedFamilySync, syncTokenFor } from '../../services/familySync';
+import { familyEndpointAvailable, familySyncUrl, publishProfileRemote, publishTrailRemote, splitSyncToken, startManagedFamilySync, syncTokenFor } from '../../services/familySync';
 import { startLocationWatch } from '../../services/locationWatch';
 import { cleanPlace } from '../../lib/memberPlace.mjs';
-import { cachedAddress, reverseGeocodeCached, shortenAddress } from '../../services/placeGeocode';
+import { cachedAddress, placeGridKey, presentPlace, reverseGeocodeCached } from '../../services/placeGeocode';
 import { openAlwaysLocation, readNativeBattery, umapLocation, umapLocationNative, type KeepAliveTarget } from '../../services/umapLocation';
 import { useFamily } from './session';
 
@@ -381,10 +381,11 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
         if (!stopped && splitSyncToken(token)) links.push({ code: current.inviteCode, token });
       }
       if (stopped || links.length === 0) return;
-      stop = startManagedFamilySync(links, (code, places, profiles) => {
+      stop = startManagedFamilySync(links, (code, places, profiles, trails) => {
         remoteRooms.current[code] = places;
         familyRef.current.setRoomFamilyPlaces(code, places, profiles);
         familyRef.current.applySharedProfiles(code, profiles);
+        if (trails.length > 0) familyRef.current.applyCanonicalTrails(trails);
       });
     })();
     return () => {
@@ -392,6 +393,63 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
       stop();
     };
   }, [familyLinkKey]);
+
+  const trailSentRef = useRef(0);
+  const trailJourneyRef = useRef(state.journeys?.self?.length ?? 0);
+  const trailKey = `${state.tracks.self?.length ?? 0}:${state.tracks.self?.at(-1)?.at ?? 0}:${state.journeys?.self?.length ?? 0}:${state.journeys?.self?.[0]?.endedAt ?? 0}:${state.shareSelfWithFamily}`;
+  useEffect(() => {
+    const current = familyRef.current.state;
+    const memberId = current.profile?.profileKey ? current.profile.id : '';
+    const profileKey = current.profile?.profileKey || '';
+    if (!memberId || !profileKey) return;
+    const points = (current.tracks.self || []).slice(-800).map((point) => ({
+      lat: Number(point.lat.toFixed(6)),
+      lng: Number(point.lng.toFixed(6)),
+      at: point.at,
+      ...(typeof point.speedMps === 'number' ? { speedMps: Number(point.speedMps.toFixed(2)) } : {}),
+      ...(typeof point.accuracyM === 'number' ? { accuracyM: Math.round(point.accuracyM) } : {}),
+      ...(point.staying === true ? { staying: true } : {}),
+      ...(point.stayEnd === true ? { stayEnd: true } : {}),
+    }));
+    const journeys = (current.journeys?.self || []).slice(0, 16).map((journey) => ({
+      id: journey.id,
+      startedAt: journey.startedAt,
+      endedAt: journey.endedAt,
+      distanceM: journey.distanceM,
+      points: journey.points.slice(0, 240),
+      start: journey.start,
+      end: journey.end,
+    }));
+    const moving = liveMotionLabel({
+      located: true,
+      moving: current.members.find((member) => member.id === 'self')?.moving ?? null,
+      points: current.tracks.self,
+      now: Date.now(),
+    }) !== '머무름';
+    const body = { memberId, at: Date.now(), moving, points, journeys };
+    let cancel = false;
+    const fire = async () => {
+      if (cancel) return;
+      trailSentRef.current = Date.now();
+      for (const link of current.guardians) {
+        if (link.share !== 'allowed' || !link.syncToken) continue;
+        publishTrailRemote(link.code, link.syncToken, body, profileKey);
+      }
+      if (!current.shareSelfWithFamily || !current.syncWriteKey || !current.syncReadKey) return;
+      const token = await syncTokenFor(current.syncWriteKey, current.syncReadKey);
+      if (cancel || !splitSyncToken(token)) return;
+      publishTrailRemote(current.inviteCode, token, body, profileKey);
+    };
+    const journeyCount = current.journeys?.self?.length ?? 0;
+    const journeyChanged = trailJourneyRef.current !== journeyCount;
+    trailJourneyRef.current = journeyCount;
+    const wait = journeyChanged ? 0 : Math.max(0, 10_000 - (Date.now() - trailSentRef.current));
+    const timer = window.setTimeout(() => void fire(), wait);
+    return () => {
+      cancel = true;
+      window.clearTimeout(timer);
+    };
+  }, [trailKey]);
 
   useEffect(() => {
     const joined = new Set(state.guardians.map((link) => link.code));
@@ -487,7 +545,7 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
   const placeKeys = useRef<Record<string, string>>({});
   const memberPlaceKey = state.members
     .filter((member) => hasLocation(member))
-    .map((member) => `${member.id}:${member.lat?.toFixed(3)},${member.lng?.toFixed(3)}:${member.place ?? ''}`)
+    .map((member) => `${member.id}:${member.lat == null || member.lng == null ? '' : placeGridKey(member.lat, member.lng)}:${member.place ?? ''}`)
     .join('|');
   useEffect(() => {
     if (state.stage !== 'map') return;
@@ -495,7 +553,7 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
     const home = current.home;
     const queue = current.members.filter((member) => {
       if (!hasLocation(member) || member.role === 'guardian' || member.lat == null || member.lng == null) return false;
-      const key = `${member.lat.toFixed(3)},${member.lng.toFixed(3)}`;
+      const key = placeGridKey(member.lat, member.lng);
       return !(placeKeys.current[member.id] === key && cleanPlace(member.place));
     });
     if (!queue.length) return;
@@ -508,7 +566,7 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
       if (!pending || pending.lat == null || pending.lng == null) {
         const stillOpen = queue.some((member) => {
           if (member.lat == null || member.lng == null) return false;
-          const bucket = `${member.lat.toFixed(3)},${member.lng.toFixed(3)}`;
+          const bucket = placeGridKey(member.lat, member.lng);
           return !(placeKeys.current[member.id] === bucket && cleanPlace(member.place));
         });
         if (stillOpen) timer = window.setTimeout(() => {
@@ -517,7 +575,7 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
         }, 60_000);
         return;
       }
-      const key = `${pending.lat.toFixed(3)},${pending.lng.toFixed(3)}`;
+      const key = placeGridKey(pending.lat, pending.lng);
       const id = pending.id;
       if (home && id === 'self' && haversineMeters({ lat: pending.lat, lng: pending.lng }, home) <= home.radiusM) {
         placeKeys.current[id] = key;
@@ -528,7 +586,7 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
       }
       const apply = (label: string | null) => {
         if (cancel) return;
-        const short = label ? shortenAddress(label) : '';
+        const short = label ? presentPlace(label) : '';
         if (!short) {
           step();
           return;

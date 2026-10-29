@@ -29,7 +29,7 @@ export async function askNotifications(): Promise<{ state: PromptState; note: st
   if (notificationAction(umapLocationNative()) === 'post-notifications') {
     const result = await requestNotificationPermission();
     if (result.state === 'granted') return { state: 'granted', note: null };
-    if (result.openedSettings) return { state: 'denied', note: '알림 창을 다시 띄울 수 없어 앱 알림 설정을 열었습니다. Umap 알림을 켜 주세요.' };
+    if (result.openedSettings) return { state: 'denied', note: '알림 창을 다시 띄울 수 없어 앱 알림 설정을 열었습니다. Kinnex 알림을 켜 주세요.' };
     if (result.state === 'denied') return { state: 'denied', note: null };
     return { state: 'denied', note: '알림 허용 창을 열지 못했습니다.' };
   }
@@ -62,7 +62,7 @@ export async function askAlwaysLocation(precise: boolean, options?: { overlay?: 
     const overlay = result.overlay === true;
     if (!result.opened) {
       if (location === 'always') return { location: 'always', note: '위치 권한이 항상 허용입니다.', overlay };
-      return { location: 'unavailable', note: '설정 화면을 열지 못했습니다. 설정 > 앱 > Umap > 권한에서 위치를 누른 뒤 항상 허용을 고르세요.', overlay };
+      return { location: 'unavailable', note: '설정 화면을 열지 못했습니다. 설정 > 앱 > Kinnex > 권한에서 위치를 누른 뒤 항상 허용을 고르세요.', overlay };
     }
     if (result.screen === 'app-permissions') {
       return { location, note: '앱 권한 목록을 열었습니다. 위치를 누른 뒤 항상 허용을 직접 고르세요.', overlay };
