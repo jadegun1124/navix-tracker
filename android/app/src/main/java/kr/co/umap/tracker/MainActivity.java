@@ -54,6 +54,16 @@ public class MainActivity extends BridgeActivity {
     public void onResume() {
         super.onResume();
         resumed = true;
+        captureNaverIntent(getIntent());
+    }
+
+    @Override
+    @SuppressWarnings("deprecation")
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != UmapAuthPlugin.NAVER_TAB_REQUEST) return;
+        captureNaverIntent(getIntent());
+        UmapAuthPlugin.onNaverTabClosed();
     }
 
     @Override

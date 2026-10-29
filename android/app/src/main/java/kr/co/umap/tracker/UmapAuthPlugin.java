@@ -1,6 +1,7 @@
 package kr.co.umap.tracker;
 
 import android.app.Activity;
+import android.content.Intent;
 import android.net.Uri;
 import androidx.browser.customtabs.CustomTabsIntent;
 import androidx.core.content.ContextCompat;
@@ -28,6 +29,7 @@ import kotlin.Unit;
 
 @CapacitorPlugin(name = "UmapAuth")
 public class UmapAuthPlugin extends Plugin {
+    static final int NAVER_TAB_REQUEST = 7101;
     private static volatile UmapAuthPlugin instance;
     private PluginCall pendingNaver;
     private String pendingNaverState = "";
@@ -157,7 +159,9 @@ public class UmapAuthPlugin extends Plugin {
             .appendQueryParameter("state", state)
             .build();
         CustomTabsIntent tabs = new CustomTabsIntent.Builder().build();
-        tabs.launchUrl(activity, uri);
+        Intent intent = tabs.intent;
+        intent.setData(uri);
+        activity.startActivityForResult(intent, NAVER_TAB_REQUEST);
     }
 
     public static void completeNaverRedirect(Uri data) {
@@ -171,12 +175,11 @@ public class UmapAuthPlugin extends Plugin {
         activity.runOnUiThread(() -> plugin.finishNaver(data));
     }
 
-    @Override
-    protected void handleOnResume() {
-        super.handleOnResume();
-        if (pendingNaver == null) return;
-        naverCancel.removeCallbacksAndMessages(null);
-        naverCancel.postDelayed(this::cancelNaverIfStillPending, 400);
+    public static void onNaverTabClosed() {
+        UmapAuthPlugin plugin = instance;
+        if (plugin == null || plugin.pendingNaver == null) return;
+        plugin.naverCancel.removeCallbacksAndMessages(null);
+        plugin.naverCancel.postDelayed(plugin::cancelNaverIfStillPending, 800);
     }
 
     private void cancelNaverIfStillPending() {
