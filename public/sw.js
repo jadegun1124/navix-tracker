@@ -70,8 +70,9 @@ self.addEventListener('push', (event) => {
       await Promise.all(windows.map((client) => client.postMessage({ type: 'umap-alert', alert })));
       return;
     }
+    const shadeBody = body && body !== title ? body : '';
     await self.registration.showNotification(title, {
-      body,
+      body: shadeBody,
       tag: typeof payload.id === 'string' ? payload.id : 'umap-alert',
       renotify: true,
       data: alert,

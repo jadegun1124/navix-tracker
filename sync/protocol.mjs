@@ -242,17 +242,36 @@ function cleanProfileInput(input, now) {
   };
 }
 
+function cleanMotionTargets(input, from) {
+  if (!Array.isArray(input) || input.length < 1 || input.length > 8) return null;
+  const names = [];
+  for (const item of input) {
+    const name = cleanChatName(item);
+    if (!name || names.includes(name)) return null;
+    if (name === from) continue;
+    names.push(name);
+  }
+  return names.length ? names : null;
+}
+
 function cleanAlert(input, code, now) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return { error: json({ error: 'alert' }, 400) };
   if (typeof input.id !== 'string' || !ALERT_ID.test(input.id)) return { error: json({ error: 'alert' }, 400) };
-  if (input.kind !== 'sos' && input.kind !== 'leave') return { error: json({ error: 'alert' }, 400) };
+  if (input.kind !== 'sos' && input.kind !== 'leave' && input.kind !== 'motion') return { error: json({ error: 'alert' }, 400) };
   if (input.code !== code) return { error: json({ error: 'code' }, 400) };
   if (typeof input.from !== 'string' || typeof input.body !== 'string') return { error: json({ error: 'alert' }, 400) };
   const from = input.from.trim().slice(0, 80);
   const body = input.body.trim().slice(0, 200);
   if (!from || !body) return { error: json({ error: 'alert' }, 400) };
   if (!cleanStamp(input.at, now)) return { error: json({ error: 'at' }, 400) };
-  return { alert: { id: input.id, kind: input.kind, code, from, body, at: input.at } };
+  if (input.kind !== 'motion' && input.to != null) return { error: json({ error: 'alert' }, 400) };
+  const alert = { id: input.id, kind: input.kind, code, from, body, at: input.at };
+  if (input.kind === 'motion') {
+    const to = cleanMotionTargets(input.to, from);
+    if (!to) return { error: json({ error: 'alert' }, 400) };
+    alert.to = to;
+  }
+  return { alert };
 }
 
 function legacyStorageKey(place, name) {
@@ -549,7 +568,10 @@ export function pushesForChat(room, message) {
 
 export function pushesForAlert(room, alert) {
   const from = alert && typeof alert.from === 'string' ? alert.from : '';
-  return roomPushes(room).filter((item) => item && item.endpoint && (!item.name || item.name !== from));
+  const pushes = roomPushes(room).filter((item) => item && item.endpoint && (!item.name || item.name !== from));
+  if (!alert || alert.kind !== 'motion') return pushes;
+  const names = new Set(Array.isArray(alert.to) ? alert.to : []);
+  return pushes.filter((item) => item.name && names.has(item.name));
 }
 
 export function chatPushPayload(message, code) {
@@ -730,6 +752,19 @@ export async function parseOperation(request) {
 }
 
 export function alertPushPayload(alert) {
+  if (alert && alert.kind === 'motion') {
+    const text = typeof alert.body === 'string' ? alert.body : '';
+    return {
+      id: alert.id,
+      kind: 'motion',
+      code: alert.code,
+      from: alert.from,
+      to: Array.isArray(alert.to) ? alert.to : [],
+      title: text,
+      body: text,
+      at: alert.at,
+    };
+  }
   return {
     id: alert.id,
     kind: alert.kind,

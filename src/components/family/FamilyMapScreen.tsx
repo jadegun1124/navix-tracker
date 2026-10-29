@@ -6,13 +6,14 @@ import { buildInviteLink, formatClock, hasLocation, haversineMeters, shouldAlert
 import { ALWAYS_GUIDE_DISMISSED_KEY, CHAT_NOTIFY_ASKED_KEY, KEEP_PERMISSION_ASKED_KEY, KEEP_START_ASKED_KEY, keepEntryPrompt, markSessionFlag, readSessionFlag } from '../../lib/systemSettings.mjs';
 import { familyMapShowsTrail, recordsDayTrails } from '../../lib/mapTrail.mjs';
 import { shouldDeleteCreatedRoom } from '../../lib/familyRoom.mjs';
-import { collapseDuplicateJourneys, displayCoordinate, historyDayKeys, historyDayLabel, liveMotionLabel, liveTrailDrawable, liveTrailPoints, MOTION_STILL_HOLD_MS, previewOpenJourney, seoulDayEndMs, seoulDayKey, visibleTrail } from '../../lib/tracking.mjs';
+import { motionAlertCopy, motionNotifyNames, nextMotionAlert } from '../../lib/motionAlert.mjs';
+import { collapseDuplicateJourneys, displayCoordinate, historyDayKeys, historyDayLabel, lastTravelAt, liveMotionLabel, liveTrailDrawable, liveTrailPoints, MOTION_STILL_HOLD_MS, previewOpenJourney, seoulDayEndMs, seoulDayKey, visibleTrail } from '../../lib/tracking.mjs';
 import { ackFamilyAlert, isFamilyAlertAcked, publishFamilyAlert, readFamilyAlert, subscribeFamilyAlerts, type FamilyAlert } from '../../services/familyAlert';
 import { readSharedPlaces, subscribeSharedPlaces } from '../../services/familyShare';
 import { abandonFamilySync, currentSyncPhase, deleteFamilyRoomRemote, familySyncConfigured, familySyncUrl, fetchMyDirectThreads, registerRoomPush, revokeFamilyPlace, splitSyncToken, startAdminRemoteSync, startSyncMonitor, subscribeSyncPhase, syncTokenFor, type SyncPhase } from '../../services/familySync';
 import { consumePendingChat, listenChatOpen, overlayPermissionGranted, umapLocation, umapLocationNative } from '../../services/umapLocation';
 import { sounds } from '../../utils/audio';
-import { DEFAULT_CENTER, type GuardianLink, type HomeZone, type Member } from '../../types/family';
+import { DEFAULT_CENTER, type GuardianLink, type HomeZone, type Member, type Session } from '../../types/family';
 import { AlwaysAllowGuide, AlwaysAllowMapHint } from './AlwaysAllowGuide';
 import { AlwaysAllowSetup } from './AlwaysAllowSetup';
 import { memberPlaceLabel } from '../../lib/memberPlace.mjs';
@@ -74,6 +75,9 @@ export function FamilyMapScreen() {
   const [playing, setPlaying] = useState(false);
   const [dm, setDm] = useState<DirectChatTarget | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [motionOpen, setMotionOpen] = useState(false);
+  const [motionShade, setMotionShade] = useState<string | null>(null);
+  const motionSentRef = useRef<string | null>(null);
   const [alwaysGuide, setAlwaysGuide] = useState(false);
   const [alwaysSetup, setAlwaysSetup] = useState(false);
   const [guideBusy, setGuideBusy] = useState(false);
@@ -140,6 +144,28 @@ export function FamilyMapScreen() {
   }, [state.permissions.motion]);
 
   useEffect(() => {
+    const points = state.tracks.self;
+    const phase = state.motionAlertPhase || 'unknown';
+    const decided = nextMotionAlert({ points, now, phase });
+    if (decided.phase !== phase) familyRef.current.setMotionAlertPhase(decided.phase);
+    if (!decided.event) return;
+    const current = familyRef.current.state;
+    const targets = motionNotifyNames(current.members, current.motionNotifyIds);
+    if (targets.length === 0) return;
+    const stamp = `${decided.event}:${lastTravelAt(points) ?? 0}`;
+    if (motionSentRef.current === stamp) return;
+    motionSentRef.current = stamp;
+    const from = current.profile?.name || '가족';
+    void deliverMotionAlert(current, from, motionAlertCopy(from, decided.event), targets);
+  }, [now, state.motionAlertPhase, state.motionNotifyIds, state.tracks.self]);
+
+  useEffect(() => {
+    if (!motionShade) return;
+    const timer = window.setTimeout(() => setMotionShade(null), 6000);
+    return () => window.clearTimeout(timer);
+  }, [motionShade]);
+
+  useEffect(() => {
     if (!state.home) return;
     for (const member of state.members) {
       if (!hasLocation(member)) continue;
@@ -190,8 +216,28 @@ export function FamilyMapScreen() {
     if (!watchFamilyRoom) return;
     const seen = new Set<string>();
     const handle = (alert: FamilyAlert) => {
-      if (alert.code !== state.inviteCode || seen.has(alert.id) || isFamilyAlertAcked(alert.id)) return;
+      if (seen.has(alert.id) || isFamilyAlertAcked(alert.id)) return;
       if (Date.now() - alert.at > 3 * 60 * 1000) return;
+      const current = familyRef.current.state;
+      if (alert.kind === 'motion') {
+        const codes = new Set([current.inviteCode, ...current.guardians.map((link) => link.code)]);
+        if (!codes.has(alert.code)) return;
+        const me = myChatName(current, alert.code);
+        if (!me || chatName(alert.from) === me) return;
+        if (!Array.isArray(alert.to) || !alert.to.includes(me)) return;
+        seen.add(alert.id);
+        setMotionShade(alert.body);
+        familyRef.current.pushNotice(alert.body, '움직임');
+        if (notifyOk && 'Notification' in window && Notification.permission === 'granted') {
+          try {
+            new Notification(alert.body);
+          } catch {
+            /* 알림 표시만 거절된 경우 */
+          }
+        }
+        return;
+      }
+      if (alert.code !== current.inviteCode) return;
       seen.add(alert.id);
       setIncoming(alert);
       sounds.startSiren();
@@ -695,6 +741,10 @@ export function FamilyMapScreen() {
       setAdminSettings(false);
       return true;
     }
+    if (motionOpen) {
+      setMotionOpen(false);
+      return true;
+    }
     if (menuOpen) {
       setMenuOpen(false);
       return true;
@@ -714,7 +764,7 @@ export function FamilyMapScreen() {
       return true;
     }
     return false;
-  }), [adminSettings, alertsOpen, alwaysGuide, alwaysSetup, confirm, dayPicker, detailId, dm, keepPrompt, managedSettings, menuOpen, placingHome, profileOpen, recordId, sheet]);
+  }), [adminSettings, alertsOpen, alwaysGuide, alwaysSetup, confirm, dayPicker, detailId, dm, keepPrompt, managedSettings, menuOpen, motionOpen, placingHome, profileOpen, recordId, sheet]);
   const people = rosterMembers(state.members, state.profile?.id, state.inviteCode, state.profile?.name);
   const extraChats = guardianThreads(state).filter((thread) => chatTick >= 0 || thread.peer);
 
@@ -829,6 +879,11 @@ export function FamilyMapScreen() {
           >
             {sirenOn ? '사이렌 끄기' : 'SOS'}
           </button>
+          {motionShade && (
+            <div role="status" className="absolute inset-x-3 top-16 z-40 rounded-2xl bg-slate-900 px-4 py-3 text-sm font-bold text-white shadow-lg">
+              {motionShade}
+            </div>
+          )}
           {incoming && (
             <div className="absolute inset-x-4 top-24 z-40 rounded-3xl bg-red-600 px-4 py-4 text-white shadow-xl">
               <p className="text-lg font-black">{incoming.kind === 'sos' ? 'SOS' : '집 반경 이탈'}</p>
@@ -1140,6 +1195,18 @@ export function FamilyMapScreen() {
             }}
           />
         )}
+        {motionOpen && (
+          <MotionNotifySheet
+            members={people.filter((member) => member.id !== 'self')}
+            selected={state.motionNotifyIds || []}
+            onToggle={(id) => {
+              const current = state.motionNotifyIds || [];
+              const next = current.includes(id) ? current.filter((item) => item !== id) : [...current, id];
+              family.setMotionNotify(next);
+            }}
+            onClose={() => setMotionOpen(false)}
+          />
+        )}
         {menuOpen && (
           <AdminMenu
             name={state.profile?.name || '나'}
@@ -1159,6 +1226,11 @@ export function FamilyMapScreen() {
               setMenuOpen(false);
               setAlertsOpen(true);
             }}
+            onMotion={() => {
+              setMenuOpen(false);
+              setMotionOpen(true);
+            }}
+            motionHint={motionMenuHint(people, state.motionNotifyIds || [])}
             onSettings={() => setAdminSettings(true)}
             onAlwaysGuide={openLocationSettings}
             onAcceptInvite={() => {
@@ -1292,7 +1364,7 @@ export function FamilyMapScreen() {
               <Line k="배터리 안내" v={state.permissions.battery === 'acknowledged' ? '확인함' : state.permissions.battery === 'skipped' ? '나중에' : '해당 없음'} />
             </dl>
             <p className="mt-3 text-xs leading-5 text-slate-400">
-              가족 위치와 배터리는 초대를 수락하고 위치 공유를 허용한 뒤에만 가족 방에 올라갑니다. 예시 좌표는 없습니다. 알림을 허용하면 앱을 닫아도 SOS와 새 대화가 알림 목록에 옵니다. 전화번호로는 위치를 찾지 않습니다.
+              가족 위치와 배터리는 초대를 수락하고 위치 공유를 허용한 뒤에만 가족 방에 올라갑니다. 예시 좌표는 없습니다. 알림을 허용하면 앱을 닫아도 SOS, 움직임 시작·멈춤, 새 대화가 알림 목록에 옵니다. 움직임 알림은 메뉴에서 고른 가족에게만 갑니다. 전화번호로는 위치를 찾지 않습니다.
             </p>
             <p className="mt-3 text-xs leading-5 text-slate-400">
               「항상 허용」 고르기. 「정확한 위치 사용」 켜기. 배터리 제한 없음.
@@ -1365,6 +1437,62 @@ export function FamilyMapScreen() {
           />
         )}
       </div>
+    </div>
+  );
+}
+
+function motionMenuHint(members: Member[], ids: string[]): string {
+  const picked = members.filter((member) => member.id !== 'self' && ids.includes(member.id)).map((member) => member.name);
+  if (picked.length === 0) return '고른 가족에게만 · 기본은 보내지 않음';
+  return `${picked.join(', ')}에게 시작·멈춤`;
+}
+
+function MotionNotifySheet({
+  members,
+  selected,
+  onToggle,
+  onClose,
+}: {
+  members: Member[];
+  selected: string[];
+  onToggle: (id: string) => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className="absolute inset-0 z-[60]">
+      <Sheet title="움직임 알림" onClose={onClose}>
+        <p className="text-sm leading-6 text-slate-500">
+          내가 움직이기 시작하거나 멈출 때, 고른 가족에게만 짧은 알림을 보냅니다. 아무도 고르지 않으면 보내지 않습니다. 걸음은 약 45초, 차나 자전거는 약 3분 넘게 머물면 멈춤으로 보고, 실제로 이동한 뒤에만 시작 알림을 보냅니다.
+        </p>
+        {members.length === 0 ? (
+          <p className="mt-4 rounded-2xl bg-slate-50 px-3 py-3 text-sm leading-6 text-slate-500">가족이 아직 없습니다. 초대를 수락한 뒤에 고를 수 있습니다.</p>
+        ) : (
+          <ul className="mt-4 overflow-hidden rounded-2xl border border-slate-100">
+            {members.map((member) => {
+              const on = selected.includes(member.id);
+              return (
+                <li key={member.id} className="border-t border-slate-100 first:border-t-0">
+                  <button
+                    type="button"
+                    aria-pressed={on}
+                    onClick={() => onToggle(member.id)}
+                    className="flex w-full items-center gap-3 px-3 py-3 text-left"
+                  >
+                    <MemberAvatar name={member.name} photo={member.photo} />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-bold text-slate-900">{member.name}</span>
+                      <span className="block text-xs text-slate-400">{on ? '시작·멈춤을 받습니다' : '받지 않습니다'}</span>
+                    </span>
+                    <span className={`rounded-full px-3 py-1 text-xs font-black ${on ? 'bg-[#0084FF] text-white' : 'bg-slate-100 text-slate-500'}`}>
+                      {on ? '켜짐' : '꺼짐'}
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </Sheet>
     </div>
   );
 }
@@ -1452,6 +1580,8 @@ function ManagedMenu({
   onClose,
   onHome,
   onAlerts,
+  onMotion,
+  motionHint,
   onInvite,
   onSettings,
   onAlwaysGuide,
@@ -1466,6 +1596,8 @@ function ManagedMenu({
   onClose: () => void;
   onHome: () => void;
   onAlerts: () => void;
+  onMotion: () => void;
+  motionHint: string;
   onInvite: () => void;
   onSettings: () => void;
   onAlwaysGuide: () => void;
@@ -1492,6 +1624,7 @@ function ManagedMenu({
         <div className="mt-4 overflow-hidden rounded-2xl bg-white shadow-sm">
           <MenuRow icon={<Home className="h-4 w-4" />} label="우리 집 설정" hint={home ? `${home.label || '우리 집'} · 반경 ${home.radiusM}m` : '지도에서 집 위치를 정합니다'} onClick={onHome} />
           <MenuRow icon={<Bell className="h-4 w-4" />} label="알림" hint={alertHint} onClick={onAlerts} />
+          <MenuRow icon={<Bell className="h-4 w-4" />} label="움직임 알림" hint={motionHint} onClick={onMotion} />
           <MenuRow icon={<UserPlus className="h-4 w-4" />} label="초대 수락" hint="관리자에게 받은 코드" onClick={onInvite} />
           <MenuRow icon={<MapPin className="h-4 w-4" />} label="항상 허용 방법" hint="앱을 닫아도 위치를 보내기" onClick={onAlwaysGuide} />
         </div>
@@ -1537,6 +1670,8 @@ function AdminMenu({
   onClose,
   onHome,
   onAlerts,
+  onMotion,
+  motionHint,
   onSettings,
   onAlwaysGuide,
   onAcceptInvite,
@@ -1553,6 +1688,8 @@ function AdminMenu({
   onClose: () => void;
   onHome: () => void;
   onAlerts: () => void;
+  onMotion: () => void;
+  motionHint: string;
   onSettings: () => void;
   onAlwaysGuide: () => void;
   onAcceptInvite: () => void;
@@ -1580,6 +1717,7 @@ function AdminMenu({
         <div className="mt-4 overflow-hidden rounded-2xl bg-white shadow-sm">
           <MenuRow icon={<Home className="h-4 w-4" />} label="우리 집 설정" hint={home ? `${home.label || '우리 집'} · 반경 ${home.radiusM}m` : '지도에서 집 위치를 정합니다'} onClick={onHome} />
           <MenuRow icon={<Bell className="h-4 w-4" />} label="알림" hint={alertHint} onClick={onAlerts} />
+          <MenuRow icon={<Bell className="h-4 w-4" />} label="움직임 알림" hint={motionHint} onClick={onMotion} />
           <MenuRow icon={<MapPin className="h-4 w-4" />} label="항상 허용 방법" hint="앱을 닫아도 위치를 보내기" onClick={onAlwaysGuide} />
           <MenuRow icon={<UserPlus className="h-4 w-4" />} label="초대 수락" hint="가족에게 받은 코드" onClick={onAcceptInvite} />
         </div>
@@ -1604,6 +1742,20 @@ function AdminMenu({
       </div>
     </div>
   );
+}
+
+async function deliverMotionAlert(state: Pick<Session, 'inviteCode' | 'syncWriteKey' | 'syncReadKey' | 'guardians'>, from: string, body: string, targets: string[]) {
+  const rooms: { code: string; token: string }[] = [];
+  if (state.syncWriteKey && state.syncReadKey && /^\d{4,6}$/.test(state.inviteCode)) {
+    rooms.push({ code: state.inviteCode, token: await syncTokenFor(state.syncWriteKey, state.syncReadKey) });
+  }
+  for (const link of state.guardians) {
+    if (link.share === 'revoked' || !link.syncToken || rooms.some((room) => room.code === link.code)) continue;
+    rooms.push({ code: link.code, token: link.syncToken });
+  }
+  for (const room of rooms) {
+    publishFamilyAlert({ kind: 'motion', code: room.code, from, body, to: targets }, room.token);
+  }
 }
 
 function chatTargetFor(state: {
@@ -2101,7 +2253,7 @@ function KeepNoticeSheet({
         <h2 className="text-lg font-black">{mode === 'permission' ? '알림을 허용할까요?' : '위치 유지를 켤까요?'}</h2>
         <p className="mt-2 text-sm leading-6 text-slate-600">
           {mode === 'permission'
-            ? '알림 권한은 SOS, 집 반경, 새 대화에 씁니다. 허용을 누르면 알림 창이 열립니다. 위치 공유 중에는 알림 목록에 Umap 카드가 나오지 않습니다. 앱이 혼자 켜지 않습니다. 전화번호는 쓰지 않습니다.'
+            ? '알림 권한은 SOS, 집 반경, 움직임 시작·멈춤, 새 대화에 씁니다. 허용을 누르면 알림 창이 열립니다. 위치 공유 중에는 알림 목록에 Umap 카드가 나오지 않습니다. 앱이 혼자 켜지 않습니다. 전화번호는 쓰지 않습니다.'
             : '켜면 앱을 닫아도 위치를 보냅니다. 걷는 동안만 촘촘히 받고, 한곳에 머물면 2분에서 5분으로 줄입니다. 알림 목록에 Umap 카드는 나오지 않습니다. 배터리 제한이 없으면 그 간격을 더 잘 지킵니다. 앱이 혼자 켜지 않습니다.'}
         </p>
         {note && <p className="mt-3 text-sm leading-6 text-amber-800">{note}</p>}

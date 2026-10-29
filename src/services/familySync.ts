@@ -417,7 +417,10 @@ function isSharedPlace(value: unknown): value is SharedPlace {
 function isRemoteAlert(value: unknown): value is FamilyAlert {
   if (!value || typeof value !== 'object') return false;
   const alert = value as FamilyAlert;
-  return typeof alert.id === 'string' && (alert.kind === 'sos' || alert.kind === 'leave') && typeof alert.code === 'string' && typeof alert.at === 'number';
+  if (typeof alert.id !== 'string' || typeof alert.code !== 'string' || typeof alert.at !== 'number') return false;
+  if (alert.kind === 'sos' || alert.kind === 'leave') return true;
+  if (alert.kind !== 'motion' || !Array.isArray(alert.to) || alert.to.length === 0 || alert.to.length > 8) return false;
+  return alert.to.every((name) => typeof name === 'string' && name.trim().length > 0 && name.length <= 20);
 }
 
 function isSharedProfile(value: unknown): value is SharedProfile {
