@@ -3,6 +3,7 @@ import test from 'node:test';
 import { startSyncServer } from './dev-server.mjs';
 import { bytesToBase64Url } from './webpush.mjs';
 import {
+  alertPushPayload,
   applyPlace,
   chatPushPayload,
   createMemoryStore,
@@ -642,10 +643,72 @@ test('chat push names the recipient and hides the endpoint', async () => {
   const alertTargets = pushesForAlert(after, { from: '엄마', kind: 'sos' });
   assert.equal(alertTargets.some((item) => item.name === '엄마'), false);
   assert.equal(alertTargets.some((item) => item.name === '하나'), true);
+  const motionTargets = pushesForAlert(after, { from: '엄마', kind: 'motion', to: ['하나'] });
+  assert.deepEqual(motionTargets.map((item) => item.name), ['하나']);
+  assert.equal(pushesForAlert(after, { from: '엄마', kind: 'motion', to: [] }).length, 0);
 
   const reader = await call(store, 'GET', `/v1/rooms/${code}`, { token, readKey });
   assert.equal(JSON.stringify(reader.body).includes('fcm.googleapis.com'), false);
   assert.equal(JSON.stringify(reader.body).includes('집 근처예요'), false);
+});
+
+test('motion alerts push only to the named family members', async () => {
+  const store = createMemoryStore();
+  const code = '13579';
+  const writeKey = randomKey();
+  const readKey = randomKey();
+  const token = await syncTokenFor(writeKey, readKey);
+  const key = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits']);
+  const publicRaw = new Uint8Array(await crypto.subtle.exportKey('raw', key.publicKey));
+  const auth = crypto.getRandomValues(new Uint8Array(16));
+  const base = { p256dh: bytesToBase64Url(publicRaw), auth: bytesToBase64Url(auth) };
+  for (const [name, endpoint] of [['하나', 'umap-child'], ['아빠', 'umap-dad'], ['엄마', 'umap-mom']]) {
+    const saved = await call(store, 'PUT', `/v1/rooms/${code}/push`, {
+      token,
+      readKey,
+      body: { ...base, endpoint: `https://fcm.googleapis.com/fcm/send/${endpoint}`, name },
+    });
+    assert.equal(saved.status, 200);
+  }
+  const at = Date.now();
+  const missing = await call(store, 'POST', `/v1/rooms/${code}/alert`, {
+    token,
+    body: { id: 'motion-start-01', kind: 'motion', code, from: '엄마', body: '엄마님이 움직이기 시작했어요', at },
+  });
+  assert.equal(missing.status, 400);
+  const phone = await call(store, 'POST', `/v1/rooms/${code}/alert`, {
+    token,
+    body: { id: 'motion-start-02', kind: 'motion', code, from: '엄마', body: '엄마님이 움직이기 시작했어요', at, to: ['01012345678'] },
+  });
+  assert.equal(phone.status, 400);
+  const posted = await call(store, 'POST', `/v1/rooms/${code}/alert`, {
+    token,
+    body: { id: 'motion-start-03', kind: 'motion', code, from: '엄마', body: '엄마님이 움직이기 시작했어요', at, to: ['하나', '아빠'] },
+  });
+  assert.equal(posted.status, 200);
+  const id = await roomToken(code, writeKey, token.split('.')[1]);
+  const room = await store.read(id);
+  const stored = room.alerts.find((item) => item.id === 'motion-start-03');
+  assert.deepEqual(stored.to, ['하나', '아빠']);
+  const targets = pushesForAlert(room, stored);
+  assert.deepEqual(targets.map((item) => item.name).sort(), ['아빠', '하나']);
+  const payload = alertPushPayload(stored);
+  assert.equal(payload.kind, 'motion');
+  assert.equal(payload.title, '엄마님이 움직이기 시작했어요');
+  assert.equal(payload.body, '엄마님이 움직이기 시작했어요');
+  const reader = await call(store, 'GET', `/v1/rooms/${code}`, { token, readKey });
+  assert.equal(reader.body.alerts.some((item) => item.kind === 'motion' && item.body === '엄마님이 움직이기 시작했어요'), true);
+  const sos = alertPushPayload({ id: 'a-sos', kind: 'sos', body: '엄마 님이 SOS를 눌렀습니다.' });
+  assert.equal(sos.title, 'SOS');
+  const selfDropped = await call(store, 'POST', `/v1/rooms/${code}/alert`, {
+    token,
+    body: { id: 'motion-stop-04', kind: 'motion', code, from: '엄마', body: '엄마님이 멈췄어요', at: at + 1, to: ['엄마', '하나'] },
+  });
+  assert.equal(selfDropped.status, 200);
+  const afterDrop = await store.read(id);
+  const stopped = afterDrop.alerts.find((item) => item.id === 'motion-stop-04');
+  assert.deepEqual(stopped.to, ['하나']);
+  assert.deepEqual(pushesForAlert(afterDrop, stopped).map((item) => item.name), ['하나']);
 });
 
 test('member id keeps the fix across a rename and only the profile key can change it', async () => {

@@ -27,7 +27,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 /**
- * Polls the family sync worker for SOS, home-leave, and new direct messages.
+ * Polls the family sync worker for SOS, home-leave, motion start/stop, and new direct messages.
  * Each event is one shade notification. Web Push is used when the browser
  * can subscribe. This WebView cannot, so the phone schedules an exact alarm
  * after notification permission.
@@ -213,7 +213,7 @@ public class AlertWatchService {
         NotificationManager manager = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
         if (manager == null) return;
         NotificationChannel alert = new NotificationChannel(ALERT_CHANNEL, "가족 알림", NotificationManager.IMPORTANCE_HIGH);
-        alert.setDescription("SOS와 집 반경을 벗어났을 때 알려 줍니다.");
+        alert.setDescription("SOS, 집 반경, 움직임 시작과 멈춤을 알려 줍니다.");
         alert.enableVibration(true);
         manager.createNotificationChannel(alert);
         NotificationChannel chat = new NotificationChannel(CHAT_CHANNEL, "가족 대화", NotificationManager.IMPORTANCE_HIGH);
@@ -270,11 +270,21 @@ public class AlertWatchService {
         String readKey = room.optString("readKey", "");
         String me = room.optString("me", "").trim();
         if (!code.matches("\\d{4,6}") || !token.matches("[A-Za-z0-9_-]{16,64}\\.[A-Za-z0-9_-]{16,64}")) return;
-        if (readKey.matches("[A-Za-z0-9_-]{16,64}")) pullAlerts(context, base, code, token, readKey);
+        if (readKey.matches("[A-Za-z0-9_-]{16,64}")) pullAlerts(context, base, code, token, readKey, me);
         if (validMe(me)) pullChat(context, base, code, token, me, !MainActivity.isResumed());
     }
 
-    private static void pullAlerts(Context context, String base, String code, String token, String readKey) {
+    private static boolean motionForMe(JSONObject alert, String me) {
+        if (!validMe(me)) return false;
+        JSONArray to = alert.optJSONArray("to");
+        if (to == null) return false;
+        for (int index = 0; index < to.length(); index += 1) {
+            if (me.equals(to.optString(index, "").trim())) return true;
+        }
+        return false;
+    }
+
+    private static void pullAlerts(Context context, String base, String code, String token, String readKey, String me) {
         long since = prefs(context).getLong("since", 0L);
         if (since == 0L) since = System.currentTimeMillis() - 60_000L;
         HttpURLConnection connection = null;
@@ -302,6 +312,13 @@ public class AlertWatchService {
                 String kind = alert.optString("kind", "");
                 long at = alert.optLong("at", 0L);
                 if (id.isEmpty() || at <= since || nextSeen.contains(id)) continue;
+                if ("motion".equals(kind)) {
+                    if (!motionForMe(alert, me)) continue;
+                    notifyMotion(context, alert);
+                    nextSeen.add(id);
+                    if (at > cursor) cursor = at;
+                    continue;
+                }
                 if (!"sos".equals(kind) && !"leave".equals(kind)) continue;
                 notifyAlert(context, alert);
                 nextSeen.add(id);
@@ -400,6 +417,28 @@ public class AlertWatchService {
             .setContentIntent(content)
             .setAutoCancel(true)
             .setCategory(Notification.CATEGORY_ALARM);
+        NotificationManager manager = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+        if (manager != null) manager.notify(id, builder.build());
+    }
+
+    private static void notifyMotion(Context context, JSONObject alert) {
+        String body = alert.optString("body", "").trim();
+        if (body.isEmpty()) return;
+        if (body.length() > 80) body = body.substring(0, 80);
+        int id = 5400 + (alert.optString("id", body).hashCode() & 0x0fff);
+        Intent open = new Intent(context, MainActivity.class);
+        open.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        PendingIntent content = PendingIntent.getActivity(context, id, open, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        ensureAlertChannel(context);
+        Notification.Builder builder = Build.VERSION.SDK_INT >= 26
+            ? new Notification.Builder(context, ALERT_CHANNEL)
+            : new Notification.Builder(context);
+        builder.setContentTitle(body)
+            .setStyle(new Notification.BigTextStyle().bigText(body))
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setContentIntent(content)
+            .setAutoCancel(true)
+            .setCategory(Notification.CATEGORY_STATUS);
         NotificationManager manager = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
         if (manager != null) manager.notify(id, builder.build());
     }

@@ -83,6 +83,19 @@ test('location keep does not post an ongoing shade card', () => {
   assert.match(manifest, /USE_EXACT_ALARM/);
 });
 
+test('motion start and stop are one shade each and do not raise an ongoing card', () => {
+  const watch = readFileSync(new URL('../../android/app/src/main/java/kr/co/umap/tracker/AlertWatchService.java', import.meta.url), 'utf8');
+  const location = readFileSync(new URL('../../android/app/src/main/java/kr/co/umap/tracker/LocationKeepService.java', import.meta.url), 'utf8');
+  assert.match(watch, /"motion"\.equals\(kind\)/);
+  assert.match(watch, /motionForMe/);
+  assert.match(watch, /CATEGORY_STATUS/);
+  assert.match(watch, /notifyMotion/);
+  assert.equal(watch.includes('startForeground('), false);
+  assert.match(location, /GPS_MOVING_MS = 2_500L/);
+  assert.match(location, /GPS_RIDE_MS = 1_000L/);
+  assert.equal(location.includes('GPS_MOVING_MS = 1_000L'), false);
+});
+
 test('chat shade notification is one event and opens that conversation', () => {
   const watch = readFileSync(new URL('../../android/app/src/main/java/kr/co/umap/tracker/AlertWatchService.java', import.meta.url), 'utf8');
   const activity = readFileSync(new URL('../../android/app/src/main/java/kr/co/umap/tracker/MainActivity.java', import.meta.url), 'utf8');

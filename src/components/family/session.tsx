@@ -132,7 +132,23 @@ function fresh(stage: Stage = 'splash'): Session {
     syncReadKey: createKeyPart(),
     pendingSyncToken: null,
     hiddenMemberIds: [],
+    motionNotifyIds: [],
+    motionAlertPhase: 'unknown',
   };
+}
+
+function cleanMotionNotifyIds(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const out: string[] = [];
+  for (const item of value) {
+    if (typeof item !== 'string' || !item.trim() || item === 'self' || item.length > 160) continue;
+    if (!out.includes(item)) out.push(item);
+  }
+  return out.slice(0, 12);
+}
+
+function cleanMotionPhase(value: unknown): Session['motionAlertPhase'] {
+  return value === 'still' || value === 'moving' ? value : 'unknown';
 }
 
 function cleanHidden(value: unknown): string[] {
@@ -499,6 +515,8 @@ function load(): Session {
       syncReadKey: isKeyPart(parsed.syncReadKey) ? parsed.syncReadKey : base.syncReadKey,
       pendingSyncToken: pendingSyncToken || cleanSyncToken(parsed.pendingSyncToken),
       hiddenMemberIds: cleanHidden((parsed as Session).hiddenMemberIds),
+      motionNotifyIds: cleanMotionNotifyIds((parsed as Session).motionNotifyIds),
+      motionAlertPhase: cleanMotionPhase((parsed as Session).motionAlertPhase),
       trailDay: typeof parsed.trailDay === 'string' ? parsed.trailDay : '',
       visits: cleanVisits(parsed.visits),
       journeys: cleanJourneys((parsed as Session).journeys),
@@ -576,6 +594,8 @@ type Action =
   | { type: 'set-member-place'; id: string; place: string | null }
   | { type: 'close-journeys'; now: number }
   | { type: 'set-motion'; moving: boolean }
+  | { type: 'set-motion-notify'; ids: string[] }
+  | { type: 'set-motion-alert-phase'; phase: Session['motionAlertPhase'] }
   | { type: 'notice'; notice: FamilyNotice }
   | { type: 'logout' }
   | { type: 'clear-family-room'; serverNote: string | null }
@@ -700,6 +720,7 @@ function reducer(state: Session, action: Action): Session {
         tracks,
         journeys,
         hiddenMemberIds,
+        motionNotifyIds: (state.motionNotifyIds || []).filter((id) => id !== action.id),
         notices: [notice('가족을 지웠습니다', `${removed.name} 님을 이 기기의 목록과 지도에서 뺐습니다. 같은 방이 다시 받아도 이 폰에는 돌아오지 않습니다.`), ...state.notices],
       };
     }
@@ -1160,6 +1181,17 @@ function reducer(state: Session, action: Action): Session {
         members: state.members.map((member) => (member.id === 'self' ? { ...member, moving: action.moving } : member)),
       };
     }
+    case 'set-motion-notify': {
+      const motionNotifyIds = cleanMotionNotifyIds(action.ids);
+      const current = state.motionNotifyIds || [];
+      if (motionNotifyIds.length === current.length && motionNotifyIds.every((id, index) => id === current[index])) return state;
+      return { ...state, motionNotifyIds };
+    }
+    case 'set-motion-alert-phase': {
+      const phase = cleanMotionPhase(action.phase);
+      if ((state.motionAlertPhase || 'unknown') === phase) return state;
+      return { ...state, motionAlertPhase: phase };
+    }
     case 'notice':
       return { ...state, notices: [action.notice, ...state.notices].slice(0, 40) };
     case 'logout':
@@ -1185,6 +1217,8 @@ function reducer(state: Session, action: Action): Session {
         pendingLeaveAlert: null,
         pendingSyncToken: null,
         hiddenMemberIds: [],
+        motionNotifyIds: [],
+        motionAlertPhase: 'unknown',
         notices: [notice(action.serverNote ? '가족 방을 나갔습니다' : '가족 방을 지웠습니다', noteBody), ...state.notices].slice(0, 40),
       };
     }
@@ -1236,6 +1270,8 @@ interface FamilyApi {
   setSelfPlace: (place: string | null) => void;
   setMemberPlace: (id: string, place: string | null) => void;
   setMotion: (moving: boolean) => void;
+  setMotionNotify: (ids: string[]) => void;
+  setMotionAlertPhase: (phase: Session['motionAlertPhase']) => void;
   pushNotice: (title: string, body: string) => void;
   logout: () => void;
   clearFamilyRoom: (serverNote?: string | null) => void;
@@ -1308,6 +1344,8 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
     setSelfPlace: (place) => dispatch({ type: 'set-self-place', place }),
     setMemberPlace: (id, place) => dispatch({ type: 'set-member-place', id, place }),
     setMotion: (moving) => dispatch({ type: 'set-motion', moving }),
+    setMotionNotify: (ids) => dispatch({ type: 'set-motion-notify', ids }),
+    setMotionAlertPhase: (phase) => dispatch({ type: 'set-motion-alert-phase', phase }),
     pushNotice: (title, body) => dispatch({ type: 'notice', notice: notice(title, body) }),
     logout: () => dispatch({ type: 'logout' }),
     clearFamilyRoom: (serverNote) => dispatch({ type: 'clear-family-room', serverNote: serverNote ?? null }),

@@ -1,6 +1,6 @@
 import { publishAlertRemote } from './familySync';
 
-export type FamilyAlertKind = 'sos' | 'leave';
+export type FamilyAlertKind = 'sos' | 'leave' | 'motion';
 
 export interface FamilyAlert {
   id: string;
@@ -9,6 +9,8 @@ export interface FamilyAlert {
   from: string;
   body: string;
   at: number;
+  /** Motion alerts name the family members who should receive the shade. */
+  to?: string[];
 }
 
 const STORAGE_KEY = 'umap_family_alert_v1';
@@ -18,7 +20,10 @@ const CHANNEL = 'umap-family-alert';
 function isAlert(value: unknown): value is FamilyAlert {
   if (!value || typeof value !== 'object') return false;
   const alert = value as FamilyAlert;
-  return typeof alert.id === 'string' && (alert.kind === 'sos' || alert.kind === 'leave') && typeof alert.code === 'string' && typeof alert.at === 'number';
+  if (typeof alert.id !== 'string' || typeof alert.code !== 'string' || typeof alert.at !== 'number') return false;
+  if (alert.kind === 'sos' || alert.kind === 'leave') return true;
+  if (alert.kind !== 'motion' || !Array.isArray(alert.to) || alert.to.length === 0 || alert.to.length > 8) return false;
+  return alert.to.every((name) => typeof name === 'string' && name.trim().length > 0 && name.length <= 20);
 }
 
 export function publishFamilyAlert(input: Omit<FamilyAlert, 'id' | 'at'>, syncToken?: string | null): FamilyAlert {

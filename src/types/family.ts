@@ -136,6 +136,10 @@ export interface Session {
   pendingSyncToken: string | null;
   /** Member ids and publisher ids removed on this phone. Sync does not put them back. */
   hiddenMemberIds: string[];
+  /** Family member ids told when this phone starts or stops moving. Empty sends nothing. */
+  motionNotifyIds: string[];
+  /** Last start/stop phase. unknown adopts the current trip without sending. */
+  motionAlertPhase: 'unknown' | 'still' | 'moving';
 }
 
 export const DEFAULT_CENTER = { lat: 37.6366, lng: 127.0672 };
