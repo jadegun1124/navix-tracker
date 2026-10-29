@@ -7,7 +7,7 @@ import { ALWAYS_GUIDE_DISMISSED_KEY, CHAT_NOTIFY_ASKED_KEY, KEEP_PERMISSION_ASKE
 import { familyMapShowsTrail, recordsDayTrails } from '../../lib/mapTrail.mjs';
 import { shouldDeleteCreatedRoom } from '../../lib/familyRoom.mjs';
 import { motionAlertCopy, motionNotifyNames, nextMotionAlert } from '../../lib/motionAlert.mjs';
-import { collapseDuplicateJourneys, displayCoordinate, historyDayKeys, historyDayLabel, lastTravelAt, liveMotionLabel, liveTrailDrawable, liveTrailPoints, MOTION_STILL_HOLD_MS, previewOpenJourney, seoulDayEndMs, seoulDayKey, visibleTrail } from '../../lib/tracking.mjs';
+import { collapseDuplicateJourneys, collapseIndoorStayDisplay, displayCoordinate, historyDayKeys, historyDayLabel, lastTravelAt, liveMotionLabel, liveTrailDrawable, liveTrailPoints, MOTION_STILL_HOLD_MS, previewOpenJourney, seoulDayEndMs, seoulDayKey, visibleTrail } from '../../lib/tracking.mjs';
 import { ackFamilyAlert, isFamilyAlertAcked, publishFamilyAlert, readFamilyAlert, subscribeFamilyAlerts, type FamilyAlert } from '../../services/familyAlert';
 import { readSharedPlaces, subscribeSharedPlaces } from '../../services/familyShare';
 import { abandonFamilySync, currentSyncPhase, deleteFamilyRoomRemote, familySyncConfigured, familySyncUrl, fetchMyDirectThreads, registerRoomPush, revokeFamilyPlace, splitSyncToken, startAdminRemoteSync, startSyncMonitor, subscribeSyncPhase, syncTokenFor, type SyncPhase } from '../../services/familySync';
@@ -555,7 +555,10 @@ export function FamilyMapScreen() {
     ? dayJourneys.find((journey) => journey.id === detailId) ?? null
     : null;
   const detailOpen = viewingRecords && !!detailId && (detailId === 'open' ? !!openJourney : !!detailJourney);
-  const detailPoints = detailId === 'open' ? liveLine : detailJourney?.points ?? [];
+  const detailPoints = useMemo(
+    () => collapseIndoorStayDisplay(detailId === 'open' ? liveLine : detailJourney?.points ?? []),
+    [detailId, detailJourney, liveLine],
+  );
   const liveDrawable = liveTrailDrawable(liveLine, dayNow);
   const showPath = familyMapShowsTrail({
     viewingRecords,
@@ -588,17 +591,16 @@ export function FamilyMapScreen() {
     return list.filter((visit) => seoulDayKey(visit.arrivedAt) === pathDay);
   }, [pathDay, selected, state.visits]);
   const playback = useMemo(() => {
-    if (!detailOpen || detailPoints.length < 2) return null;
+    if (!detailOpen || detailPoints.length < 1) return null;
     return playbackMark(detailPoints, scrub / 1000);
   }, [detailOpen, detailPoints, scrub]);
   const unreadAlerts = state.notices.some((item) => !item.read);
   useEffect(() => {
     if (!detailOpen) return;
-    const points = detailId === 'open' ? liveLine : detailJourney?.points ?? [];
-    if (points.length === 0) return;
-    const timer = window.setTimeout(() => mapRef.current?.fit(points), 120);
+    if (detailPoints.length === 0) return;
+    const timer = window.setTimeout(() => mapRef.current?.fit(detailPoints), 120);
     return () => window.clearTimeout(timer);
-  }, [detailId, detailJourney, detailOpen, liveLine]);
+  }, [detailOpen, detailPoints]);
   useEffect(() => {
     if (!playing || !detailOpen) return;
     const from = scrubRef.current >= 1000 ? 0 : scrubRef.current;
@@ -955,7 +957,7 @@ export function FamilyMapScreen() {
         )}
 
         {recordId && !placingHome && !detailOpen && (
-          <section className="max-h-[48%] overflow-y-auto rounded-t-3xl bg-white px-4 pb-3 pt-3 shadow-[0_-8px_30px_rgba(15,23,42,0.08)]">
+          <section className="max-h-[72%] overflow-y-auto rounded-t-3xl bg-white px-4 pb-3 pt-3 shadow-[0_-8px_30px_rgba(15,23,42,0.08)]">
             <div className="mb-2 flex items-center justify-between gap-2">
               <h2 className="truncate text-lg font-black">{selected?.id === 'self' ? '내 기록' : `${selected?.name ?? ''} 기록`}</h2>
               <button type="button" onClick={() => { setRecordId(null); setDetailId(null); setPlaying(false); }} aria-label="기록 닫기" className="shrink-0 rounded-full bg-slate-100 px-3 py-1.5 text-xs font-bold">

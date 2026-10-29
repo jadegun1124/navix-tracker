@@ -71,7 +71,11 @@ export const StreetMap = forwardRef<StreetMapHandle, {
     },
     fit(points) {
       const map = mapRef.current;
-      if (!map || points.length < 2) return;
+      if (!map || points.length < 1) return;
+      if (points.length === 1) {
+        map.setView([points[0].lat, points[0].lng], Math.max(map.getZoom(), 16), { animate: true });
+        return;
+      }
       map.fitBounds(L.latLngBounds(points.map((point) => [point.lat, point.lng])), {
         padding: [48, 48],
         maxZoom: 17,
