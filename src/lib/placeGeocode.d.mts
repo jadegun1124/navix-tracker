@@ -7,6 +7,16 @@ export function formatPrecisePlace(parts?: {
   poi?: string;
 }): string;
 
+export const RESIDENTIAL_SNAP_M: number;
+export const POI_SNAP_M: number;
+
+export function choosePlaceLabel(
+  candidates: Array<Record<string, unknown>>,
+  point: { lat: number; lng: number },
+): string;
+
+export function isResidentialPlace(candidate: Record<string, unknown> | null | undefined): boolean;
+
 export function presentPlace(text: unknown): string;
 
 export function placeGridKey(lat: number, lng: number): string;

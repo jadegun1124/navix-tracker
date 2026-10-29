@@ -8,8 +8,10 @@
 import { APP_VERSION_NAME } from './appRelease.mjs';
 
 const NOMINATIM_UA = `Kinnex/${APP_VERSION_NAME} (family location; https://github.com/jadegun1124/umap)`;
-const CACHE_KEY = 'umap_geocode_cache_v3';
+const CACHE_KEY = 'umap_geocode_cache_v4';
 const PLACE_LIMIT = 56;
+export const RESIDENTIAL_SNAP_M = 30;
+export const POI_SNAP_M = 40;
 const NOMINATIM_GAP_MS = 1100;
 let nominatimNotBefore = 0;
 
@@ -51,6 +53,10 @@ export function shortenAddress(text) {
 }
 
 const PRECISE_WORD = /(?:아파트|단지|빌라|맨션|오피스텔|타운|하우스|마트|백화점|슈퍼|편의점|학교|병원|의원|약국|공원|회관|센터|교회|성당|사찰|역사|역$)/;
+const RESIDENTIAL_NAME = /(?:아파트|단지|빌라|맨션|오피스텔|타운하우스|주공|휴먼시아|주택)/;
+const RESIDENTIAL_BUILDING = /^(?:apartments|residential|apart|house|dormitory)$/i;
+const RESIDENTIAL_LANDUSE = /residential/i;
+const POI_NAME = /(?:소방서|파출소|지구대|경찰서|병원|의원|약국|학교|마트|백화점|편의점|공원|주유소|시청|구청|도서관)/;
 
 function cleanToken(value) {
   const text = String(value || '').trim().replace(/\s+/g, ' ');
@@ -78,6 +84,161 @@ export function formatPrecisePlace(parts = {}) {
   const poi = cleanToken(parts.poi);
   if (building) return [building, unit].filter(Boolean).join(' ').slice(0, PLACE_LIMIT);
   if (poi && poi !== dong) return poi.slice(0, PLACE_LIMIT);
+  return '';
+}
+
+function metersBetween(a, b) {
+  if (!a || !b || !Number.isFinite(a.lat) || !Number.isFinite(a.lng) || !Number.isFinite(b.lat) || !Number.isFinite(b.lng)) return Infinity;
+  const radius = 6_371_000;
+  const p1 = (a.lat * Math.PI) / 180;
+  const p2 = (b.lat * Math.PI) / 180;
+  const dLat = ((b.lat - a.lat) * Math.PI) / 180;
+  const dLng = ((b.lng - a.lng) * Math.PI) / 180;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(p1) * Math.cos(p2) * Math.sin(dLng / 2) ** 2;
+  return 2 * radius * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
+function ringOf(value) {
+  if (!Array.isArray(value) || value.length < 3) return [];
+  const ring = [];
+  for (const item of value) {
+    if (Array.isArray(item) && Number.isFinite(Number(item[0])) && Number.isFinite(Number(item[1]))) {
+      ring.push({ lng: Number(item[0]), lat: Number(item[1]) });
+      continue;
+    }
+    if (item && Number.isFinite(item.lat) && Number.isFinite(item.lon)) {
+      ring.push({ lat: item.lat, lng: item.lon });
+      continue;
+    }
+    if (item && Number.isFinite(item.lat) && Number.isFinite(item.lng)) {
+      ring.push({ lat: item.lat, lng: item.lng });
+    }
+  }
+  return ring.length >= 3 ? ring : [];
+}
+
+export function geometryRings(geometry) {
+  if (!geometry) return [];
+  if (Array.isArray(geometry)) {
+    if (geometry[0] && (Number.isFinite(geometry[0].lat) || Array.isArray(geometry[0]))) {
+      const ring = ringOf(geometry);
+      return ring.length ? [ring] : [];
+    }
+    return geometry.flatMap((item) => geometryRings(item));
+  }
+  if (typeof geometry !== 'object') return [];
+  if (geometry.type === 'Polygon') return (geometry.coordinates || []).map(ringOf).filter((ring) => ring.length);
+  if (geometry.type === 'MultiPolygon') {
+    return (geometry.coordinates || []).flatMap((polygon) => (Array.isArray(polygon) ? polygon : []).map(ringOf)).filter((ring) => ring.length);
+  }
+  if (geometry.type === 'Point' && Array.isArray(geometry.coordinates)) {
+    const lng = Number(geometry.coordinates[0]);
+    const lat = Number(geometry.coordinates[1]);
+    return Number.isFinite(lat) && Number.isFinite(lng) ? [[{ lat, lng }]] : [];
+  }
+  if (Array.isArray(geometry.coordinates) && (geometry.type === 'Polygon' || !geometry.type)) {
+    return geometryRings({ type: 'Polygon', coordinates: geometry.coordinates });
+  }
+  if (Array.isArray(geometry.geometry)) return geometryRings(geometry.geometry);
+  return [];
+}
+
+export function pointInRing(point, ring) {
+  if (!point || ring.length < 3) return false;
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i, i += 1) {
+    const a = ring[i];
+    const b = ring[j];
+    const crosses = ((a.lat > point.lat) !== (b.lat > point.lat))
+      && (point.lng < ((b.lng - a.lng) * (point.lat - a.lat)) / ((b.lat - a.lat) || 1e-12) + a.lng);
+    if (crosses) inside = !inside;
+  }
+  return inside;
+}
+
+function distanceToSegment(point, a, b) {
+  const toX = (lng) => (lng - point.lng) * 111_320 * Math.cos((point.lat * Math.PI) / 180);
+  const toY = (lat) => (lat - point.lat) * 111_320;
+  const ax = toX(a.lng);
+  const ay = toY(a.lat);
+  const bx = toX(b.lng);
+  const by = toY(b.lat);
+  const dx = bx - ax;
+  const dy = by - ay;
+  const length = dx * dx + dy * dy;
+  const t = length === 0 ? 0 : Math.max(0, Math.min(1, (-ax * dx + -ay * dy) / length));
+  return Math.hypot(ax + dx * t, ay + dy * t);
+}
+
+export function distanceToGeometry(point, geometry) {
+  const rings = geometryRings(geometry);
+  if (!rings.length) {
+    const center = geometry && Number.isFinite(geometry.lat) && Number.isFinite(geometry.lng) ? geometry : null;
+    return center ? metersBetween(point, center) : Infinity;
+  }
+  if (rings.length === 1 && rings[0].length === 1) return metersBetween(point, rings[0][0]);
+  let inside = false;
+  let nearest = Infinity;
+  for (const ring of rings) {
+    if (ring.length >= 3 && pointInRing(point, ring)) inside = true;
+    for (let index = 0; index < ring.length; index += 1) {
+      nearest = Math.min(nearest, distanceToSegment(point, ring[index], ring[(index + 1) % ring.length]));
+    }
+  }
+  return inside ? 0 : nearest;
+}
+
+export function isResidentialPlace(candidate) {
+  if (!candidate) return false;
+  if (candidate.kind === 'residential') return true;
+  if (candidate.kind === 'poi') return false;
+  const name = cleanToken(candidate.name || candidate.building);
+  const building = cleanToken(candidate.buildingType || candidate.building);
+  const landuse = cleanToken(candidate.landuse);
+  if (RESIDENTIAL_NAME.test(name)) return true;
+  if (RESIDENTIAL_BUILDING.test(building) && name) return true;
+  if (RESIDENTIAL_LANDUSE.test(landuse) && name) return true;
+  return false;
+}
+
+function candidateLabel(candidate) {
+  const name = cleanToken(candidate.name || candidate.building);
+  if (!name || isDong(name)) return '';
+  if (isResidentialPlace(candidate)) return formatPrecisePlace({ building: name, unit: candidate.unit });
+  return formatPrecisePlace({ poi: name }) || name;
+}
+
+export function choosePlaceLabel(candidates, point) {
+  const origin = {
+    lat: Number(point?.lat),
+    lng: Number(point?.lng),
+  };
+  if (!Number.isFinite(origin.lat) || !Number.isFinite(origin.lng)) return '';
+  const scored = [];
+  for (const candidate of Array.isArray(candidates) ? candidates : []) {
+    const label = candidateLabel(candidate);
+    if (!label) continue;
+    const distanceM = Number.isFinite(candidate.distanceM)
+      ? candidate.distanceM
+      : distanceToGeometry(origin, candidate.geometry || candidate);
+    const inside = candidate.inside === true || distanceM === 0;
+    scored.push({
+      label,
+      residential: isResidentialPlace(candidate),
+      inside,
+      distanceM: Number.isFinite(distanceM) ? distanceM : Infinity,
+    });
+  }
+  const residential = scored.filter((item) => item.residential && (item.inside || item.distanceM <= RESIDENTIAL_SNAP_M));
+  if (residential.length) {
+    residential.sort((left, right) => Number(right.inside) - Number(left.inside) || left.distanceM - right.distanceM);
+    return residential[0].label;
+  }
+  const pois = scored.filter((item) => !item.residential && (item.inside || item.distanceM <= POI_SNAP_M));
+  if (pois.length) {
+    pois.sort((left, right) => Number(right.inside) - Number(left.inside) || left.distanceM - right.distanceM);
+    return pois[0].label;
+  }
   return '';
 }
 
@@ -274,12 +435,26 @@ function vworldBuilding(body) {
   const features = body && body.response && body.response.result && body.response.result.featureCollection
     ? body.response.result.featureCollection.features
     : [];
-  if (!Array.isArray(features)) return { building: '', unit: '', poi: '' };
+  if (!Array.isArray(features)) return { building: '', unit: '', poi: '', candidates: [] };
+  const candidates = [];
   for (const feature of features) {
     const named = featureName(feature && feature.properties);
-    if (named.building || named.poi) return named;
+    const name = named.building || named.poi;
+    if (!name) continue;
+    candidates.push({
+      name,
+      unit: named.unit,
+      kind: named.building || RESIDENTIAL_NAME.test(name) ? 'residential' : 'poi',
+      geometry: feature.geometry || null,
+    });
   }
-  return { building: '', unit: '', poi: '' };
+  const first = candidates[0] || { name: '', unit: '', kind: '' };
+  return {
+    building: first.kind === 'residential' ? first.name : '',
+    unit: first.unit || '',
+    poi: first.kind === 'poi' ? first.name : '',
+    candidates,
+  };
 }
 
 async function fetchVworldAddress(fetchImpl, lat, lng, key, type) {
@@ -333,21 +508,46 @@ async function fetchVworld(fetchImpl, lat, lng, key) {
     dataUrl.searchParams.set('crs', 'EPSG:4326');
     dataUrl.searchParams.set('geomFilter', `POINT(${lng} ${lat})`);
     dataUrl.searchParams.set('buffer', '80');
-    dataUrl.searchParams.set('size', '8');
-    dataUrl.searchParams.set('geometry', 'false');
+    dataUrl.searchParams.set('size', '20');
+    dataUrl.searchParams.set('geometry', 'true');
     const buildingResponse = await fetchImpl(dataUrl.toString(), { signal: timeoutSignal(8000) });
     building = vworldBuilding(await readJson(buildingResponse));
   } catch {
-    building = { building: '', unit: '', poi: '' };
+    building = { building: '', unit: '', poi: '', candidates: [] };
   }
+  const point = { lat, lng };
+  const layer = (Array.isArray(building.candidates) ? building.candidates : []).map((item) => ({
+    ...item,
+    geometry: item.geometry || point,
+  }));
+  let picked = '';
+  try {
+    picked = choosePlaceLabel([
+      ...layer,
+      ...(parts.building ? [{ name: parts.building, unit: parts.unit, kind: 'residential', lat, lng }] : []),
+      ...(parts.poi ? [{ name: parts.poi, kind: 'poi', lat, lng }] : []),
+    ], point);
+  } catch {
+    picked = '';
+  }
+  if (picked) return picked;
   const named = formatPrecisePlace({
     dong: parts.dong,
     building: building.building || parts.building,
     unit: building.unit || parts.unit,
-    poi: building.poi || parts.poi,
+    poi: '',
   });
   if (named) return named;
   return presentPlace(parts.text) || [parts.district, parts.dong].filter(Boolean).join(' ');
+}
+
+function nominatimCandidates(body, lat, lng) {
+  const address = body && typeof body === 'object' ? body.address : null;
+  const named = namedFromAddress(address, body && body.namedetails);
+  const candidates = [];
+  if (named.building) candidates.push({ name: named.building, kind: 'residential', lat, lng });
+  if (named.poi) candidates.push({ name: named.poi, kind: POI_NAME.test(named.poi) || !RESIDENTIAL_NAME.test(named.poi) ? 'poi' : 'residential', lat, lng });
+  return { label: nominatimAddress(body), candidates };
 }
 
 async function fetchNominatim(fetchImpl, lat, lng) {
@@ -371,7 +571,7 @@ async function fetchNominatim(fetchImpl, lat, lng) {
     if (!(error instanceof TypeError) || !/unsafe header|User-Agent/i.test(message)) throw error;
     response = await fetchImpl(url.toString(), { signal: timeoutSignal(8000) });
   }
-  return nominatimAddress(await readJson(response));
+  return nominatimCandidates(await readJson(response), lat, lng);
 }
 
 async function fetchKakao(fetchImpl, lat, lng, key) {
@@ -398,27 +598,39 @@ async function fetchKakao(fetchImpl, lat, lng, key) {
   });
 }
 
+function overpassCandidates(body, lat, lng) {
+  const elements = body && Array.isArray(body.elements) ? body.elements : [];
+  const candidates = [];
+  for (const element of elements) {
+    const tags = element && element.tags;
+    if (!tags || typeof tags.name !== 'string') continue;
+    const name = cleanToken(tags.name);
+    if (!name || name === '근처' || isDong(name)) continue;
+    const residential = RESIDENTIAL_NAME.test(name)
+      || RESIDENTIAL_BUILDING.test(String(tags.building || ''))
+      || RESIDENTIAL_LANDUSE.test(String(tags.landuse || ''));
+    const geometry = Array.isArray(element.geometry) ? element.geometry : (Number.isFinite(element.lat) ? { lat: element.lat, lng: element.lon } : { lat, lng });
+    candidates.push({
+      name,
+      unit: formatUnit(tags['addr:unit'] || tags.ref || ''),
+      kind: residential ? 'residential' : 'poi',
+      buildingType: tags.building,
+      landuse: tags.landuse,
+      geometry,
+    });
+  }
+  return candidates;
+}
+
 async function fetchOverpass(fetchImpl, lat, lng) {
-  const query = `[out:json][timeout:8];(way(around:70,${lat},${lng})["name"]["building"];node(around:70,${lat},${lng})["name"];);out tags 8;`;
+  const query = `[out:json][timeout:8];(way(around:80,${lat},${lng})["name"]["building"];way(around:80,${lat},${lng})["name"]["landuse"="residential"];node(around:${POI_SNAP_M},${lat},${lng})["name"];);out tags geom;`;
   const response = await fetchImpl('https://overpass-api.de/api/interpreter', {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded;charset=UTF-8' },
     body: `data=${encodeURIComponent(query)}`,
     signal: timeoutSignal(8000),
   });
-  const body = await readJson(response);
-  const elements = body && Array.isArray(body.elements) ? body.elements : [];
-  for (const element of elements) {
-    const tags = element && element.tags;
-    if (!tags || typeof tags.name !== 'string') continue;
-    const name = cleanToken(tags.name);
-    if (!name || name === '근처' || isDong(name)) continue;
-    const building = tags.building ? name : '';
-    const poi = tags.building ? '' : name;
-    const precise = formatPrecisePlace({ building, poi });
-    if (precise) return precise;
-  }
-  return '';
+  return overpassCandidates(await readJson(response), lat, lng);
 }
 
 export async function reverseGeocode(lat, lng, options = {}) {
@@ -426,12 +638,15 @@ export async function reverseGeocode(lat, lng, options = {}) {
   if (typeof fetchImpl !== 'function') return null;
   const key = options.key !== undefined ? String(options.key || '') : readVworldKey();
   const kakaoKey = options.kakaoKey !== undefined ? String(options.kakaoKey || '') : readKakaoKey();
+  const point = { lat: Number(lat), lng: Number(lng) };
+  const candidates = Array.isArray(options.candidates) ? [...options.candidates] : [];
   let coarse = '';
   if (key) {
     try {
       const fromVworld = await fetchVworld(fetchImpl, lat, lng, key);
-      if (fromVworld && isPrecisePlace(fromVworld)) return presentPlace(fromVworld);
-      if (fromVworld) coarse = fromVworld;
+      if (fromVworld && isPrecisePlace(fromVworld) && RESIDENTIAL_NAME.test(fromVworld)) return presentPlace(fromVworld);
+      if (fromVworld && isPrecisePlace(fromVworld)) candidates.push({ name: fromVworld, kind: 'poi', lat, lng });
+      else if (fromVworld) coarse = fromVworld;
     } catch {
       /* Kakao·Nominatim으로 넘어간다 */
     }
@@ -439,7 +654,8 @@ export async function reverseGeocode(lat, lng, options = {}) {
   if (kakaoKey) {
     try {
       const fromKakao = await fetchKakao(fetchImpl, lat, lng, kakaoKey);
-      if (fromKakao) return fromKakao;
+      if (fromKakao && RESIDENTIAL_NAME.test(fromKakao)) return fromKakao;
+      if (fromKakao) candidates.push({ name: fromKakao, kind: 'poi', lat, lng });
     } catch {
       /* Nominatim으로 넘어간다 */
     }
@@ -447,17 +663,24 @@ export async function reverseGeocode(lat, lng, options = {}) {
   try {
     if (options.pace !== false) await paceNominatim();
     const fromNominatim = await fetchNominatim(fetchImpl, lat, lng);
-    if (fromNominatim && isPrecisePlace(fromNominatim)) return presentPlace(fromNominatim);
+    candidates.push(...fromNominatim.candidates);
     try {
-      const poi = await fetchOverpass(fetchImpl, lat, lng);
-      if (poi) return presentPlace(poi);
+      candidates.push(...await fetchOverpass(fetchImpl, lat, lng));
     } catch {
       /* 동네 표기를 유지한다 */
     }
-    if (fromNominatim) return presentPlace(fromNominatim);
+    const picked = choosePlaceLabel(candidates, point);
+    if (picked) return presentPlace(picked);
+    if (fromNominatim.label && isPrecisePlace(fromNominatim.label) && RESIDENTIAL_NAME.test(fromNominatim.label)) {
+      return presentPlace(fromNominatim.label);
+    }
+    if (fromNominatim.label) return presentPlace(fromNominatim.label);
   } catch {
-    /* VWorld 동네 표기로 내려간다 */
+    const picked = choosePlaceLabel(candidates, point);
+    if (picked) return presentPlace(picked);
   }
+  const leftover = choosePlaceLabel(candidates, point);
+  if (leftover) return presentPlace(leftover);
   return coarse ? presentPlace(coarse) : null;
 }
 

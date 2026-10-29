@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { memberPlaceLabel } from './memberPlace.mjs';
-import { formatPrecisePlace, NOMINATIM_USER_AGENT, nominatimAddress, placeGridKey, presentPlace, reverseGeocode, shortenAddress } from './placeGeocode.mjs';
+import { choosePlaceLabel, formatPrecisePlace, NOMINATIM_USER_AGENT, nominatimAddress, placeGridKey, presentPlace, reverseGeocode, shortenAddress } from './placeGeocode.mjs';
+import { stayLabelPoint } from './tracking.mjs';
 
 const SUTAEK = {
   display_name: '수택동, 구리시, 경기도, 11932, 대한민국',
@@ -144,6 +145,78 @@ test('a browser that refuses User-Agent still receives the neighborhood', async 
   assert.equal(label, '남양주시 다산동');
   assert.ok(calls >= 2);
   assert.equal(label.includes('근처'), false);
+});
+
+test('an apartment polygon beats the fire station next door', async () => {
+  const hagye = { lat: 37.6365, lng: 127.0680 };
+  const fire = { lat: 37.6354, lng: 127.0678 };
+  const apartment = {
+    name: '하계1차청구아파트',
+    unit: '104동',
+    kind: 'residential',
+    geometry: {
+      type: 'Polygon',
+      coordinates: [[
+        [127.0672, 37.6372],
+        [127.0688, 37.6372],
+        [127.0688, 37.6358],
+        [127.0672, 37.6358],
+        [127.0672, 37.6372],
+      ]],
+    },
+  };
+  const station = { name: '노원소방서', kind: 'poi', lat: fire.lat, lng: fire.lng };
+  assert.equal(choosePlaceLabel([station, apartment], hagye), '하계1차청구아파트 104동');
+  assert.equal(choosePlaceLabel([station, apartment], { lat: 37.6359, lng: 127.0680 }), '하계1차청구아파트 104동');
+  assert.equal(String(choosePlaceLabel([station, apartment], hagye)).includes('소방서'), false);
+
+  const fetchImpl = async (url) => {
+    if (String(url).includes('LT_C_BLDGINFO')) {
+      return jsonResponse({
+        response: {
+          result: {
+            featureCollection: {
+              features: [
+                { properties: { buld_nm: '노원소방서' }, geometry: { type: 'Point', coordinates: [fire.lng, fire.lat] } },
+                { properties: { buld_nm: '하계1차청구아파트', dong_nm: '104동' }, geometry: apartment.geometry },
+              ],
+            },
+          },
+        },
+      });
+    }
+    if (String(url).includes('vworld.kr')) {
+      return jsonResponse({ response: { result: [{ text: '서울특별시 노원구 하계동' }] } });
+    }
+    if (String(url).includes('nominatim.openstreetmap.org')) {
+      return jsonResponse({
+        display_name: '노원소방서, 하계동, 노원구, 서울',
+        address: { amenity: '노원소방서', suburb: '하계동', borough: '노원구' },
+        namedetails: { name: '노원소방서' },
+      });
+    }
+    return jsonResponse({
+      elements: [
+        { type: 'node', lat: fire.lat, lon: fire.lng, tags: { name: '노원소방서', amenity: 'fire_station' } },
+        { type: 'way', tags: { name: '하계1차청구아파트', building: 'apartments', ref: '104동' }, geometry: apartment.geometry.coordinates[0].map(([lng, lat]) => ({ lat, lon: lng })) },
+      ],
+    });
+  };
+  const label = await reverseGeocode(hagye.lat, hagye.lng, { fetch: fetchImpl, key: 'test-key', pace: false });
+  assert.equal(label, '하계1차청구아파트 104동');
+  assert.equal(String(label).includes('소방서'), false);
+
+  const jitter = [
+    { lat: 37.6366, lng: 127.0679, at: 1, staying: true },
+    { lat: 37.6364, lng: 127.0681, at: 2, staying: true },
+    { lat: 37.6365, lng: 127.0680, at: 3, staying: true },
+    { lat: fire.lat, lng: fire.lng, at: 4, staying: true },
+  ];
+  const snapped = stayLabelPoint(jitter, fire, false);
+  assert.ok(snapped);
+  assert.ok(Math.abs(snapped.lat - 37.63625) < 0.002);
+  const snappedLabel = choosePlaceLabel([station, apartment], snapped);
+  assert.equal(snappedLabel, '하계1차청구아파트 104동');
 });
 
 test('family card status starts with the neighborhood, never 근처', () => {
