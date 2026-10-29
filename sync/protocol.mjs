@@ -753,12 +753,19 @@ function cleanSubscription(input) {
 }
 
 export function departedMemberIds(room, audience = 'family') {
+  const live = new Set();
+  for (const place of Object.values(room.places || {})) {
+    if (!place || place.sharing !== true) continue;
+    if (audience && place.audience !== audience) continue;
+    if (typeof place.memberId === 'string' && place.memberId) live.add(place.memberId);
+  }
   const ids = [];
   const seen = new Set();
   for (const place of Object.values(room.places || {})) {
     if (!place || place.sharing !== false) continue;
     if (audience && place.audience !== audience) continue;
     if (typeof place.memberId !== 'string' || !place.memberId || seen.has(place.memberId)) continue;
+    if (live.has(place.memberId)) continue;
     seen.add(place.memberId);
     ids.push(place.memberId);
   }

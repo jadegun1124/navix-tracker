@@ -6,7 +6,7 @@ import { isSelfEchoPlace, mergePeerSessions, withoutSelfEcho } from '../../lib/p
 import { resolveManagedTarget } from '../../lib/managedPlace.mjs';
 import { hiddenKeysForMember, placeHidden } from '../../lib/familyRoom.mjs';
 import { bindPlaceToMember, placeIsSelf, placeMemberId } from '../../lib/placeBinding.mjs';
-import { cleanDepartedIds } from '../../lib/memberPresence.mjs';
+import { hideLeftPublishers, sharedPlaceStopsReporting } from '../../lib/memberPresence.mjs';
 import { familyPinId, isMemberId, moveKeyed } from '../../lib/sharedIdentity.mjs';
 import { HISTORY_DAYS, JOURNEY_POINT_CAP, TRAIL_POINT_CAP, fixShowsRide, isWithinHistory, journeysWithinHistory, labelJourneyPlace, lastTravelAt, mergeJourneyLists, seoulDayKey, settleTrailPoint, stayLabelDwellMs, storedTrackAfterArchive, tracksWithinHistory, trimJourneyList, visitsWithinHistory, type JourneyRecord } from '../../lib/tracking.mjs';
 import type { DayStop } from '../../lib/tracking.mjs';
@@ -443,32 +443,6 @@ function cleanProfile(value: unknown): Profile | null {
 
 function memberIdOf(place: SharedPlace): string {
   return placeMemberId(place);
-}
-
-function dropLeftPublishers(state: Session, memberIds: string[]): Session {
-  const gone = new Set(cleanDepartedIds(memberIds));
-  if (gone.size === 0) return state;
-  const removed = state.members.filter((member) => member.id !== 'self' && member.publisherId && gone.has(member.publisherId));
-  if (removed.length === 0) return state;
-  const dropIds = new Set(removed.map((member) => member.id));
-  const tracks = { ...state.tracks };
-  const journeys = { ...state.journeys };
-  const visits = { ...state.visits };
-  const trailRevisions = { ...(state.trailRevisions || {}) };
-  for (const member of removed) {
-    delete tracks[member.id];
-    delete journeys[member.id];
-    delete visits[member.id];
-    if (member.publisherId) delete trailRevisions[member.publisherId];
-  }
-  return {
-    ...state,
-    members: state.members.filter((member) => !dropIds.has(member.id)),
-    tracks,
-    journeys,
-    visits,
-    trailRevisions,
-  };
 }
 
 function withPublisher(member: Member, place: SharedPlace): Member {
@@ -926,8 +900,9 @@ function reducer(state: Session, action: Action): Session {
       const place = action.place;
       if (placeHidden(place.code, place, state.hiddenMemberIds || [])) return state;
       if (placeIsSelf(place, state.profile?.id)) return state;
+      // leftover admin stop records are not a leave. Do not hide or delete history.
+      if (sharedPlaceStopsReporting(place)) return state;
       const publisher = memberIdOf(place);
-      if (!place.sharing && publisher) return dropLeftPublishers(state, [publisher]);
       if (place.audience === 'family') return state;
       if (!publisher) return state;
       const target = resolveManagedTarget(state.members, place);
@@ -938,21 +913,6 @@ function reducer(state: Session, action: Action): Session {
       const member = members.find((item) => item.id === target.id);
       if (!member) return state;
       state = { ...state, members };
-      if (!place.sharing) {
-        if (member.share !== 'allowed' && !hasLocation(member)) return state;
-        const archived = archiveJourneys(state, place.at || Date.now());
-        const tracks = { ...archived.tracks };
-        delete tracks[member.id];
-        const publisher = memberIdOf(place);
-        const trailRevisions = { ...(archived.trailRevisions || {}) };
-        if (publisher) delete trailRevisions[publisher];
-        return {
-          ...archived,
-          members: archived.members.map((item) => (item.id === member.id ? withPublisher({ ...item, share: 'revoked', lat: null, lng: null, updatedAt: place.at }, place) : item)),
-          tracks,
-          trailRevisions,
-        };
-      }
       if (place.lat == null || place.lng == null || !Number.isFinite(place.lat) || !Number.isFinite(place.lng)) {
         const battery = typeof place.batteryPct === 'number' ? Math.round(place.batteryPct) : member.battery;
         const charging = place.charging === true ? true : place.charging === false ? false : member.charging;
@@ -1049,7 +1009,7 @@ function reducer(state: Session, action: Action): Session {
       const today = seoulDayKey(now);
       const profiles = action.profiles ?? [];
       const hidden = state.hiddenMemberIds || [];
-      state = dropLeftPublishers(state, action.departed || []);
+      state = hideLeftPublishers(state, action.departed || []);
       const incoming = action.places.filter((place) => (
         place.audience === 'family'
         && place.sharing
