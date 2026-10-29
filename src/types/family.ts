@@ -13,6 +13,9 @@ export interface TrackPoint {
   lng: number;
   at: number;
   speedMps?: number | null;
+  accuracyM?: number;
+  staying?: boolean;
+  stayEnd?: boolean;
 }
 
 export interface Visit {
@@ -121,8 +124,10 @@ export interface Session {
   tracks: Record<string, TrackPoint[]>;
   trailDay: string;
   visits: Record<string, Visit[]>;
-  /** Finished trips on this phone. Not uploaded. */
+  /** Finished trips. Another phone renders the publisher's copy instead of rebuilding it. */
   journeys: Record<string, Journey[]>;
+  /** Publisher id → timestamp of the canonical trail already applied on this phone. */
+  trailRevisions: Record<string, number>;
   shareSelfWithFamily: boolean;
   backgroundKeepAlive: boolean;
   home: HomeZone | null;

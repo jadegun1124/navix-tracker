@@ -503,6 +503,15 @@ public class LocationKeepService {
             motionAnchor = new Location(fix);
             motionAnchor.setTime(fixAt);
             stillSinceMs = fixAt;
+            float opening = fix.hasSpeed() ? fix.getSpeed() : -1f;
+            // Already at about 30 km/h: start the 1s stream on this fix so the
+            // drive does not wait out a 2 minute hole before the next sample.
+            if (opening >= 8f) {
+                lastRideAt = fixAt;
+                stillSinceMs = 0L;
+                movingStream = true;
+                return true;
+            }
             movingStream = false;
             return false;
         }

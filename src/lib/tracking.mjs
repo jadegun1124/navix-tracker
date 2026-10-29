@@ -1,15 +1,17 @@
-// Stop-to-stop day record for Umap.
+// Stop-to-stop day record for Kinnex.
 //
 // Stops: linger inside STOP_RADIUS_M for STOP_MIN_MS (Samsung Health style).
 // A segment is the travel between two consecutive stops. Travel time is
 // arrival at the next stop minus departure from the previous stop.
 //
-// Mode uses the segment's average speed (distance / travel time):
-//   도보     < 7 km/h
-//   자전거   7–23 km/h
-//   차량     23–200 km/h, and any faster burst that is too short to be a flight
+// Mode uses the trip, not one GPS spike:
+//   도보     average under 7 km/h (보통 4–6)
+//   자전거   about 7–12 km/h, or a steady 12–15 km/h median that never holds car speed
+//   차량     sustained >= 30 km/h, median moving speed > 15 km/h, or average
+//            including dashed gaps > 12 km/h
 //   비행기   >= 200 km/h AND >= 20 km AND >= 3 min
 // Under 40 m is always 도보 so GPS creep inside a building is not a vehicle.
+// A dashed hole still counts its straight chord when that chord is real travel.
 // 고속철(약 300 km/h)은 거리·시간 조건을 넘으면 비행기로 잡힐 수 있다.
 //
 // Steps: Capacitor core has no pedometer. 도보 segments estimate
@@ -33,7 +35,12 @@ export const HISTORY_DAYS = 30;
 export const VISIT_DAY_CAP = 40;
 
 export const MODE_WALK_MAX_KMH = 7;
+/** Average above this, once gaps are included, is a vehicle. Bike sits under it. */
+export const MODE_VEHICLE_AVG_KMH = 12;
 export const MODE_BIKE_MAX_KMH = 23;
+/** Several fixes or a full minute at this pace is a car, not one spike. */
+export const MODE_VEHICLE_SUSTAINED_KMH = 30;
+export const MODE_VEHICLE_MEDIAN_KMH = 15;
 export const MODE_PLANE_MIN_KMH = 200;
 export const MODE_PLANE_MIN_DISTANCE_M = 20_000;
 export const MODE_PLANE_MIN_DURATION_MS = 3 * 60 * 1000;
@@ -492,10 +499,13 @@ export function isImpossibleJump(last, point) {
   const pace = stepPace(last, point);
   if (!pace) return false;
   if (pace.speed > FIX_MAX_JUMP_MPS) return true;
-  if (pace.dt > TRAIL_SPIKE_WINDOW_MS || pace.moved < TRAIL_SPIKE_MIN_M) return false;
-  if (pace.speed < TRAIL_SPIKE_MPS) return false;
   const reported = pointSpeed(point);
   if (reported != null && reported >= TRAIL_RIDE_MIN_MPS && pace.speed <= Math.max(reported * 1.85, reported + 8)) return false;
+  // A car on a highway is not a courtyard spike. Teleports stay above ~160 km/h
+  // or a short hop. A 20s chord at 30–100 km/h is the gap the distance must keep.
+  if (pace.speed <= 45 && pace.dt >= 3_000) return false;
+  if (pace.dt > TRAIL_SPIKE_WINDOW_MS || pace.moved < TRAIL_SPIKE_MIN_M) return false;
+  if (pace.speed < TRAIL_SPIKE_MPS) return false;
   return true;
 }
 
@@ -520,6 +530,13 @@ export function trailDecision(last, point) {
   // Bike and vehicle fixes are kept on the GPS clock. A stay flag, or a missing
   // speed, must not wait for a 50–120m chord. Walk jitter still snaps below.
   if (isRideStep(last, point)) return 'keep';
+  // ~30 km/h or faster is a vehicle sample. A reported speed keeps it even when
+  // the stay flag is still set, so a drive does not collapse into a dashed hole.
+  // Implied speed alone does not: a stay with a zero reading is courtyard jitter.
+  const reported = pointSpeed(point);
+  const fastGround = implied >= 8 && implied <= 45 && dt >= 800 && moved >= TRAIL_RIDE_MIN_STEP_M;
+  if (reported != null && reported >= 8 && fastGround) return 'keep';
+  if (reported == null && point?.staying !== true && fastGround) return 'keep';
   if (moved <= trailMoveGate(last, point)) return 'snap';
   // A stay flag with a walking GPS speed still keeps 4m vertices.
   // A fast hop inside the bubble is multipath that borrowed a speed reading.
@@ -1292,9 +1309,77 @@ export function classifyMode(speedKmh, distanceM, durationMs) {
   const duration = Number.isFinite(durationMs) ? durationMs : 0;
   if (distance < 40) return 'walk';
   if (speed >= MODE_PLANE_MIN_KMH && distance >= MODE_PLANE_MIN_DISTANCE_M && duration >= MODE_PLANE_MIN_DURATION_MS) return 'plane';
-  if (speed >= MODE_BIKE_MAX_KMH) return 'vehicle';
+  if (speed > MODE_VEHICLE_AVG_KMH) return 'vehicle';
   if (speed >= MODE_WALK_MAX_KMH) return 'bike';
   return 'walk';
+}
+
+function medianNumber(values) {
+  if (!values.length) return 0;
+  const sorted = values.slice().sort((left, right) => left - right);
+  const mid = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 === 1) return sorted[mid];
+  return (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+/**
+ * Card mode from the stored samples.
+ * One fast fix does not flip the trip. A dashed chord still feeds the average
+ * when `distanceM` already includes it. Vehicle rules win over the bike band.
+ */
+export function classifyJourneyMode(points, distanceM, durationMs) {
+  const distance = Number.isFinite(distanceM) ? distanceM : 0;
+  const duration = Number.isFinite(durationMs) ? durationMs : 0;
+  const avg = duration > 0 ? (distance / 1000) / (duration / 3_600_000) : 0;
+  if (distance < 40) return 'walk';
+  if (avg >= MODE_PLANE_MIN_KMH && distance >= MODE_PLANE_MIN_DISTANCE_M && duration >= MODE_PLANE_MIN_DURATION_MS) return 'plane';
+  const speeds = [];
+  let runMs = 0;
+  let runCount = 0;
+  let bestRunMs = 0;
+  let bestRunCount = 0;
+  let fastMs = 0;
+  const list = Array.isArray(points) ? points : [];
+  const closeRun = () => {
+    if (runCount <= 0) return;
+    if (runMs > bestRunMs) bestRunMs = runMs;
+    if (runCount > bestRunCount) bestRunCount = runCount;
+    runMs = 0;
+    runCount = 0;
+  };
+  for (let index = 1; index < list.length; index += 1) {
+    const prev = list[index - 1];
+    const point = list[index];
+    if (!prev || !point || prev.stayEnd || point.stayEnd) continue;
+    if (isImpossibleJump(prev, point)) continue;
+    const pace = stepPace(prev, point);
+    if (!pace || pace.speed > 45) continue;
+    const kmh = pace.speed * 3.6;
+    if (kmh < 4) {
+      closeRun();
+      continue;
+    }
+    speeds.push(kmh);
+    if (kmh > MODE_VEHICLE_AVG_KMH) fastMs += pace.dt;
+    if (kmh >= MODE_VEHICLE_SUSTAINED_KMH) {
+      runMs += pace.dt;
+      runCount += 1;
+      if (runMs > bestRunMs) bestRunMs = runMs;
+      if (runCount > bestRunCount) bestRunCount = runCount;
+    } else {
+      closeRun();
+    }
+  }
+  const median = medianNumber(speeds);
+  const sustained = bestRunCount >= 3 || bestRunMs >= 60_000;
+  const medianVehicle = speeds.length >= 3 && median > MODE_VEHICLE_MEDIAN_KMH;
+  const avgVehicle = avg > MODE_VEHICLE_AVG_KMH && fastMs >= 60_000;
+  if (sustained || medianVehicle || avgVehicle) return 'vehicle';
+  if (median >= 12 && median <= MODE_BIKE_MAX_KMH && speeds.length >= 3) return 'bike';
+  // One fast fix can lift the average into the bike band. The median of the
+  // other steps still says this was a walk.
+  if (speeds.length >= 3 && median < MODE_WALK_MAX_KMH) return 'walk';
+  return classifyMode(avg, distance, duration);
 }
 
 export function estimateSteps(distanceM) {
@@ -1521,23 +1606,46 @@ function isSlowGap(prev, point) {
   return true;
 }
 
-/** Meters that are real steps. A dashed hole and an impossible jump do not count. */
-function travelDistance(points) {
+/**
+ * Straight chord of a dashed hole when it is real travel.
+ * A teleport and a stay-to-stay wobble add nothing. A car gap does.
+ */
+function gapTravelMeters(prev, point) {
+  if (isImpossibleJump(prev, point)) return 0;
+  const pace = stepPace(prev, point);
+  if (!pace || pace.moved < 1 || pace.speed > 45) return 0;
+  const stayed = (sample) => sample?.staying === true || pointSpeed(sample) === 0;
+  if (stayed(prev) && stayed(point) && pace.speed < 1.2) return 0;
+  if (pace.speed < 0.7 && !isRideStep(prev, point)) return 0;
+  return pace.moved;
+}
+
+/** Meters of the trip. Dashed gaps count their chord. An impossible jump does not. */
+export function journeyPathDistance(points) {
+  if (!Array.isArray(points) || points.length < 2) return 0;
   let distance = 0;
   for (let index = 1; index < points.length; index += 1) {
     const prev = points[index - 1];
     const point = points[index];
     if (!prev || !point || prev.stayEnd || point.stayEnd) continue;
-    if (isImpossibleJump(prev, point) || isSlowGap(prev, point) || trailSegmentDashed(prev, point)) continue;
+    if (isImpossibleJump(prev, point)) continue;
+    if (isSlowGap(prev, point) || trailSegmentDashed(prev, point)) {
+      distance += gapTravelMeters(prev, point);
+      continue;
+    }
     if (isRideStep(prev, point)) {
       distance += haversineMeters(prev, point);
       continue;
     }
     const pace = stepPace(prev, point);
-    if (!pace || pace.speed > 12 || pace.dt < 800) continue;
+    if (!pace || pace.speed > 45 || pace.dt < 800) continue;
     if (pace.speed >= 0.7 && pace.moved >= TRAIL_WALK_VERTEX_M) distance += pace.moved;
   }
   return distance;
+}
+
+function travelDistance(points) {
+  return journeyPathDistance(points);
 }
 
 function hasRealTravel(points) {
@@ -1839,10 +1947,45 @@ export function previewOpenJourney(points, now) {
   };
 }
 
+function sampleAlong(runPoints, target) {
+  const last = runPoints[runPoints.length - 1];
+  if (!last) return null;
+  if (runPoints.length === 1 || target <= runPoints[0].at) {
+    const point = runPoints[0];
+    const speed = pointSpeed(point);
+    return { lat: point.lat, lng: point.lng, at: point.at, speedMps: speed == null ? 0 : speed };
+  }
+  if (target >= last.at) {
+    const speed = pointSpeed(last);
+    return { lat: last.lat, lng: last.lng, at: last.at, speedMps: speed == null ? 0 : speed };
+  }
+  let prev = runPoints[0];
+  for (let index = 1; index < runPoints.length; index += 1) {
+    const next = runPoints[index];
+    if (target > next.at && index < runPoints.length - 1) {
+      prev = next;
+      continue;
+    }
+    const span = next.at - prev.at;
+    const fraction = span > 0 ? Math.min(1, Math.max(0, (target - prev.at) / span)) : 1;
+    const pace = stepPace(prev, next);
+    const reported = pointSpeed(next);
+    const speed = pace ? pace.speed : reported;
+    return {
+      lat: prev.lat + (next.lat - prev.lat) * fraction,
+      lng: prev.lng + (next.lng - prev.lng) * fraction,
+      at: span > 0 ? prev.at + span * fraction : next.at,
+      speedMps: speed == null || !Number.isFinite(speed) ? 0 : speed,
+    };
+  }
+  return { lat: last.lat, lng: last.lng, at: last.at, speedMps: 0 };
+}
+
 /**
- * Playback position along dense samples only.
- * A dashed hole is not a frame: the marker stays on the near side of that hole
- * instead of flying across it. A track that is only a hole does not move.
+ * Position along the solid runs at `ratio` of their duration.
+ * Time picks the segment. Within that segment the marker moves by distance
+ * along the samples, so a curve is followed instead of a chord across it.
+ * A dashed hole is not a frame: the marker stays on the near side.
  */
 export function playbackAnchor(points, ratio) {
   const list = [];
@@ -1886,24 +2029,7 @@ export function playbackAnchor(points, ratio) {
     }
     const runPoints = runs[index];
     const target = runPoints[0].at + Math.min(cursor, duration);
-    let atIndex = 0;
-    for (let cursorIndex = 1; cursorIndex < runPoints.length; cursorIndex += 1) {
-      if (runPoints[cursorIndex].at <= target + 0.5) atIndex = cursorIndex;
-      else break;
-    }
-    const point = runPoints[atIndex];
-    const next = runPoints[Math.min(runPoints.length - 1, atIndex + 1)];
-    let speed = pointSpeed(point);
-    if ((speed == null || speed <= 0) && next !== point && !trailSegmentDashed(point, next)) {
-      const pace = stepPace(point, next);
-      if (pace) speed = pace.speed;
-    }
-    return {
-      lat: point.lat,
-      lng: point.lng,
-      at: point.at,
-      speedMps: speed == null || !Number.isFinite(speed) ? 0 : speed,
-    };
+    return sampleAlong(runPoints, target);
   }
   const end = runs[runs.length - 1][runs[runs.length - 1].length - 1];
   return still(end);
@@ -1962,6 +2088,15 @@ function journeyPointsOverlap(left, right) {
   return seen > 0 && hits >= Math.min(3, seen) && hits * 2 >= seen;
 }
 
+function distancesMatch(left, right) {
+  const a = Math.max(0, Number(left?.distanceM) || 0);
+  const b = Math.max(0, Number(right?.distanceM) || 0);
+  const shorter = Math.min(a, b);
+  const longer = Math.max(a, b);
+  if (longer < 80) return true;
+  return shorter + 120 >= longer * 0.5;
+}
+
 function sameTrip(left, right) {
   if (!left?.start || !right?.start || !Number.isFinite(left.startedAt) || !Number.isFinite(right.startedAt)) return false;
   if (!Number.isFinite(left.endedAt) || !Number.isFinite(right.endedAt)) return false;
@@ -1979,6 +2114,8 @@ function sameTrip(left, right) {
     if (endsClose && endsNear) return true;
   }
   // A 1.27 card started at the stay. The clipped card starts at departure and ends together.
+  // A short courtyard at the destination shares that end, but not the trip length.
+  if (!distancesMatch(left, right)) return false;
   if (endsClose && overlap >= 60_000 && endsNear) return true;
   if (overlap >= 60_000 && journeyPointsOverlap(left, right)) return true;
   return false;
@@ -1987,8 +2124,10 @@ function sameTrip(left, right) {
 function preferJourney(left, right) {
   const startGap = Math.abs(left.startedAt - right.startedAt);
   const later = left.startedAt >= right.startedAt ? left : right;
+  const earlier = later === left ? right : left;
   const richer = (right.distanceM || 0) > (left.distanceM || 0) ? right : left;
-  const preferred = startGap > 3 * 60_000 ? later : richer;
+  const laterKeepsDistance = (later.distanceM || 0) + 120 >= (earlier.distanceM || 0) * 0.5;
+  const preferred = startGap > 3 * 60_000 && laterKeepsDistance ? later : richer;
   const other = preferred === left ? right : left;
   const lat = preferred.start?.lat ?? other.start?.lat ?? 0;
   const lng = preferred.start?.lng ?? other.start?.lng ?? 0;

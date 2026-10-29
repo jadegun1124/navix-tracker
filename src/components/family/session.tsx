@@ -31,6 +31,14 @@ import {
   type Visit,
 } from '../../types/family';
 
+type CanonicalTrail = {
+  memberId: string;
+  at: number;
+  moving: boolean;
+  points: TrackPoint[];
+  journeys: Journey[];
+};
+
 const STORAGE_KEY = 'umap_family_v1';
 const SESSION_KEYS = [STORAGE_KEY, `${STORAGE_KEY}:admin`, `${STORAGE_KEY}:managed`] as const;
 
@@ -118,6 +126,7 @@ function fresh(stage: Stage = 'splash'): Session {
     trailDay: seoulDayKey(Date.now()),
     visits: {},
     journeys: {},
+    trailRevisions: {},
     shareSelfWithFamily: false,
     backgroundKeepAlive: false,
     home: null,
@@ -135,6 +144,23 @@ function fresh(stage: Stage = 'splash'): Session {
     motionNotifyIds: [],
     motionAlertPhase: 'unknown',
   };
+}
+
+function cleanTrailRevisions(value: unknown): Record<string, number> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const out: Record<string, number> = {};
+  for (const [key, at] of Object.entries(value as Record<string, unknown>)) {
+    if (!/^local-[a-z0-9]{3,64}$/.test(key)) continue;
+    if (typeof at !== 'number' || !Number.isFinite(at)) continue;
+    out[key] = at;
+  }
+  return out;
+}
+
+function canonicalTrailAt(state: Session, member: { publisherId?: string }): number {
+  const id = member.publisherId || '';
+  if (!id) return 0;
+  return state.trailRevisions?.[id] || 0;
 }
 
 function cleanMotionNotifyIds(value: unknown): string[] {
@@ -530,6 +556,7 @@ function load(): Session {
       trailDay: typeof parsed.trailDay === 'string' ? parsed.trailDay : '',
       visits: cleanVisits(parsed.visits),
       journeys: cleanJourneys((parsed as Session).journeys),
+      trailRevisions: cleanTrailRevisions((parsed as Session).trailRevisions),
       shareSelfWithFamily: parsed.shareSelfWithFamily === true,
       backgroundKeepAlive: parsed.backgroundKeepAlive === true,
       phoneVerified: false,
@@ -595,6 +622,7 @@ type Action =
   | { type: 'apply-shared-place'; place: SharedPlace }
   | { type: 'apply-shared-profiles'; code: string; profiles: SharedProfile[] }
   | { type: 'set-room-family-places'; code: string; places: SharedPlace[]; profiles: SharedProfile[] }
+  | { type: 'apply-canonical-trails'; trails: CanonicalTrail[] }
   | { type: 'merge-visits'; memberId: string; stops: DayStop[] }
   | { type: 'set-visit-label'; memberId: string; id: string; label: string }
   | { type: 'set-journey-label'; memberId: string; id: string; which: 'start' | 'end'; label: string; lat?: number; lng?: number }
@@ -883,10 +911,14 @@ function reducer(state: Session, action: Action): Session {
         const archived = archiveJourneys(state, place.at || Date.now());
         const tracks = { ...archived.tracks };
         delete tracks[member.id];
+        const publisher = memberIdOf(place);
+        const trailRevisions = { ...(archived.trailRevisions || {}) };
+        if (publisher) delete trailRevisions[publisher];
         return {
           ...archived,
           members: archived.members.map((item) => (item.id === member.id ? withPublisher({ ...item, share: 'revoked', lat: null, lng: null, updatedAt: place.at }, place) : item)),
           tracks,
+          trailRevisions,
         };
       }
       if (place.lat == null || place.lng == null || !Number.isFinite(place.lat) || !Number.isFinite(place.lng)) {
@@ -921,6 +953,27 @@ function reducer(state: Session, action: Action): Session {
         && member.name === nextName
         && (member.publisherId || '') === (memberIdOf(place) || '')
       ) return state;
+      if (canonicalTrailAt(state, member) > 0 && place.lat != null && place.lng != null) {
+        const keptPlace = carryPlace(member, place.lat, place.lng);
+        return {
+          ...state,
+          members: state.members.map((item) =>
+            item.id === member.id
+              ? withPublisher({
+                  ...item,
+                  share: 'allowed',
+                  lat: place.lat,
+                  lng: place.lng,
+                  accuracyM: Math.max(1, Math.round(place.accuracyM || item.accuracyM || 1)),
+                  battery,
+                  charging,
+                  updatedAt: place.at,
+                  ...(keptPlace ? { place: keptPlace } : { place: undefined }),
+                }, place)
+              : item,
+          ),
+        };
+      }
       const now = Date.now();
       const keptTracks = tracksWithinHistory(state.tracks, now);
       const settled = settleTrailPoint(keptTracks[member.id], {
@@ -1003,9 +1056,9 @@ function reducer(state: Session, action: Action): Session {
             visits = moveKeyed(visits, item.id, roster.id);
             journeys = moveKeyed(journeys, item.id, roster.id);
           }
-          const settled = isWithinHistory(place.at, now)
-            ? settleTrailPoint(tracks[roster.id], { lat: place.lat, lng: place.lng, at: place.at, accuracyM: place.accuracyM }, now)
-            : null;
+          const settled = canonicalTrailAt(state, { publisherId: item.memberId }) > 0 || !isWithinHistory(place.at, now)
+            ? null
+            : settleTrailPoint(tracks[roster.id], { lat: place.lat, lng: place.lng, at: place.at, accuracyM: place.accuracyM }, now);
           if (settled) tracks = { ...tracks, [roster.id]: settled.points };
           const lat = settled && settled.decision === 'drop' && hasLocation(roster) ? roster.lat : (settled?.lat ?? place.lat);
           const lng = settled && settled.decision === 'drop' && hasLocation(roster) ? roster.lng : (settled?.lng ?? place.lng);
@@ -1044,7 +1097,7 @@ function reducer(state: Session, action: Action): Session {
           ...(item.photo ? { photo: item.photo } : {}),
           ...(keptPlace ? { place: keptPlace } : {}),
         }];
-        if (isWithinHistory(place.at, now)) {
+        if (canonicalTrailAt(state, { publisherId: item.memberId }) === 0 && isWithinHistory(place.at, now)) {
           const settled = settleTrailPoint(tracks[item.id], { lat: place.lat, lng: place.lng, at: place.at, accuracyM: place.accuracyM }, now);
           tracks = { ...tracks, [item.id]: settled.points };
           const pinned = members[members.length - 1];
@@ -1057,6 +1110,30 @@ function reducer(state: Session, action: Action): Session {
         if (!members.some((item) => item.id === member.id)) delete tracks[member.id];
       }
       return archiveJourneys({ ...state, members, tracks, visits, journeys, trailDay: today }, now);
+    }
+    case 'apply-canonical-trails': {
+      const selfId = state.profile?.id || '';
+      let tracks = state.tracks;
+      let journeys = state.journeys ?? {};
+      let members = state.members;
+      let revisions = { ...(state.trailRevisions || {}) };
+      let changed = false;
+      for (const trail of action.trails) {
+        if (!isMemberId(trail.memberId) || trail.memberId === selfId) continue;
+        if ((revisions[trail.memberId] || 0) > trail.at) continue;
+        const member = members.find((item) => item.id !== 'self' && item.publisherId === trail.memberId);
+        if (!member) continue;
+        const sameAt = revisions[trail.memberId] === trail.at;
+        const sameLine = (tracks[member.id] || []).length === trail.points.length;
+        if (sameAt && sameLine && (journeys[member.id] || []).length === trail.journeys.length && member.moving === trail.moving) continue;
+        changed = true;
+        revisions = { ...revisions, [trail.memberId]: trail.at };
+        tracks = { ...tracks, [member.id]: trail.points };
+        journeys = { ...journeys, [member.id]: trail.journeys };
+        members = members.map((item) => (item.id === member.id ? { ...item, moving: trail.moving } : item));
+      }
+      if (!changed) return state;
+      return { ...state, tracks, journeys, members, trailRevisions: revisions };
     }
     case 'apply-shared-profiles': {
       const profiles = action.profiles.filter((profile) => isMemberId(profile.memberId) && profile.memberId !== state.profile?.id);
@@ -1229,6 +1306,7 @@ function reducer(state: Session, action: Action): Session {
         hiddenMemberIds: [],
         motionNotifyIds: [],
         motionAlertPhase: 'unknown',
+        trailRevisions: {},
         notices: [notice(action.serverNote ? '가족 방을 나갔습니다' : '가족 방을 지웠습니다', noteBody), ...state.notices].slice(0, 40),
       };
     }
@@ -1271,6 +1349,7 @@ interface FamilyApi {
   applySharedPlace: (place: SharedPlace) => void;
   applySharedProfiles: (code: string, profiles: SharedProfile[]) => void;
   setRoomFamilyPlaces: (code: string, places: SharedPlace[], profiles?: SharedProfile[]) => void;
+  applyCanonicalTrails: (trails: CanonicalTrail[]) => void;
   mergeVisits: (memberId: string, stops: DayStop[]) => void;
   setVisitLabel: (memberId: string, id: string, label: string) => void;
   closeJourneys: (now: number) => void;
@@ -1345,6 +1424,7 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
     applySharedPlace: (place) => dispatch({ type: 'apply-shared-place', place }),
     applySharedProfiles: (code, profiles) => dispatch({ type: 'apply-shared-profiles', code, profiles }),
     setRoomFamilyPlaces: (code, places, profiles) => dispatch({ type: 'set-room-family-places', code, places, profiles: profiles ?? [] }),
+    applyCanonicalTrails: (trails) => dispatch({ type: 'apply-canonical-trails', trails }),
     mergeVisits: (memberId, stops) => dispatch({ type: 'merge-visits', memberId, stops }),
     setVisitLabel: (memberId, id, label) => dispatch({ type: 'set-visit-label', memberId, id, label }),
     closeJourneys: (now) => dispatch({ type: 'close-journeys', now }),

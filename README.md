@@ -1,21 +1,21 @@
-# Umap
+# Kinnex
 
 동의한 가족과 위치를 나누는 서비스입니다. 웹사이트는 회사 소개만 두고, 가족 지도는 휴대폰 앱에서 씁니다.
 
-제품 이름은 **Umap** 입니다. GitHub 저장소는 [jadegun1124/umap](https://github.com/jadegun1124/umap) 입니다.
+제품 이름은 **Kinnex** 입니다. GitHub 저장소는 [jadegun1124/kinnex](https://github.com/jadegun1124/kinnex) 입니다.
 
 ## 공개 주소
 
 | 무엇 | 어디 | 주소 |
 | :--- | :--- | :--- |
-| 회사 홈 | GitHub Pages | https://jadegun1124.github.io/umap/ |
-| 앱 화면 미리보기 | 같은 Pages의 `?app=1` | https://jadegun1124.github.io/umap/?app=1 |
-| 안드로이드 앱 | GitHub Releases APK v1.28.0 | https://github.com/jadegun1124/umap/releases/download/v1.28.0/umap-v1.28.0-tracker.apk |
-| 릴리스 페이지 | GitHub Releases | https://github.com/jadegun1124/umap/releases/tag/v1.28.0 |
+| 회사 홈 | GitHub Pages | https://jadegun1124.github.io/kinnex/ |
+| 앱 화면 미리보기 | 같은 Pages의 `?app=1` | https://jadegun1124.github.io/kinnex/?app=1 |
+| 안드로이드 앱 | GitHub Releases APK v1.29.0 | https://github.com/jadegun1124/kinnex/releases/download/v1.29.0/kinnex-v1.29.0.apk |
+| 릴리스 페이지 | GitHub Releases | https://github.com/jadegun1124/kinnex/releases/tag/v1.29.0 |
 
 Google Play, App Store, TestFlight에는 올리지 않았습니다. iOS는 아이콘 에셋만 있고 설치 파일은 없습니다.
 
-`main`에 푸시하면 GitHub Actions가 회사 홈을 Pages에 배포하고, 같은 커밋으로 디버그 APK를 만들어 GitHub Release `v1.28.0`의 `umap-v1.28.0-tracker.apk`를 갱신합니다. 이전 빌드는 `v1.27.0`, `v1.26.0`, `v1.25.0`, `v1.24.0`, `v1.23.0`, `v1.22.0`, `v1.21.0`, `v1.20.0`, `v1.19.0`, `v1.18.0`, `v1.17.0`, `v1.16.0`, `v1.15.0`, `v1.14.0`, `v1.13.0`, `v1.12.0`, `v1.11.0`, `v1.10.0`, `v1.9.0`, `v1.8.0`, `v1.7.0`, `v1.6.0`, `v1.5.0`, `v1.4.0`, `v1.3.0`, `v1.2.0`, `v1.1.0`, `v1.0.0`에 남아 있습니다.
+`main`에 푸시하면 GitHub Actions가 회사 홈을 Pages에 배포하고, 같은 커밋으로 디버그 APK를 만들어 GitHub Release `v1.29.0`의 `kinnex-v1.29.0.apk`를 갱신합니다. 이전 빌드는 `v1.27.0`, `v1.26.0`, `v1.25.0`, `v1.24.0`, `v1.23.0`, `v1.22.0`, `v1.21.0`, `v1.20.0`, `v1.19.0`, `v1.18.0`, `v1.17.0`, `v1.16.0`, `v1.15.0`, `v1.14.0`, `v1.13.0`, `v1.12.0`, `v1.11.0`, `v1.10.0`, `v1.9.0`, `v1.8.0`, `v1.7.0`, `v1.6.0`, `v1.5.0`, `v1.4.0`, `v1.3.0`, `v1.2.0`, `v1.1.0`, `v1.0.0`에 남아 있습니다.
 
 ## 화면
 
@@ -30,7 +30,7 @@ Google Play, App Store, TestFlight에는 올리지 않았습니다. iOS는 아�
 
 | 권한 | 쓰는 이유 |
 | :--- | :--- |
-| 알림 | SOS와 집 반경. 처음 권한 화면에서 위치와 함께 묻고, 허용을 누르면 시스템 알림 창이 열립니다. 위치 공유 중에는 알림 목록에 Umap 카드를 올리지 않습니다. |
+| 알림 | SOS와 집 반경. 처음 권한 화면에서 위치와 함께 묻고, 허용을 누르면 시스템 알림 창이 열립니다. 위치 공유 중에는 알림 목록에 Kinnex 카드를 올리지 않습니다. |
 | 위치 | 정확한 위치 또는 대략적인 위치. 앱 사용 중은 위치 권한 창, 항상 허용은 이 앱의 위치 액세스 권한 화면을 먼저 엽니다. 그 화면이 열리지 않으면 앱 권한 목록으로 갑니다. |
 | 움직임 | 안드로이드 신체 활동 권한 창. 다시 물을 수 없으면 설정으로 이동합니다. |
 | 배터리 | 배터리 제한 없음을 누르면 시스템 팝업이 바로 열립니다. 스위치는 직접 고릅니다. |
@@ -46,7 +46,7 @@ Google Play, App Store, TestFlight에는 올리지 않았습니다. iOS는 아�
 
 1.7.0은 그 포그라운드 서비스를 쓰지 않습니다. 항상 허용 뒤 `LocationManager` PendingIntent로 위치를 받습니다. 이 경로에는 알림 객체가 없습니다. 앱을 열면 예전 채널 `umap_location`, `umap_location_quiet`, `umap_alert_watch`와 알림 id 4108·5108을 지웁니다. SOS와 집 반경은 `umap_alert`(가족 알림, 높은 중요도)로 올립니다. 새 대화는 `umap_chat`(가족 대화)으로, 보낸 사람 이름과 짧은 내용만 올립니다. 둘 다 사건이 있을 때만 뜨고 상시 카드는 아닙니다. 알림 대기는 정확한 알람으로 약 12초마다 읽고, 대기 중에는 카드를 올리지 않습니다. 대화 알림을 누르면 그 대화가 열립니다.
 
-상태 표시줄의 위치 사용 아이콘은 시스템 표시라 앱이 지울 수 없습니다. 배터리 제한 없음이 아니면 안드로이드 8 이상의 백그라운드 위치 제한으로 갱신이 한 시간에 몇 번으로 줄어들 수 있습니다. 절전 중이고 정확한 알람이 없으면 SOS 대기는 더 띄엄띄엄 일어납니다. 포그라운드 서비스 알림을 다시 띄우면 안드로이드 12 이상에서 Umap 카드가 다시 생깁니다.
+상태 표시줄의 위치 사용 아이콘은 시스템 표시라 앱이 지울 수 없습니다. 배터리 제한 없음이 아니면 안드로이드 8 이상의 백그라운드 위치 제한으로 갱신이 한 시간에 몇 번으로 줄어들 수 있습니다. 절전 중이고 정확한 알람이 없으면 SOS 대기는 더 띄엄띄엄 일어납니다. 포그라운드 서비스 알림을 다시 띄우면 안드로이드 12 이상에서 Kinnex 카드가 다시 생깁니다.
 
 ## 이름과 지도
 
@@ -94,9 +94,9 @@ npm run dev
 
 ## 안드로이드 APK
 
-받는 곳: https://github.com/jadegun1124/umap/releases/download/v1.28.0/umap-v1.28.0-tracker.apk
+받는 곳: https://github.com/jadegun1124/kinnex/releases/download/v1.29.0/kinnex-v1.29.0.apk
 
-`main` 푸시마다 `Build Android APK (Umap)` 워크플로가 웹을 빌드하고 `dist` 를 안드로이드 에셋으로 복사한 뒤 `assembleDebug` 로 APK를 만듭니다. 결과 파일은 GitHub Release `v1.28.0`에 올립니다. 앱 `versionName`은 `1.28.0`, `versionCode`는 29입니다. Play 스토어 트랙은 없습니다.
+`main` 푸시마다 `Build Android APK (Kinnex)` 워크플로가 웹을 빌드하고 `dist` 를 안드로이드 에셋으로 복사한 뒤 `assembleDebug` 로 APK를 만듭니다. 결과 파일은 GitHub Release `v1.29.0`에 올립니다. 앱 `versionName`은 `1.29.0`, `versionCode`는 30입니다. Play 스토어 트랙은 없습니다.
 
 1.16.0까지 그 빌드는 러너마다 새로 만든 디버그 키로 서명했습니다. 패키지가 `kr.co.umap.tracker`여도 인증서가 다르면 안드로이드는 덮어쓰기를 거절해서, 지우고 다시 깔아야 했습니다. 1.17.0부터 debug와 release는 저장소의 `android/app/umap-sideload.keystore`(별칭 `umap-sideload`)로 서명합니다. 비밀번호는 `android/app/build.gradle`에 있습니다. 인증서 SHA-256은 `4A:15:08:0F:72:C3:87:D1:E8:50:A8:DE:5A:89:34:9A:B4:1A:48:0D:C5:97:71:AB:22:9C:85:44:C8:61:7A:6C`입니다. 이 키는 가족 폰에 직접 설치하는 사이드로드 전용이고, Play 앱 서명 키가 아닙니다.
 
@@ -175,3 +175,5 @@ npm run sync
 ```
 
 `.env`에 `VITE_FAMILY_SYNC_URL=http://127.0.0.1:8787` 을 넣고 `npm run dev` 한 뒤, `http://127.0.0.1:5173/?app=1` 을 프로필마다 엽니다. 서버를 끄면 노란 안내가 나오고 같은 브라우저 공유만 남습니다.
+
+가족 궤적은 기록한 폰이 Worker `umap-family-sync`에 `PUT /v1/rooms/:code/trail`로 올리고, 다른 폰은 그 점과 여정을 그대로 그립니다. Worker 이름은 바꾸지 않습니다. 배포는 `sync` 디렉터리에서 `npx wrangler deploy` 입니다.

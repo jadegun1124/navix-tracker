@@ -21,7 +21,7 @@ import { mapMembers, rosterMembers } from '../../lib/peerFamily.mjs';
 import { AlwaysAllowNotice } from './AlwaysAllowNotice';
 import { InviteQrImage, InviteQrScan } from './InviteQr';
 import { StreetMap, type StreetMapHandle } from './StreetMap';
-import { JourneyCards, JourneyScrubber, playbackMark } from './JourneyCards';
+import { JourneyCards, JourneyScrubber } from './JourneyCards';
 import { FamilyChatSheet, type DirectChatTarget } from './FamilyChatSheet';
 import { MemberAvatar } from './MemberAvatar';
 import { PhotoPicker } from './ProfilePhoto';
@@ -70,7 +70,6 @@ export function FamilyMapScreen() {
   const [alertsOpen, setAlertsOpen] = useState(false);
   const [historyDay, setHistoryDay] = useState(() => seoulDayKey(Date.now()));
   const [dayPicker, setDayPicker] = useState(false);
-  const [scrub, setScrub] = useState(0);
   const [detailId, setDetailId] = useState<string | null>(null);
   const [playing, setPlaying] = useState(false);
   const [dm, setDm] = useState<DirectChatTarget | null>(null);
@@ -88,10 +87,6 @@ export function FamilyMapScreen() {
   const [adminSettings, setAdminSettings] = useState(false);
   const [chatTick, setChatTick] = useState(0);
   const placingRef = useRef(false);
-  const scrubRef = useRef(0);
-  useEffect(() => {
-    scrubRef.current = scrub;
-  }, [scrub]);
 
   useEffect(() => subscribeSyncPhase(setSyncPhase), []);
   useEffect(() => subscribeChat(() => setChatTick((value) => value + 1)), []);
@@ -264,6 +259,7 @@ export function FamilyMapScreen() {
       {
         onPlace: (place) => familyRef.current.applySharedPlace(place),
         onProfiles: (profiles) => familyRef.current.applySharedProfiles(familyRef.current.state.inviteCode, profiles),
+        onTrails: (trails) => familyRef.current.applyCanonicalTrails(trails),
         onAlert: handle,
       },
     );
@@ -537,7 +533,6 @@ export function FamilyMapScreen() {
     [dayPoints, liveDay, now, pathDay],
   );
   useEffect(() => {
-    setScrub(0);
     setDetailId(null);
     setPlaying(false);
   }, [pathDay, selected?.id]);
@@ -585,10 +580,6 @@ export function FamilyMapScreen() {
     const list = selected ? state.visits[selected.id] ?? [] : [];
     return list.filter((visit) => seoulDayKey(visit.arrivedAt) === pathDay);
   }, [pathDay, selected, state.visits]);
-  const playback = useMemo(() => {
-    if (!detailOpen || detailPoints.length < 1) return null;
-    return playbackMark(detailPoints, scrub / 1000);
-  }, [detailOpen, detailPoints, scrub]);
   const unreadAlerts = state.notices.some((item) => !item.read);
   useEffect(() => {
     if (!detailOpen) return;
@@ -596,21 +587,6 @@ export function FamilyMapScreen() {
     const timer = window.setTimeout(() => mapRef.current?.fit(detailPoints), 120);
     return () => window.clearTimeout(timer);
   }, [detailOpen, detailPoints]);
-  useEffect(() => {
-    if (!playing || !detailOpen) return;
-    const from = scrubRef.current >= 1000 ? 0 : scrubRef.current;
-    if (scrubRef.current >= 1000) setScrub(0);
-    const started = performance.now();
-    let frame = 0;
-    const step = (mark: number) => {
-      const ratio = Math.min(1, (mark - started) / 9000);
-      setScrub(Math.round(from + (1000 - from) * ratio));
-      if (ratio < 1) frame = requestAnimationFrame(step);
-      else setPlaying(false);
-    };
-    frame = requestAnimationFrame(step);
-    return () => cancelAnimationFrame(frame);
-  }, [detailId, detailOpen, playing]);
   const missingSyncKey = state.guardians.some((link) => (link.share === 'allowed' || link.share === 'revoked') && !link.syncToken);
   const syncBanner = syncBannerText(syncPhase, missingSyncKey);
   const remoteLive = syncPhase === 'live';
@@ -628,16 +604,7 @@ export function FamilyMapScreen() {
   };
   const openDetail = (id: string, play: boolean) => {
     setDetailId(id);
-    setScrub(0);
     setPlaying(play);
-  };
-  const togglePlay = () => {
-    if (playing) {
-      setPlaying(false);
-      return;
-    }
-    if (scrub >= 1000) setScrub(0);
-    setPlaying(true);
   };
   const startHomePick = () => {
     const existing = state.home;
@@ -775,7 +742,6 @@ export function FamilyMapScreen() {
             trails={mapTrails}
             solidOnly={!viewingRecords}
             trailColor="#0084FF"
-            playback={playback}
             selectedId={selected?.id}
             onSelect={(id) => {
               const member = state.members.find((item) => item.id === id);
@@ -1044,15 +1010,12 @@ export function FamilyMapScreen() {
         {detailOpen && (detailJourney || openJourney) && (
           <section className="bg-white px-4 pb-3 pt-3 shadow-[0_-8px_30px_rgba(15,23,42,0.08)]">
             <JourneyScrubber
+              key={(detailJourney ?? openJourney)!.id}
               journey={(detailJourney ?? openJourney)!}
-              scrub={scrub}
-              label={playback?.label ?? '재생'}
+              points={detailPoints}
               playing={playing}
-              onScrub={(value) => {
-                setPlaying(false);
-                setScrub(value);
-              }}
-              onTogglePlay={togglePlay}
+              mapRef={mapRef}
+              onPlayingChange={setPlaying}
             />
           </section>
         )}
@@ -1178,12 +1141,12 @@ export function FamilyMapScreen() {
                   family.setKeepAlive(true);
                   setKeepPrompt('none');
                   if (result.state !== 'granted') {
-                    setSettingsNote('위치 유지를 켰습니다. 알림 목록에 Umap 카드는 나오지 않습니다. SOS 알림은 알림 권한이 필요합니다.');
+                    setSettingsNote('위치 유지를 켰습니다. 알림 목록에 Kinnex 카드는 나오지 않습니다. SOS 알림은 알림 권한이 필요합니다.');
                   }
                   return;
                 }
                 if (result.state === 'granted') {
-                  setSettingsNote('알림을 허용했습니다. 위치를 항상 허용으로 고르면 위치 유지를 켤 수 있습니다. 알림 목록에 Umap 카드는 나오지 않습니다.');
+                  setSettingsNote('알림을 허용했습니다. 위치를 항상 허용으로 고르면 위치 유지를 켤 수 있습니다. 알림 목록에 Kinnex 카드는 나오지 않습니다.');
                   setKeepPrompt('none');
                   return;
                 }
@@ -2283,8 +2246,8 @@ function KeepNoticeSheet({
         <h2 className="text-lg font-black">{mode === 'permission' ? '알림을 허용할까요?' : '위치 유지를 켤까요?'}</h2>
         <p className="mt-2 text-sm leading-6 text-slate-600">
           {mode === 'permission'
-            ? '알림 권한은 SOS, 집 반경, 움직임 시작·멈춤, 새 대화에 씁니다. 허용을 누르면 알림 창이 열립니다. 위치 공유 중에는 알림 목록에 Umap 카드가 나오지 않습니다. 앱이 혼자 켜지 않습니다. 전화번호는 쓰지 않습니다.'
-            : '켜면 앱을 닫아도 위치를 보냅니다. 걷는 동안만 촘촘히 받고, 한곳에 머물면 2분에서 5분으로 줄입니다. 알림 목록에 Umap 카드는 나오지 않습니다. 배터리 제한이 없으면 그 간격을 더 잘 지킵니다. 앱이 혼자 켜지 않습니다.'}
+            ? '알림 권한은 SOS, 집 반경, 움직임 시작·멈춤, 새 대화에 씁니다. 허용을 누르면 알림 창이 열립니다. 위치 공유 중에는 알림 목록에 Kinnex 카드가 나오지 않습니다. 앱이 혼자 켜지 않습니다. 전화번호는 쓰지 않습니다.'
+            : '켜면 앱을 닫아도 위치를 보냅니다. 걷는 동안만 촘촘히 받고, 한곳에 머물면 2분에서 5분으로 줄입니다. 알림 목록에 Kinnex 카드는 나오지 않습니다. 배터리 제한이 없으면 그 간격을 더 잘 지킵니다. 앱이 혼자 켜지 않습니다.'}
         </p>
         {note && <p className="mt-3 text-sm leading-6 text-amber-800">{note}</p>}
         <button type="button" disabled={busy} onClick={onPrimary} className="mt-4 w-full rounded-full bg-[#0084FF] py-3.5 font-bold text-white disabled:opacity-40">

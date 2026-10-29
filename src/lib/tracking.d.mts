@@ -123,6 +123,12 @@ export function acceptFix(
   options?: { precise?: boolean; now?: number },
 ): { ok: true; fix: AcceptedFix } | { ok: false; reason: 'coords' | 'stale' | 'accuracy' | 'jump' };
 export function classifyMode(speedKmh: number, distanceM: number, durationMs: number): TravelMode;
+export function classifyJourneyMode(
+  points: TrailSample[] | null | undefined,
+  distanceM: number,
+  durationMs: number,
+): TravelMode;
+export function journeyPathDistance(points: TrailSample[] | null | undefined): number;
 export function estimateSteps(distanceM: number): number;
 export function formatDurationMs(durationMs: number): string;
 export function formatFixAge(at: number, now?: number): string;

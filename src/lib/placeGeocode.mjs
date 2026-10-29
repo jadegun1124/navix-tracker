@@ -1,12 +1,15 @@
 // Reverse geocode for the family card.
-// VWorld is first when VITE_VWORLD_API_KEY is set. Nominatim covers a missing
-// key and a failed VWorld response. The card stores the shortened 시·동 line.
+// VWorld is first when VITE_VWORLD_API_KEY is set. A building layer, and Kakao
+// when VITE_KAKAO_REST_API_KEY is set, add an apartment or POI name.
+// Nominatim covers a missing key and a failed VWorld response. Overpass fills
+// a named building only when the address is still just a neighborhood.
 // The literal place label 「근처」 is never returned.
 
 import { APP_VERSION_NAME } from './appRelease.mjs';
 
-const NOMINATIM_UA = `Umap/${APP_VERSION_NAME} (family location; https://github.com/jadegun1124/umap)`;
-const CACHE_KEY = 'umap_geocode_cache_v1';
+const NOMINATIM_UA = `Kinnex/${APP_VERSION_NAME} (family location; https://github.com/jadegun1124/kinnex)`;
+const CACHE_KEY = 'umap_geocode_cache_v2';
+const PLACE_LIMIT = 56;
 const NOMINATIM_GAP_MS = 1100;
 let nominatimNotBefore = 0;
 
@@ -20,10 +23,18 @@ function timeoutSignal(ms) {
   return controller.signal;
 }
 
-export function readVworldKey(env = import.meta.env) {
-  const key = String(env && env.VITE_VWORLD_API_KEY ? env.VITE_VWORLD_API_KEY : '').trim();
+function readEnvKey(env, name) {
+  const key = String(env && env[name] ? env[name] : '').trim();
   if (!key || key === 'undefined' || key === 'null') return '';
   return key;
+}
+
+export function readVworldKey(env = import.meta.env) {
+  return readEnvKey(env, 'VITE_VWORLD_API_KEY');
+}
+
+export function readKakaoKey(env = import.meta.env) {
+  return readEnvKey(env, 'VITE_KAKAO_REST_API_KEY');
 }
 
 export function shortenAddress(text) {
@@ -37,6 +48,46 @@ export function shortenAddress(text) {
   const joined = parts.join(' ');
   if (!joined || joined === '근처') return '';
   return joined.length > 28 ? `${joined.slice(0, 28)}…` : joined;
+}
+
+const PRECISE_WORD = /(?:아파트|단지|빌라|맨션|오피스텔|타운|하우스|마트|백화점|슈퍼|편의점|학교|병원|의원|약국|공원|회관|센터|교회|성당|사찰|역사|역$)/;
+
+function cleanToken(value) {
+  const text = String(value || '').trim().replace(/\s+/g, ' ');
+  if (!text || text === '근처') return '';
+  return text;
+}
+
+function isPrecisePlace(text) {
+  return PRECISE_WORD.test(text) || /\d+\s*동/.test(text);
+}
+
+function formatUnit(value) {
+  const text = cleanToken(value);
+  if (!text) return '';
+  if (/^\d+\s*동$/.test(text)) return text.replace(/\s+/g, '');
+  if (/^\d+$/.test(text)) return `${text}동`;
+  return '';
+}
+
+/** Apartment or POI line. A plain address returns empty so the 시·동 fallback stays. */
+export function formatPrecisePlace(parts = {}) {
+  const dong = cleanToken(parts.dong);
+  const building = cleanToken(parts.building);
+  const unit = formatUnit(parts.unit);
+  const poi = cleanToken(parts.poi);
+  const named = building || (poi && poi !== dong ? poi : '');
+  if (!named) return '';
+  const line = [dong, building || poi, building ? unit : ''].filter(Boolean).join(' ');
+  return line.slice(0, PLACE_LIMIT);
+}
+
+/** Keep a building line. A plain address still becomes 시·동. */
+export function presentPlace(text) {
+  const clean = cleanToken(String(text || '').replace(/[,，]/g, ' '));
+  if (!clean) return '';
+  if (isPrecisePlace(clean)) return clean.slice(0, PLACE_LIMIT);
+  return shortenAddress(clean);
 }
 
 function addressValues(address, keys) {
@@ -53,10 +104,36 @@ function isDong(value) {
   return /(?:동|읍|면|리|가)$/.test(value);
 }
 
+function namedFromAddress(address, namedetails) {
+  const sources = [address, namedetails];
+  let building = '';
+  let poi = '';
+  for (const source of sources) {
+    if (!source || typeof source !== 'object') continue;
+    for (const key of ['building', 'residential', 'apartments']) {
+      const value = cleanToken(source[key]);
+      if (value && !building) building = value;
+    }
+    for (const key of ['amenity', 'shop', 'tourism', 'leisure', 'office']) {
+      const value = cleanToken(source[key]);
+      if (value && !poi && !isDong(value)) poi = value;
+    }
+    const name = cleanToken(source.name);
+    if (name && !isDong(name) && !/^(대한민국|한국)$/.test(name)) {
+      if (PRECISE_WORD.test(name) && !building) building = name;
+      else if (!poi) poi = name;
+    }
+  }
+  return { building, poi };
+}
+
 export function nominatimAddress(body) {
   const address = body && typeof body === 'object' ? body.address : null;
   const district = addressValues(address, DISTRICT_KEYS).find((value) => /(?:시|군|구)$/.test(value) && !/특별|광역|자치/.test(value)) || '';
   const dong = addressValues(address, DONG_KEYS).find(isDong) || '';
+  const named = namedFromAddress(address, body && body.namedetails);
+  const precise = formatPrecisePlace({ dong, building: named.building, poi: named.poi });
+  if (precise) return precise;
   const structured = shortenAddress([district, dong].filter(Boolean).join(' '));
   const display = shortenAddress(body && typeof body.display_name === 'string' ? body.display_name : '');
   const hasDong = (label) => isDong((label || '').split(' ').at(-1) || '');
@@ -70,8 +147,15 @@ export function vworldAddress(body) {
   return shortenAddress(typeof text === 'string' ? text : '');
 }
 
-function bucket(lat, lng) {
-  return `${Number(lat).toFixed(4)},${Number(lng).toFixed(4)}`;
+/** About 30m. The same cell keeps one label so a building next door can still refresh. */
+export function placeGridKey(lat, lng) {
+  const latStep = 30 / 111_320;
+  const latNumber = Number(lat);
+  const lngNumber = Number(lng);
+  const latB = Math.round(latNumber / latStep) * latStep;
+  const lngStep = latStep / Math.max(0.2, Math.cos((latB * Math.PI) / 180));
+  const lngB = Math.round(lngNumber / lngStep) * lngStep;
+  return `${latB.toFixed(5)},${lngB.toFixed(5)}`;
 }
 
 function storage() {
@@ -116,9 +200,9 @@ function writeCache(cache) {
 }
 
 export function cachedAddress(lat, lng) {
-  const hit = readCache()[bucket(lat, lng)];
-  const short = hit ? shortenAddress(hit) : '';
-  return short || null;
+  const hit = readCache()[placeGridKey(lat, lng)];
+  const label = hit ? presentPlace(hit) : '';
+  return label || null;
 }
 
 async function paceNominatim() {
@@ -134,6 +218,71 @@ async function readJson(response) {
   return response.json();
 }
 
+function firstText(source, keys) {
+  if (!source || typeof source !== 'object') return '';
+  for (const key of keys) {
+    const value = cleanToken(source[key]);
+    if (value) return value;
+  }
+  return '';
+}
+
+function vworldStructure(body) {
+  const item = body && body.response && Array.isArray(body.response.result) ? body.response.result[0] : null;
+  const structure = item && item.structure && typeof item.structure === 'object' ? item.structure : {};
+  const text = item && typeof item.text === 'string' ? item.text : '';
+  const dong = [structure.level4L, structure.level4A, structure.level3].map(cleanToken).find(isDong) || '';
+  const district = [structure.level2, structure.level3].map(cleanToken).find((value) => /(?:시|군|구)$/.test(value) && !/특별|광역|자치/.test(value)) || '';
+  const fromText = buildingFromText(text);
+  const detail = cleanToken(structure.detail);
+  const detailBuilding = buildingFromText(detail);
+  return {
+    text,
+    dong,
+    district,
+    building: fromText.building || detailBuilding.building,
+    unit: fromText.unit || detailBuilding.unit,
+    poi: fromText.poi || detailBuilding.poi,
+  };
+}
+
+function buildingFromText(text) {
+  const parts = cleanToken(text).split(' ').filter(Boolean);
+  let building = '';
+  let poi = '';
+  let unit = '';
+  for (const part of parts) {
+    if (!unit && /^\d+동$/.test(part)) unit = part;
+    if (!building && /(?:아파트|빌라|맨션|오피스텔|타운|하우스|단지)/.test(part)) building = part;
+    else if (!poi && /(?:마트|백화점|슈퍼|편의점|학교|병원|의원|약국|공원|회관|센터)/.test(part) && !isDong(part)) poi = part;
+  }
+  return { building, unit, poi };
+}
+
+function featureName(properties) {
+  if (!properties || typeof properties !== 'object') return { building: '', unit: '', poi: '' };
+  const building = firstText(properties, ['buld_nm', 'bld_nm', 'bldnm', 'buldNm', 'building_name', 'bldg_nm']);
+  const unit = firstText(properties, ['dong_nm', 'buld_dong', 'dongNm']);
+  const named = buildingFromText(`${building} ${unit}`);
+  return {
+    building: named.building || (building && !isDong(building) ? building : ''),
+    unit: named.unit || formatUnit(unit),
+    poi: named.poi,
+  };
+}
+
+function vworldBuilding(body) {
+  const features = body && body.response && body.response.result && body.response.result.featureCollection
+    ? body.response.result.featureCollection.features
+    : [];
+  if (!Array.isArray(features)) return { building: '', unit: '', poi: '' };
+  for (const feature of features) {
+    const named = featureName(feature && feature.properties);
+    if (named.building || named.poi) return named;
+  }
+  return { building: '', unit: '', poi: '' };
+}
+
 async function fetchVworld(fetchImpl, lat, lng, key) {
   const url = new URL('https://api.vworld.kr/req/address');
   url.searchParams.set('service', 'address');
@@ -142,11 +291,40 @@ async function fetchVworld(fetchImpl, lat, lng, key) {
   url.searchParams.set('crs', 'epsg:4326');
   url.searchParams.set('point', `${lng},${lat}`);
   url.searchParams.set('format', 'json');
-  url.searchParams.set('type', 'both');
-  url.searchParams.set('simple', 'true');
+  url.searchParams.set('type', 'PARCEL');
+  url.searchParams.set('simple', 'false');
   url.searchParams.set('key', key);
   const response = await fetchImpl(url.toString(), { signal: timeoutSignal(8000) });
-  return vworldAddress(await readJson(response));
+  const body = await readJson(response);
+  const parts = vworldStructure(body);
+  const precise = formatPrecisePlace(parts);
+  if (precise) return precise;
+  let building = { building: '', unit: '', poi: '' };
+  try {
+    const dataUrl = new URL('https://api.vworld.kr/req/data');
+    dataUrl.searchParams.set('service', 'data');
+    dataUrl.searchParams.set('request', 'GetFeature');
+    dataUrl.searchParams.set('data', 'LT_C_BLDGINFO');
+    dataUrl.searchParams.set('key', key);
+    dataUrl.searchParams.set('format', 'json');
+    dataUrl.searchParams.set('crs', 'EPSG:4326');
+    dataUrl.searchParams.set('geomFilter', `POINT(${lng} ${lat})`);
+    dataUrl.searchParams.set('buffer', '40');
+    dataUrl.searchParams.set('size', '5');
+    dataUrl.searchParams.set('geometry', 'false');
+    const buildingResponse = await fetchImpl(dataUrl.toString(), { signal: timeoutSignal(8000) });
+    building = vworldBuilding(await readJson(buildingResponse));
+  } catch {
+    building = { building: '', unit: '', poi: '' };
+  }
+  const named = formatPrecisePlace({
+    dong: parts.dong,
+    building: building.building || parts.building,
+    unit: building.unit || parts.unit,
+    poi: building.poi || parts.poi,
+  });
+  if (named) return named;
+  return presentPlace(parts.text) || vworldAddress(body);
 }
 
 async function fetchNominatim(fetchImpl, lat, lng) {
@@ -155,6 +333,7 @@ async function fetchNominatim(fetchImpl, lat, lng) {
   url.searchParams.set('lat', String(lat));
   url.searchParams.set('lon', String(lng));
   url.searchParams.set('zoom', '18');
+  url.searchParams.set('namedetails', '1');
   // 한국어는 쿼리로만 받는다. Accept-Language 헤더를 같이 보내면
   // 브라우저에서 Access-Control-Allow-Origin이 빠져 요청이 실패한다.
   url.searchParams.set('accept-language', 'ko');
@@ -172,14 +351,78 @@ async function fetchNominatim(fetchImpl, lat, lng) {
   return nominatimAddress(await readJson(response));
 }
 
+async function fetchKakao(fetchImpl, lat, lng, key) {
+  const url = new URL('https://dapi.kakao.com/v2/local/geo/coord2address.json');
+  url.searchParams.set('x', String(lng));
+  url.searchParams.set('y', String(lat));
+  const response = await fetchImpl(url.toString(), {
+    headers: { Authorization: `KakaoAK ${key}` },
+    signal: timeoutSignal(8000),
+  });
+  const body = await readJson(response);
+  const document = body && Array.isArray(body.documents) ? body.documents[0] : null;
+  if (!document) return '';
+  const road = document.road_address || {};
+  const parcel = document.address || {};
+  const dong = cleanToken(parcel.region_3depth_name || road.region_3depth_name);
+  const building = cleanToken(road.building_name);
+  const parsed = buildingFromText(building);
+  return formatPrecisePlace({
+    dong,
+    building: parsed.building || building,
+    unit: parsed.unit,
+    poi: parsed.poi,
+  });
+}
+
+async function fetchOverpass(fetchImpl, lat, lng) {
+  const query = `[out:json][timeout:8];(way(around:70,${lat},${lng})["name"]["building"];node(around:70,${lat},${lng})["name"];);out tags 8;`;
+  const response = await fetchImpl('https://overpass-api.de/api/interpreter', {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+    body: `data=${encodeURIComponent(query)}`,
+    signal: timeoutSignal(8000),
+  });
+  const body = await readJson(response);
+  const elements = body && Array.isArray(body.elements) ? body.elements : [];
+  for (const element of elements) {
+    const tags = element && element.tags;
+    if (!tags || typeof tags.name !== 'string') continue;
+    const name = cleanToken(tags.name);
+    if (!name || name === '근처' || isDong(name)) continue;
+    const building = tags.building ? name : '';
+    const poi = tags.building ? '' : name;
+    const precise = formatPrecisePlace({ building, poi });
+    if (precise) return precise;
+  }
+  return '';
+}
+
 export async function reverseGeocode(lat, lng, options = {}) {
   const fetchImpl = options.fetch || globalThis.fetch;
   if (typeof fetchImpl !== 'function') return null;
   const key = options.key !== undefined ? String(options.key || '') : readVworldKey();
+  const kakaoKey = options.kakaoKey !== undefined ? String(options.kakaoKey || '') : readKakaoKey();
   if (key) {
     try {
       const fromVworld = await fetchVworld(fetchImpl, lat, lng, key);
-      if (fromVworld) return fromVworld;
+      if (fromVworld && isPrecisePlace(fromVworld)) return presentPlace(fromVworld);
+      if (kakaoKey) {
+        try {
+          const fromKakao = await fetchKakao(fetchImpl, lat, lng, kakaoKey);
+          if (fromKakao) return fromKakao;
+        } catch {
+          /* 동네 표기로 내려간다 */
+        }
+      }
+      if (fromVworld) return presentPlace(fromVworld);
+    } catch {
+      /* Nominatim으로 넘어간다 */
+    }
+  } else if (kakaoKey) {
+    try {
+      const fromKakao = await fetchKakao(fetchImpl, lat, lng, kakaoKey);
+      if (fromKakao) return fromKakao;
     } catch {
       /* Nominatim으로 넘어간다 */
     }
@@ -187,18 +430,29 @@ export async function reverseGeocode(lat, lng, options = {}) {
   try {
     if (options.pace !== false) await paceNominatim();
     const fromNominatim = await fetchNominatim(fetchImpl, lat, lng);
-    return fromNominatim || null;
+    if (fromNominatim && isPrecisePlace(fromNominatim)) return presentPlace(fromNominatim);
+    try {
+      const poi = await fetchOverpass(fetchImpl, lat, lng);
+      if (poi) {
+        const dong = fromNominatim ? fromNominatim.split(' ').find(isDong) || '' : '';
+        const withDong = dong && !poi.startsWith(dong) ? presentPlace(`${dong} ${poi}`) : poi;
+        if (withDong) return withDong;
+      }
+    } catch {
+      /* 동네 표기를 유지한다 */
+    }
+    return fromNominatim ? presentPlace(fromNominatim) : null;
   } catch {
     return null;
   }
 }
 
 export async function reverseGeocodeCached(lat, lng, options = {}) {
-  const key = bucket(lat, lng);
+  const key = placeGridKey(lat, lng);
   const cached = readCache()[key];
   if (cached) {
-    const short = shortenAddress(cached);
-    if (short) return short;
+    const label = presentPlace(cached);
+    if (label) return label;
   }
   const label = await reverseGeocode(lat, lng, options);
   if (!label || label === '근처') return null;

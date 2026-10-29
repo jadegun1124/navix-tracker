@@ -33,7 +33,7 @@ import androidx.core.content.ContextCompat;
  * when the caller removes it, or when overlay permission is gone.
  */
 public final class AlwaysAllowOverlay {
-    static final String BANNER = "Umap 항상 허용으로 설정";
+    static final String BANNER = "Kinnex 항상 허용으로 설정";
     static final String PRECISE = "정확한 위치 사용도 켜기";
 
     private static final Handler MAIN = new Handler(Looper.getMainLooper());

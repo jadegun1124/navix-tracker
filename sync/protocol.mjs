@@ -18,6 +18,10 @@ const CODE_PART = /^\d{4,6}$/;
 const ALERT_ID = /^[A-Za-z0-9_-]{8,80}$/;
 const MAX_BODY = 4096;
 const MAX_PROFILE_BODY = 32_768;
+const MAX_TRAIL_BODY = 160 * 1024;
+const MAX_TRAIL_POINTS = 800;
+const MAX_TRAIL_JOURNEYS = 16;
+const MAX_TRAIL_JOURNEY_POINTS = 240;
 const MAX_PHOTO = 24_000;
 const MAX_PLACES = 20;
 const MAX_PROFILES = 20;
@@ -33,7 +37,7 @@ const CHAT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const CHAT_ID = /^[A-Za-z0-9_-]{8,80}$/;
 
 export function emptyRoom() {
-  return { places: {}, alerts: [], pushes: [], threads: {}, profiles: {}, owners: {} };
+  return { places: {}, alerts: [], pushes: [], threads: {}, profiles: {}, owners: {}, trails: {} };
 }
 
 /** Same pair on both phones. Keep identical to src/services/familyChat.ts chatThreadKey. */
@@ -393,7 +397,13 @@ export function applyPlace(room, place) {
       if (oldest) delete places[oldest];
     }
   }
-  return { room: { ...room, places }, ignored: false };
+  let nextRoom = { ...room, places };
+  if (!place.sharing && place.memberId && nextRoom.trails && nextRoom.trails[place.memberId]) {
+    const trails = { ...nextRoom.trails };
+    delete trails[place.memberId];
+    nextRoom = { ...nextRoom, trails };
+  }
+  return { room: nextRoom, ignored: false };
 }
 
 function roomProfiles(room) {
@@ -465,6 +475,116 @@ export async function commitProfile(room, profile, profileKey) {
   if (auth.error) return { error: auth.error, room, ignored: true };
   const applied = applyProfile(auth.room, profile);
   return { error: null, room: applied.room, ignored: applied.ignored && auth.room === room };
+}
+
+function finiteNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function cleanTrailPoint(point) {
+  if (!point || typeof point !== 'object') return null;
+  const lat = finiteNumber(point.lat);
+  const lng = finiteNumber(point.lng);
+  const at = finiteNumber(point.at);
+  if (lat == null || lng == null || at == null) return null;
+  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
+  const next = { lat: Number(lat.toFixed(6)), lng: Number(lng.toFixed(6)), at: Math.round(at) };
+  if (typeof point.speedMps === 'number' && point.speedMps >= 0 && point.speedMps < 400) next.speedMps = Number(point.speedMps.toFixed(2));
+  if (typeof point.accuracyM === 'number' && point.accuracyM > 0 && point.accuracyM <= 80) next.accuracyM = Math.round(point.accuracyM);
+  if (point.staying === true) next.staying = true;
+  if (point.stayEnd === true) next.stayEnd = true;
+  return next;
+}
+
+function cleanTrailPlace(place) {
+  if (!place || typeof place !== 'object') return null;
+  const lat = finiteNumber(place.lat);
+  const lng = finiteNumber(place.lng);
+  if (lat == null || lng == null || lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
+  const label = typeof place.label === 'string' ? place.label.trim().slice(0, 56) : '';
+  return {
+    lat: Number(lat.toFixed(6)),
+    lng: Number(lng.toFixed(6)),
+    label: label && label !== '근처' ? label : null,
+  };
+}
+
+function cleanTrailJourney(journey) {
+  if (!journey || typeof journey !== 'object') return null;
+  const startedAt = finiteNumber(journey.startedAt);
+  const endedAt = finiteNumber(journey.endedAt);
+  const distanceM = finiteNumber(journey.distanceM);
+  if (startedAt == null || endedAt == null || distanceM == null || endedAt < startedAt) return null;
+  const id = typeof journey.id === 'string' && journey.id.length <= 80 ? journey.id : '';
+  if (!id) return null;
+  const points = [];
+  for (const point of Array.isArray(journey.points) ? journey.points : []) {
+    const cleaned = cleanTrailPoint(point);
+    if (cleaned) points.push(cleaned);
+    if (points.length >= MAX_TRAIL_JOURNEY_POINTS) break;
+  }
+  const start = cleanTrailPlace(journey.start);
+  const end = cleanTrailPlace(journey.end);
+  if (!start || !end || points.length < 2) return null;
+  return {
+    id,
+    startedAt: Math.round(startedAt),
+    endedAt: Math.round(endedAt),
+    distanceM: Math.max(0, Math.round(distanceM)),
+    points,
+    start,
+    end,
+  };
+}
+
+export function cleanTrailInput(body, now) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return { error: json({ error: 'trail' }, 400) };
+  if (typeof body.memberId !== 'string' || !MEMBER_ID.test(body.memberId)) return { error: json({ error: 'trail' }, 400) };
+  const at = finiteNumber(body.at);
+  if (at == null || at < EARLIEST_AT || at > now + FUTURE_SKEW_MS) return { error: json({ error: 'trail' }, 400) };
+  const points = [];
+  for (const point of Array.isArray(body.points) ? body.points : []) {
+    const cleaned = cleanTrailPoint(point);
+    if (cleaned) points.push(cleaned);
+    if (points.length >= MAX_TRAIL_POINTS) break;
+  }
+  const journeys = [];
+  for (const journey of Array.isArray(body.journeys) ? body.journeys : []) {
+    const cleaned = cleanTrailJourney(journey);
+    if (cleaned) journeys.push(cleaned);
+    if (journeys.length >= MAX_TRAIL_JOURNEYS) break;
+  }
+  return {
+    trail: {
+      memberId: body.memberId,
+      at: Math.round(at),
+      moving: body.moving === true,
+      points,
+      journeys,
+    },
+  };
+}
+
+export function applyTrail(room, trail) {
+  const trails = { ...(room.trails && typeof room.trails === 'object' ? room.trails : {}) };
+  const current = trails[trail.memberId];
+  if (current && trail.at < current.at) return { room, ignored: true };
+  if (current && trail.at === current.at && JSON.stringify(current) === JSON.stringify(trail)) return { room, ignored: true };
+  trails[trail.memberId] = trail;
+  return { room: { ...room, trails }, ignored: false };
+}
+
+export async function commitTrail(room, trail, profileKey) {
+  const auth = await authorizeMember(room, trail.memberId, profileKey || '');
+  if (auth.error) return { error: auth.error, room, ignored: true };
+  const applied = applyTrail(auth.room, trail);
+  return { error: null, room: applied.room, ignored: applied.ignored && auth.room === room };
+}
+
+function viewTrails(room) {
+  const trails = room.trails && typeof room.trails === 'object' ? room.trails : {};
+  return Object.values(trails);
 }
 
 export function applyAlert(room, alert, now) {
@@ -601,6 +721,7 @@ export function viewRoom(room, since) {
     places: Object.values(room.places || {}),
     alerts: (room.alerts || []).filter((alert) => alert.at > cursor),
     profiles: viewProfiles(room),
+    trails: viewTrails(room),
   };
 }
 
@@ -634,6 +755,7 @@ export function viewFamilyPlaces(room) {
   return {
     places: Object.values(room.places || {}).filter((place) => place.audience === 'family' && place.sharing && place.lat != null && place.lng != null),
     profiles: viewProfiles(room),
+    trails: viewTrails(room),
   };
 }
 
@@ -647,7 +769,7 @@ export async function parseOperation(request) {
     return { kind: 'vapid-public' };
   }
 
-  const match = url.pathname.match(/^\/v1\/rooms\/(\d{4,6})(\/place|\/profile|\/alert|\/family|\/push|\/chat)?\/?$/);
+  const match = url.pathname.match(/^\/v1\/rooms\/(\d{4,6})(\/place|\/profile|\/alert|\/family|\/push|\/chat|\/trail)?\/?$/);
   if (!match) return json({ error: 'not-found' }, 404);
   const code = match[1];
   const action = match[2] || '';
@@ -694,6 +816,19 @@ export async function parseOperation(request) {
       kind: 'place',
       token: id,
       place: cleaned.place,
+      profileKey: request.headers.get('x-umap-profile-key') || '',
+    };
+  }
+
+  if (request.method === 'PUT' && action === '/trail') {
+    const body = await readJson(request, MAX_TRAIL_BODY);
+    if (body.error) return body.error;
+    const cleaned = cleanTrailInput(body.value, Date.now());
+    if (cleaned.error) return cleaned.error;
+    return {
+      kind: 'trail',
+      token: id,
+      trail: cleaned.trail,
       profileKey: request.headers.get('x-umap-profile-key') || '',
     };
   }
@@ -801,6 +936,12 @@ export async function handleSyncRequest(store, request) {
   }
   if (op.kind === 'profile') {
     const next = await commitProfile(room, op.profile, op.profileKey || '');
+    if (next.error) return next.error;
+    if (!next.ignored) await store.write(op.token, next.room);
+    return json({ ok: true });
+  }
+  if (op.kind === 'trail') {
+    const next = await commitTrail(room, op.trail, op.profileKey || '');
     if (next.error) return next.error;
     if (!next.ignored) await store.write(op.token, next.room);
     return json({ ok: true });

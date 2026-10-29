@@ -899,3 +899,49 @@ test('the creator read key deletes the room and a write token cannot', async () 
   const back = await call(store, 'GET', `/v1/rooms/${code}/family`, { token });
   assert.equal(back.body.places.length, 1);
 });
+
+test('a member trail replaces the room copy and a stop removes it', async () => {
+  const store = createMemoryStore();
+  const code = '48291';
+  const writeKey = randomKey();
+  const readKey = randomKey();
+  const token = await syncTokenFor(writeKey, readKey);
+  const profileKey = randomKey();
+  const memberId = 'local-abc123';
+  const at = Date.now();
+  const trail = {
+    memberId,
+    at,
+    moving: true,
+    points: [
+      { lat: 37.65, lng: 127.06, at: at - 60_000, speedMps: 8.9, staying: false },
+      { lat: 37.66, lng: 127.08, at, speedMps: 9.1, staying: false },
+    ],
+    journeys: [],
+  };
+  const missing = await call(store, 'PUT', `/v1/rooms/${code}/trail`, { token, body: trail });
+  assert.equal(missing.status, 403);
+  const published = await call(store, 'PUT', `/v1/rooms/${code}/trail`, { token, profileKey, body: trail });
+  assert.equal(published.status, 200);
+  const older = await call(store, 'PUT', `/v1/rooms/${code}/trail`, {
+    token,
+    profileKey,
+    body: { ...trail, at: at - 1000, points: [{ lat: 37.1, lng: 127.1, at: at - 1000 }] },
+  });
+  assert.equal(older.status, 200);
+  const reader = await call(store, 'GET', `/v1/rooms/${code}`, { token, readKey });
+  assert.equal(reader.body.trails.length, 1);
+  assert.equal(reader.body.trails[0].points.length, 2);
+  assert.equal(reader.body.trails[0].points[1].lat, 37.66);
+  assert.equal(JSON.stringify(reader.body).includes(profileKey), false);
+  const family = await call(store, 'GET', `/v1/rooms/${code}/family`, { token });
+  assert.equal(family.body.trails[0].moving, true);
+  const stopped = await call(store, 'PUT', `/v1/rooms/${code}/place`, {
+    token,
+    profileKey,
+    body: { code, name: '민지', memberId, lat: null, lng: null, accuracyM: 0, at: at + 1000, sharing: false },
+  });
+  assert.equal(stopped.status, 200);
+  const after = await call(store, 'GET', `/v1/rooms/${code}`, { token, readKey });
+  assert.equal(after.body.trails.length, 0);
+});
