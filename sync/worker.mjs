@@ -128,6 +128,8 @@ export class FamilyAccount {
     const body = await request.json();
     return handleAccountOperation(durableAccountStore(this.ctx.storage), body.op, {
       clientId: body.clientId || '',
+      naverClientId: body.naverClientId || '',
+      naverClientSecret: body.naverClientSecret || '',
       fetchCerts: fetchGoogleCerts,
       now: body.now,
     });
@@ -199,6 +201,8 @@ export default {
       if (!accounts) {
         return withCors(await handleAccountOperation(createMemoryAccountStore(), op, {
           clientId: env.GOOGLE_WEB_CLIENT_ID || env.VITE_GOOGLE_WEB_CLIENT_ID || '',
+          naverClientId: env.NAVER_CLIENT_ID || '',
+          naverClientSecret: env.NAVER_CLIENT_SECRET || '',
           fetchCerts: fetchGoogleCerts,
         }));
       }
@@ -208,6 +212,8 @@ export default {
         body: JSON.stringify({
           op,
           clientId: env.GOOGLE_WEB_CLIENT_ID || env.VITE_GOOGLE_WEB_CLIENT_ID || '',
+          naverClientId: env.NAVER_CLIENT_ID || '',
+          naverClientSecret: env.NAVER_CLIENT_SECRET || '',
         }),
       });
       return withCors(response);

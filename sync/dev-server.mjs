@@ -22,6 +22,8 @@ export function startSyncServer(port = 0) {
   const store = createMemoryStore();
   const accounts = createMemoryAccountStore();
   const googleClientId = process.env.GOOGLE_WEB_CLIENT_ID || process.env.VITE_GOOGLE_WEB_CLIENT_ID || '';
+  const naverClientId = process.env.NAVER_CLIENT_ID || process.env.VITE_NAVER_CLIENT_ID || '';
+  const naverClientSecret = process.env.NAVER_CLIENT_SECRET || '';
   const server = createServer(async (incoming, outgoing) => {
     try {
       const host = incoming.headers.host || '127.0.0.1';
@@ -33,7 +35,12 @@ export function startSyncServer(port = 0) {
         headers: headerObject(incoming.headers),
         body: body && body.length ? body : undefined,
       });
-      const response = withCors(await handleSyncRequest(store, request, { accounts, googleClientId }));
+      const response = withCors(await handleSyncRequest(store, request, {
+        accounts,
+        googleClientId,
+        naverClientId,
+        naverClientSecret,
+      }));
       const payload = Buffer.from(await response.arrayBuffer());
       outgoing.writeHead(response.status, Object.fromEntries(response.headers.entries()));
       outgoing.end(payload);

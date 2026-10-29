@@ -87,6 +87,11 @@ async function accountCall(accounts, method, path, { body, accountKey, extras } 
     accounts,
     clientId: CLIENT,
     fetchCerts: extras?.fetchCerts,
+    fetchKakaoUser: extras?.fetchKakaoUser,
+    fetchNaverUser: extras?.fetchNaverUser,
+    exchangeNaverCode: extras?.exchangeNaverCode,
+    naverClientId: extras?.naverClientId,
+    naverClientSecret: extras?.naverClientSecret,
     now: extras?.now,
   });
   const text = await response.text();
@@ -329,6 +334,67 @@ test('Google without a snapshot starts a new linked account', async () => {
   assert.equal(again.status, 200);
   assert.equal(again.body.restored, true);
   assert.equal(again.body.account.memberId, first.body.account.memberId);
+});
+
+test('Kakao and Naver tokens restore the same book and can share one account', async () => {
+  const accounts = createMemoryAccountStore();
+  const extras = {
+    fetchKakaoUser: async (token) => {
+      if (token !== 'kakao-access-ok') throw new Error('kakao');
+      return { id: 123456789, kakao_account: { profile: { nickname: '엄마' } } };
+    },
+    fetchNaverUser: async (token) => {
+      if (token !== 'naver-access-ok') throw new Error('naver');
+      return { resultcode: '00', response: { id: 'naver-user-88', nickname: '엄마' } };
+    },
+    exchangeNaverCode: async ({ code, state, clientId, clientSecret }) => {
+      if (code !== 'naver-code-1' || state !== 'state-1' || clientId !== 'naverclientid1' || clientSecret !== 'naversecret1') {
+        return null;
+      }
+      return { access_token: 'naver-access-ok' };
+    },
+    naverClientId: 'naverclientid1',
+    naverClientSecret: 'naversecret1',
+  };
+
+  const kakao = await accountCall(accounts, 'POST', '/v1/account/kakao', {
+    body: { accessToken: 'kakao-access-ok', snapshot: snapshot() },
+    extras,
+  });
+  assert.equal(kakao.status, 200);
+  assert.equal(kakao.body.account.memberId, 'local-restore1');
+  assert.equal(kakao.body.account.kakaoLinked, true);
+  assert.equal(kakao.body.account.googleLinked, false);
+
+  const naver = await accountCall(accounts, 'POST', '/v1/account/naver', {
+    accountKey: kakao.body.account.accountKey,
+    body: { code: 'naver-code-1', state: 'state-1' },
+    extras,
+  });
+  assert.equal(naver.status, 200);
+  assert.equal(naver.body.account.memberId, 'local-restore1');
+  assert.equal(naver.body.account.kakaoLinked, true);
+  assert.equal(naver.body.account.naverLinked, true);
+
+  const restored = await accountCall(accounts, 'POST', '/v1/account/naver', {
+    body: { accessToken: 'naver-access-ok', snapshot: snapshot({ memberId: 'local-newphone2', profileKey: 'otherkeyAAAAAAAAAA' }) },
+    extras,
+  });
+  assert.equal(restored.status, 200);
+  assert.equal(restored.body.restored, true);
+  assert.equal(restored.body.account.memberId, 'local-restore1');
+
+  const forged = await accountCall(accounts, 'POST', '/v1/account/kakao', {
+    body: { accessToken: 'wrong-token' },
+    extras,
+  });
+  assert.equal(forged.status, 401);
+
+  const missingSecret = await accountCall(accounts, 'POST', '/v1/account/naver', {
+    body: { code: 'naver-code-1', state: 'state-1' },
+    extras: { ...extras, naverClientSecret: '' },
+  });
+  assert.equal(missingSecret.status, 503);
 });
 
 test('logout wipes the stored account key so the next sign-in does not reuse the previous person', () => {

@@ -946,6 +946,11 @@ export async function handleSyncRequest(store, request, extras = {}) {
     return handleAccountOperation(accounts, op, {
       clientId: extras.clientId || extras.googleClientId || '',
       fetchCerts: extras.fetchCerts,
+      fetchKakaoUser: extras.fetchKakaoUser,
+      fetchNaverUser: extras.fetchNaverUser,
+      exchangeNaverCode: extras.exchangeNaverCode,
+      naverClientId: extras.naverClientId || '',
+      naverClientSecret: extras.naverClientSecret || '',
       now: extras.now,
     });
   }
