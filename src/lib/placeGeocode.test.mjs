@@ -41,14 +41,14 @@ test('formatPrecisePlace keeps an apartment and a shop, and presentPlace does no
   assert.equal(formatPrecisePlace({
     dong: '하계동',
     building: '하계1차청구아파트',
-    unit: '105',
-  }), '하계동 하계1차청구아파트 105동');
-  assert.equal(formatPrecisePlace({ dong: '다산2동', poi: '이마트' }), '다산2동 이마트');
+    unit: '104',
+  }), '하계1차청구아파트 104동');
+  assert.equal(formatPrecisePlace({ dong: '다산2동', poi: '이마트' }), '이마트');
   assert.equal(formatPrecisePlace({ dong: '수택동' }), '');
-  assert.equal(presentPlace('노원구 하계동 하계1차청구아파트 105동'), '노원구 하계동 하계1차청구아파트 105동');
+  assert.equal(presentPlace('하계1차청구아파트 104동'), '하계1차청구아파트 104동');
   assert.equal(presentPlace('경기도 구리시 수택동 12-3'), '구리시 수택동');
   assert.equal(presentPlace('근처'), '');
-  assert.equal(String(formatPrecisePlace({ dong: '하계동', building: '청구아파트', unit: '105동' })).includes('근처'), false);
+  assert.equal(String(formatPrecisePlace({ dong: '하계동', building: '청구아파트', unit: '104동' })).includes('근처'), false);
 });
 
 test('a missing VWorld key uses Nominatim and never says 근처', async () => {
@@ -71,26 +71,66 @@ test('a missing VWorld key uses Nominatim and never says 근처', async () => {
 });
 
 test('VWorld is primary and Nominatim covers a failed VWorld response', async () => {
-  let calls = 0;
-  const vworldOnly = async (url) => {
-    calls += 1;
-    assert.match(String(url), /api\.vworld\.kr/);
-    return jsonResponse({ response: { result: [{ text: '경기도 남양주시 다산동 123' }] } });
-  };
-  const label = await reverseGeocode(37.6, 127.15, { fetch: vworldOnly, key: 'test-key', pace: false });
-  assert.equal(label, '남양주시 다산동');
-  assert.equal(calls, 2);
-
   const urls = [];
-  const fallback = async (url) => {
+  const vworldThenOsm = async (url) => {
     urls.push(String(url));
+    if (String(url).includes('vworld.kr')) {
+      return jsonResponse({ response: { result: [{ text: '서울특별시 노원구 하계동 273' }] } });
+    }
+    if (String(url).includes('nominatim.openstreetmap.org')) {
+      return jsonResponse({
+        display_name: '하계1차청구아파트, 하계동, 노원구, 서울',
+        address: { building: '하계1차청구아파트', suburb: '하계동', borough: '노원구' },
+        namedetails: { name: '하계1차청구아파트' },
+      });
+    }
+    return jsonResponse({ elements: [] });
+  };
+  const label = await reverseGeocode(37.6362, 127.0675, { fetch: vworldThenOsm, key: 'test-key', pace: false });
+  assert.equal(label, '하계1차청구아파트');
+  assert.equal(urls.some((url) => String(url).includes('type=ROAD')), true);
+  assert.equal(urls.some((url) => String(url).includes('type=PARCEL')), true);
+
+  const recoveredUrls = [];
+  const fallback = async (url) => {
+    recoveredUrls.push(String(url));
     if (String(url).includes('vworld.kr')) return jsonResponse({ response: { status: 'ERROR' } }, false);
     return jsonResponse(SUTAEK);
   };
   const recovered = await reverseGeocode(37.5942, 127.1432, { fetch: fallback, key: 'test-key', pace: false });
   assert.equal(recovered, '구리시 수택동');
-  assert.equal(urls.some((url) => url.includes('nominatim.openstreetmap.org')), true);
+  assert.equal(recoveredUrls.some((url) => url.includes('nominatim.openstreetmap.org')), true);
   assert.equal(recovered.includes('근처'), false);
+});
+
+test('VWorld building layer becomes an apartment and 동 number', async () => {
+  const fetchImpl = async (url) => {
+    if (String(url).includes('LT_C_BLDGINFO')) {
+      return jsonResponse({
+        response: {
+          result: {
+            featureCollection: {
+              features: [{ properties: { buld_nm: '하계1차청구아파트', dong_nm: '104동' } }],
+            },
+          },
+        },
+      });
+    }
+    if (String(url).includes('vworld.kr')) {
+      return jsonResponse({
+        response: {
+          result: [{
+            text: '서울특별시 노원구 하계동',
+            structure: { level2: '노원구', level4L: '하계동' },
+          }],
+        },
+      });
+    }
+    return jsonResponse({ elements: [] });
+  };
+  const label = await reverseGeocode(37.6362, 127.0675, { fetch: fetchImpl, key: 'test-key', pace: false });
+  assert.equal(label, '하계1차청구아파트 104동');
+  assert.equal(String(label).includes('근처'), false);
 });
 
 test('a browser that refuses User-Agent still receives the neighborhood', async () => {

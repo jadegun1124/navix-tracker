@@ -8,7 +8,7 @@
 import { APP_VERSION_NAME } from './appRelease.mjs';
 
 const NOMINATIM_UA = `Kinnex/${APP_VERSION_NAME} (family location; https://github.com/jadegun1124/umap)`;
-const CACHE_KEY = 'umap_geocode_cache_v2';
+const CACHE_KEY = 'umap_geocode_cache_v3';
 const PLACE_LIMIT = 56;
 const NOMINATIM_GAP_MS = 1100;
 let nominatimNotBefore = 0;
@@ -70,16 +70,15 @@ function formatUnit(value) {
   return '';
 }
 
-/** Apartment or POI line. A plain address returns empty so the 시·동 fallback stays. */
+/** Apartment + 동, or a named POI. A plain 구·동 address returns empty. */
 export function formatPrecisePlace(parts = {}) {
   const dong = cleanToken(parts.dong);
   const building = cleanToken(parts.building);
   const unit = formatUnit(parts.unit);
   const poi = cleanToken(parts.poi);
-  const named = building || (poi && poi !== dong ? poi : '');
-  if (!named) return '';
-  const line = [dong, building || poi, building ? unit : ''].filter(Boolean).join(' ');
-  return line.slice(0, PLACE_LIMIT);
+  if (building) return [building, unit].filter(Boolean).join(' ').slice(0, PLACE_LIMIT);
+  if (poi && poi !== dong) return poi.slice(0, PLACE_LIMIT);
+  return '';
 }
 
 /** Keep a building line. A plain address still becomes 시·동. */
@@ -283,7 +282,7 @@ function vworldBuilding(body) {
   return { building: '', unit: '', poi: '' };
 }
 
-async function fetchVworld(fetchImpl, lat, lng, key) {
+async function fetchVworldAddress(fetchImpl, lat, lng, key, type) {
   const url = new URL('https://api.vworld.kr/req/address');
   url.searchParams.set('service', 'address');
   url.searchParams.set('request', 'getAddress');
@@ -291,12 +290,36 @@ async function fetchVworld(fetchImpl, lat, lng, key) {
   url.searchParams.set('crs', 'epsg:4326');
   url.searchParams.set('point', `${lng},${lat}`);
   url.searchParams.set('format', 'json');
-  url.searchParams.set('type', 'PARCEL');
+  url.searchParams.set('type', type);
   url.searchParams.set('simple', 'false');
   url.searchParams.set('key', key);
   const response = await fetchImpl(url.toString(), { signal: timeoutSignal(8000) });
-  const body = await readJson(response);
-  const parts = vworldStructure(body);
+  return vworldStructure(await readJson(response));
+}
+
+function mergeVworldParts(primary, extra) {
+  return {
+    text: primary.text || extra.text,
+    dong: primary.dong || extra.dong,
+    district: primary.district || extra.district,
+    building: primary.building || extra.building,
+    unit: primary.unit || extra.unit,
+    poi: primary.poi || extra.poi,
+  };
+}
+
+async function fetchVworld(fetchImpl, lat, lng, key) {
+  let parts = { text: '', dong: '', district: '', building: '', unit: '', poi: '' };
+  try {
+    parts = mergeVworldParts(parts, await fetchVworldAddress(fetchImpl, lat, lng, key, 'ROAD'));
+  } catch {
+    /* PARCEL로 이어간다 */
+  }
+  try {
+    parts = mergeVworldParts(parts, await fetchVworldAddress(fetchImpl, lat, lng, key, 'PARCEL'));
+  } catch {
+    /* 건물 레이어로 이어간다 */
+  }
   const precise = formatPrecisePlace(parts);
   if (precise) return precise;
   let building = { building: '', unit: '', poi: '' };
@@ -309,8 +332,8 @@ async function fetchVworld(fetchImpl, lat, lng, key) {
     dataUrl.searchParams.set('format', 'json');
     dataUrl.searchParams.set('crs', 'EPSG:4326');
     dataUrl.searchParams.set('geomFilter', `POINT(${lng} ${lat})`);
-    dataUrl.searchParams.set('buffer', '40');
-    dataUrl.searchParams.set('size', '5');
+    dataUrl.searchParams.set('buffer', '80');
+    dataUrl.searchParams.set('size', '8');
     dataUrl.searchParams.set('geometry', 'false');
     const buildingResponse = await fetchImpl(dataUrl.toString(), { signal: timeoutSignal(8000) });
     building = vworldBuilding(await readJson(buildingResponse));
@@ -324,7 +347,7 @@ async function fetchVworld(fetchImpl, lat, lng, key) {
     poi: building.poi || parts.poi,
   });
   if (named) return named;
-  return presentPlace(parts.text) || vworldAddress(body);
+  return presentPlace(parts.text) || [parts.district, parts.dong].filter(Boolean).join(' ');
 }
 
 async function fetchNominatim(fetchImpl, lat, lng) {
@@ -403,23 +426,17 @@ export async function reverseGeocode(lat, lng, options = {}) {
   if (typeof fetchImpl !== 'function') return null;
   const key = options.key !== undefined ? String(options.key || '') : readVworldKey();
   const kakaoKey = options.kakaoKey !== undefined ? String(options.kakaoKey || '') : readKakaoKey();
+  let coarse = '';
   if (key) {
     try {
       const fromVworld = await fetchVworld(fetchImpl, lat, lng, key);
       if (fromVworld && isPrecisePlace(fromVworld)) return presentPlace(fromVworld);
-      if (kakaoKey) {
-        try {
-          const fromKakao = await fetchKakao(fetchImpl, lat, lng, kakaoKey);
-          if (fromKakao) return fromKakao;
-        } catch {
-          /* 동네 표기로 내려간다 */
-        }
-      }
-      if (fromVworld) return presentPlace(fromVworld);
+      if (fromVworld) coarse = fromVworld;
     } catch {
-      /* Nominatim으로 넘어간다 */
+      /* Kakao·Nominatim으로 넘어간다 */
     }
-  } else if (kakaoKey) {
+  }
+  if (kakaoKey) {
     try {
       const fromKakao = await fetchKakao(fetchImpl, lat, lng, kakaoKey);
       if (fromKakao) return fromKakao;
@@ -433,18 +450,15 @@ export async function reverseGeocode(lat, lng, options = {}) {
     if (fromNominatim && isPrecisePlace(fromNominatim)) return presentPlace(fromNominatim);
     try {
       const poi = await fetchOverpass(fetchImpl, lat, lng);
-      if (poi) {
-        const dong = fromNominatim ? fromNominatim.split(' ').find(isDong) || '' : '';
-        const withDong = dong && !poi.startsWith(dong) ? presentPlace(`${dong} ${poi}`) : poi;
-        if (withDong) return withDong;
-      }
+      if (poi) return presentPlace(poi);
     } catch {
       /* 동네 표기를 유지한다 */
     }
-    return fromNominatim ? presentPlace(fromNominatim) : null;
+    if (fromNominatim) return presentPlace(fromNominatim);
   } catch {
-    return null;
+    /* VWorld 동네 표기로 내려간다 */
   }
+  return coarse ? presentPlace(coarse) : null;
 }
 
 export async function reverseGeocodeCached(lat, lng, options = {}) {

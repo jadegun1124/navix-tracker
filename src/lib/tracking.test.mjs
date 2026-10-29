@@ -11,6 +11,8 @@ import {
   formatDurationMs,
   formatJourneyDistance,
   formatJourneyWhen,
+  isStayNotJourney,
+  STAY_BOUND_RADIUS_M,
   historyDayKeys,
   isWithinHistory,
   needsDailyWipe,
@@ -670,7 +672,11 @@ test('a 2.5s walk keeps a curve and a 5 minute stay archives it', () => {
   assert.ok(split.journeys[0].distanceM >= 200);
   assert.ok(split.journeys[0].distanceM < 400);
   assert.equal(split.journeys[0].endedAt, arrive);
-  assert.equal(formatJourneyWhen(split.journeys[0].startedAt, split.journeys[0].endedAt), '08:34–08:38');
+  assert.equal(formatJourneyWhen(split.journeys[0].startedAt, split.journeys[0].endedAt, split.journeys[0].startedAt), '08:34–08:38');
+  assert.equal(
+    formatJourneyWhen(Date.UTC(2026, 9, 28, 12, 28), Date.UTC(2026, 9, 29, 0, 29), Date.UTC(2026, 9, 29, 1, 0)),
+    '10/28 21:28 → 10/29 09:29',
+  );
   assert.equal(formatJourneyDistance(13_600), '13.6km');
   const live = liveTrailPoints(closed, arrive + JOURNEY_STAY_MS);
   assert.ok(live.length < closed.length);
@@ -864,6 +870,42 @@ test('overnight jitter in one neighborhood does not become a journey', () => {
       startedAt: cloud[0].at,
       endedAt: cloud[cloud.length - 1].at,
       distanceM: 253,
+      points: cloud,
+      start: { lat: cloud[0].lat, lng: cloud[0].lng, label: '노원구 하계동' },
+      end: { lat: cloud[cloud.length - 1].lat, lng: cloud[cloud.length - 1].lng, label: '노원구 하계동' },
+    }],
+  }, now);
+  assert.equal(kept.self, undefined);
+});
+
+test('a 12 hour 154m home stay is not a journey even if it was saved as a card', () => {
+  const start = Date.UTC(2026, 9, 28, 12, 28);
+  const end = Date.UTC(2026, 9, 29, 0, 29);
+  const origin = { lat: 37.6362, lng: 127.0675, at: start, accuracyM: 18, speedMps: 0, staying: true };
+  const hops = [
+    [0, 0, 0],
+    [80, 40, 3 * 60 * 60 * 1000],
+    [-30, 70, 6 * 60 * 60 * 1000],
+    [50, -20, 9 * 60 * 60 * 1000],
+    [20, 30, end - start],
+  ];
+  const cloud = hops.map(([north, east, dt]) => ({
+    ...offset(origin, north, east, start + dt),
+    accuracyM: 18,
+    speedMps: 0,
+    staying: true,
+  }));
+  const durationMs = end - start;
+  assert.equal(isStayNotJourney(cloud, durationMs, 154), true);
+  assert.ok(STAY_BOUND_RADIUS_M >= 300);
+  const now = end + 6 * 60 * 1000;
+  const kept = journeysWithinHistory({
+    self: [{
+      id: 'home-stay',
+      startedAt: start,
+      endedAt: end,
+      distanceM: 154,
+      cloud: false,
       points: cloud,
       start: { lat: cloud[0].lat, lng: cloud[0].lng, label: '노원구 하계동' },
       end: { lat: cloud[cloud.length - 1].lat, lng: cloud[cloud.length - 1].lng, label: '노원구 하계동' },

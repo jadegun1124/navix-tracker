@@ -619,9 +619,21 @@ export async function familyEndpointAvailable(code: string, token: string): Prom
   }
 }
 
+function readDeparted(body: unknown): string[] {
+  if (!body || typeof body !== 'object' || !Array.isArray((body as { departed?: unknown }).departed)) return [];
+  const ids: string[] = [];
+  const seen = new Set<string>();
+  for (const value of (body as { departed: unknown[] }).departed) {
+    if (typeof value !== 'string' || !/^local-[a-z0-9]{3,64}$/.test(value) || seen.has(value)) continue;
+    seen.add(value);
+    ids.push(value);
+  }
+  return ids;
+}
+
 export function startManagedFamilySync(
   links: { code: string; token: string }[],
-  onRoom: (code: string, places: SharedPlace[], profiles: SharedProfile[], trails: SharedTrail[]) => void,
+  onRoom: (code: string, places: SharedPlace[], profiles: SharedProfile[], trails: SharedTrail[], departed: string[]) => void,
 ): () => void {
   const usable = links.filter((link) => splitSyncToken(link.token) && /^\d{4,6}$/.test(link.code));
   if (!familySyncUrl() || usable.length === 0) return () => {};
@@ -646,8 +658,8 @@ export function startManagedFamilySync(
         }
         const body: unknown = await response.json();
         const raw = body && typeof body === 'object' && Array.isArray((body as { places?: unknown[] }).places) ? (body as { places: unknown[] }).places : [];
-        const places = raw.filter((place): place is SharedPlace => isSharedPlace(place) && place.audience === 'family' && place.sharing);
-        onRoom(link.code, places, readProfiles(body), readTrails(body));
+        const places = raw.filter((place): place is SharedPlace => isSharedPlace(place) && place.audience === 'family' && place.sharing && typeof place.memberId === 'string' && /^local-[a-z0-9]{3,64}$/.test(place.memberId));
+        onRoom(link.code, places, readProfiles(body), readTrails(body), readDeparted(body));
       }
     } catch {
       if (!stopped && familySyncUrl()) setPhase('down');

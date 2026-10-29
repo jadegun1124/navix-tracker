@@ -1,45 +1,29 @@
 // Bind a live Worker place to the admin roster.
-// memberId is the phone's own id, so a rename stays on the same roster row.
-// priorName matches the label this phone published before the rename.
-// One invited member on that code receives the fix. Extra phones stay visible.
+// memberId is the only key. Name, a lone invited child, and self never receive
+// another phone's coordinates.
 
-const MEMBER_ID = /^local-[a-z0-9]{3,64}$/;
-
-function memberIdOf(place) {
-  return typeof place?.memberId === 'string' && MEMBER_ID.test(place.memberId) ? place.memberId : '';
-}
+import { placeMemberId } from './placeBinding.mjs';
 
 export function resolveManagedTarget(members, place) {
   const list = Array.isArray(members) ? members : [];
-  const memberId = memberIdOf(place);
-  const names = [place?.name, place?.priorName].filter((name) => typeof name === 'string' && name);
-  if (memberId) {
-    const bound = list.find((member) => member
-      && member.id !== 'self'
-      && member.role !== 'guardian'
-      && member.role !== 'admin-share'
-      && member.inviteCode === place.code
-      && member.publisherId === memberId);
-    if (bound) return { id: bound.id, create: null };
-  }
-  const roster = list.filter((member) => member
+  const memberId = placeMemberId(place);
+  if (!memberId) return { id: '', create: null };
+  const bound = list.find((member) => member
     && member.id !== 'self'
+    && member.role !== 'self'
     && member.role !== 'guardian'
     && member.role !== 'admin-share'
     && member.inviteCode === place.code
-    && !String(member.id).startsWith('remote:'));
-  const named = roster.find((member) => names.includes(member.name));
-  if (named) return { id: named.id, create: null };
-  if (roster.length === 1) return { id: roster[0].id, create: null };
-  const remoteId = memberId ? `remote:${place.code}:${memberId}` : `remote:${place.code}:${place.name}`;
-  const aliasRemote = list.find((member) => member && names.some((name) => member.id === `remote:${place.code}:${name}`));
-  if (aliasRemote) return { id: aliasRemote.id, create: null };
+    && member.publisherId === memberId);
+  if (bound) return { id: bound.id, create: null };
+  const remoteId = `remote:${place.code}:${memberId}`;
   if (list.some((member) => member && member.id === remoteId)) return { id: remoteId, create: null };
+  const name = typeof place?.name === 'string' ? place.name : '';
   return {
     id: remoteId,
     create: {
       id: remoteId,
-      name: place.name,
+      name,
       role: 'child',
       lat: null,
       lng: null,
@@ -50,7 +34,7 @@ export function resolveManagedTarget(members, place) {
       moving: null,
       inviteCode: place.code,
       share: 'invited',
-      ...(memberId ? { publisherId: memberId } : {}),
+      publisherId: memberId,
     },
   };
 }

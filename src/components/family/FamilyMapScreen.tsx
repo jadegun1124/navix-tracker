@@ -17,6 +17,7 @@ import { DEFAULT_CENTER, type GuardianLink, type HomeZone, type Member, type Ses
 import { AlwaysAllowGuide, AlwaysAllowMapHint } from './AlwaysAllowGuide';
 import { AlwaysAllowSetup } from './AlwaysAllowSetup';
 import { memberPlaceLabel } from '../../lib/memberPlace.mjs';
+import { memberIsStale, memberPresence, memberPresenceLabel } from '../../lib/memberPresence.mjs';
 import { mapMembers, rosterMembers } from '../../lib/peerFamily.mjs';
 import { AlwaysAllowNotice } from './AlwaysAllowNotice';
 import { InviteQrImage, InviteQrScan } from './InviteQr';
@@ -633,6 +634,15 @@ export function FamilyMapScreen() {
     setDm(null);
     if (hasLocation(member)) mapRef.current?.panTo(member.lat, member.lng);
   };
+  const selectMember = (member: Member) => {
+    if (recordId === member.id) return;
+    if (selectedId === member.id && recordId == null) {
+      openPerson(member);
+      return;
+    }
+    if (recordId) setRecordId(null);
+    focusMember(member, false);
+  };
   const applyLocationResult = (result: { location: string; note: string | null }) => {
     setSettingsNote(result.note);
     if (result.location === 'always' || result.location === 'while-using' || result.location === 'denied') {
@@ -732,7 +742,7 @@ export function FamilyMapScreen() {
   return (
     <div className="flex h-full justify-center bg-[#d7e3ee]">
       <div className="relative flex h-full w-full max-w-[430px] flex-col overflow-hidden bg-white pb-[env(safe-area-inset-bottom)]">
-        <div className="relative min-h-0 flex-1">
+        <div className={`relative min-h-0 ${viewingRecords && !detailOpen ? 'hidden' : 'flex-1'}`}>
           <StreetMap
             ref={mapRef}
             center={center}
@@ -746,7 +756,7 @@ export function FamilyMapScreen() {
             onSelect={(id) => {
               const member = state.members.find((item) => item.id === id);
               if (!member) return;
-              openPerson(member);
+              selectMember(member);
             }}
             onMove={(next) => {
               if (!placingRef.current) return;
@@ -758,7 +768,7 @@ export function FamilyMapScreen() {
             }}
           />
 
-          {!detailOpen && (
+          {!detailOpen && !viewingRecords && (
           <>
             <button
               type="button"
@@ -918,7 +928,7 @@ export function FamilyMapScreen() {
         )}
 
         {recordId && !placingHome && !detailOpen && (
-          <section className="max-h-[72%] overflow-y-auto rounded-t-3xl bg-white px-4 pb-3 pt-3 shadow-[0_-8px_30px_rgba(15,23,42,0.08)]">
+          <section className="flex min-h-0 flex-1 flex-col overflow-y-auto bg-white px-4 pb-3 pt-3">
             <div className="mb-2 flex items-center justify-between gap-2">
               <h2 className="truncate text-lg font-black">{selected?.id === 'self' ? '내 기록' : `${selected?.name ?? ''} 기록`}</h2>
               <button type="button" onClick={() => { setRecordId(null); setDetailId(null); setPlaying(false); }} aria-label="기록 닫기" className="shrink-0 rounded-full bg-slate-100 px-3 py-1.5 text-xs font-bold">
@@ -967,7 +977,7 @@ export function FamilyMapScreen() {
           <section className="rounded-t-3xl bg-white px-4 pb-2 pt-3 shadow-[0_-8px_30px_rgba(15,23,42,0.08)]">
             <div className="mb-1">
               <h2 className="text-lg font-black">우리 가족</h2>
-              <p className="text-[11px] font-semibold text-slate-400">사람을 누르면 그 사람의 기록을 봅니다</p>
+              <p className="text-[11px] font-semibold text-slate-400">한 번 누르면 지도에서 보고, 한 번 더 누르면 기록을 봅니다</p>
             </div>
             <div className="max-h-52 overflow-y-auto">
               {people.map((member) => {
@@ -981,7 +991,7 @@ export function FamilyMapScreen() {
                     selected={member.id === selected?.id}
                     unread={chatTick >= 0 ? unread : 0}
                     live={personLive(member, state.tracks[member.id], now)}
-                    onSelect={() => openPerson(member)}
+                    onSelect={() => selectMember(member)}
                     onPhoto={member.id === 'self' ? (photo) => family.setPhoto(photo) : undefined}
                     onRemove={member.id !== 'self' ? () => setConfirm({ kind: 'remove', id: member.id, name: member.name }) : undefined}
                   />
@@ -1809,6 +1819,7 @@ function overviewLinesFor(
   liveDay: string,
 ) {
   if (member.role === 'guardian' || !hasLocation(member)) return [];
+  if (memberIsStale(memberPresence(member, now))) return [];
   if (member.id !== 'self' && member.share !== 'allowed' && member.role !== 'admin-share') return [];
   const today = (tracks[member.id] ?? []).filter((point) => seoulDayKey(point.at) === liveDay);
   const points = liveTrailPoints(today, now);
@@ -1836,6 +1847,9 @@ function overviewLinesFor(
 }
 
 function personLive(member: Member, points: { lat: number; lng: number; at: number; speedMps?: number | null; stayEnd?: boolean }[] | undefined, now: number) {
+  const presence = memberPresence(member, now);
+  const stale = memberPresenceLabel(presence);
+  if (stale) return stale;
   return liveMotionLabel({
     located: hasLocation(member),
     moving: member.moving,
@@ -1863,8 +1877,11 @@ function MemberCard({
   onPhoto?: (photo: string) => void;
   onRemove?: () => void;
 }) {
+  const presence = memberPresence(member, Date.now());
+  const dimmed = memberIsStale(presence);
+  const disconnected = presence.kind === 'disconnected';
   return (
-    <div className={`flex w-full items-center gap-3 rounded-2xl px-1 py-2 text-left ${selected ? 'bg-blue-50' : ''}`}>
+    <div className={`flex w-full items-center gap-3 rounded-2xl px-1 py-2 text-left ${selected ? 'bg-blue-50' : ''} ${dimmed ? 'opacity-60' : ''}`}>
       {onPhoto ? (
         <PhotoPicker name={member.name} photo={member.photo} onPhoto={onPhoto} />
       ) : (
@@ -1873,12 +1890,17 @@ function MemberCard({
       <button type="button" onClick={onSelect} className="min-w-0 flex-1 text-left">
         <span className="block truncate font-bold">{member.name}</span>
         <span className="block truncate text-xs text-slate-500">
-          {[personArea(member, home), live].filter(Boolean).join(' · ')}
+          {disconnected ? '연결 끊김' : [personArea(member, home), live].filter(Boolean).join(' · ')}
         </span>
       </button>
       {unread > 0 && <span className="shrink-0 rounded-full bg-[#ff8a34] px-2 py-0.5 text-[10px] font-black text-white">{unread}</span>}
-      {member.battery != null && <span className="shrink-0 text-xs font-bold text-slate-500">{member.battery}%</span>}
-      {onRemove && (
+      {member.battery != null && !dimmed && <span className="shrink-0 text-xs font-bold text-slate-500">{member.battery}%</span>}
+      {onRemove && disconnected && (
+        <button type="button" onClick={onRemove} className="shrink-0 rounded-full bg-slate-100 px-3 py-1.5 text-xs font-bold text-slate-700">
+          지우기
+        </button>
+      )}
+      {onRemove && !disconnected && (
         <button type="button" onClick={onRemove} aria-label={`${member.name} 지우기`} className="shrink-0 rounded-full p-2 text-slate-400">
           <X className="h-4 w-4" />
         </button>

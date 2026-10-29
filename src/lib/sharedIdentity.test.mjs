@@ -3,7 +3,7 @@ import test from 'node:test';
 import { familyPinId, moveKeyed } from './sharedIdentity.mjs';
 
 test('a family pin keeps the member id when the display name changes', () => {
-  assert.equal(familyPinId('48291', { name: '딸' }), 'family:48291:딸');
+  assert.equal(familyPinId('48291', { name: '딸' }), '');
   assert.equal(familyPinId('48291', { name: '민지', memberId: 'local-abc' }), 'family:48291:local-abc');
   assert.equal(familyPinId('48291', { name: '하나', memberId: 'local-abc' }), 'family:48291:local-abc');
 });
