@@ -1,7 +1,10 @@
-import { useMemo } from 'react';
-import { Pause, Play, Route } from 'lucide-react';
+import { useEffect, useMemo, useRef } from 'react';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
+import { Bike, Car, ChevronRight, Footprints, Pause, Plane, Play } from 'lucide-react';
 import { haversineMeters } from '../../lib/geo';
-import { formatJourneyDistance } from '../../lib/tracking.mjs';
+import { classifyMode, formatJourneyDistance, modeLabel, visibleTrail, type TravelMode } from '../../lib/tracking.mjs';
+import { VWORLD_ATTRIBUTION, vworldApiKey, vworldBaseTileUrl } from '../../services/vworld';
 import type { Journey } from '../../types/family';
 
 type Place = { lat: number; lng: number; label: string | null };
@@ -27,6 +30,12 @@ function placeText(place: Place, fallback: string) {
   return fallback;
 }
 
+function realPlace(place: Place) {
+  const label = place.label?.trim();
+  if (label && label !== '근처' && !looksLikeCoordinates(label)) return label;
+  return '';
+}
+
 function seoulClock(at: number) {
   return new Intl.DateTimeFormat('en-GB', {
     timeZone: 'Asia/Seoul',
@@ -45,7 +54,7 @@ function formatDuration(ms: number) {
 }
 
 function rangeLabel(startedAt: number, endedAt: number) {
-  return `${seoulClock(startedAt)} - ${seoulClock(endedAt)} (${formatDuration(endedAt - startedAt)})`;
+  return `${seoulClock(startedAt)} ~ ${seoulClock(endedAt)} (${formatDuration(endedAt - startedAt)})`;
 }
 
 function spacedDistance(meters: number) {
@@ -53,6 +62,13 @@ function spacedDistance(meters: number) {
   if (raw.endsWith('km')) return `${raw.slice(0, -2)} km`;
   if (raw.endsWith('m')) return `${raw.slice(0, -1)} m`;
   return raw;
+}
+
+function journeyMode(distanceM: number, startedAt: number, endedAt: number): TravelMode {
+  const duration = Math.max(0, endedAt - startedAt);
+  const hours = duration / 3_600_000;
+  const speedKmh = hours > 0 ? (distanceM / 1000) / hours : 0;
+  return classifyMode(speedKmh, distanceM, duration);
 }
 
 export function playbackMark(points: Sample[], ratio: number): { lat: number; lng: number; label: string } | null {
@@ -75,60 +91,149 @@ export function playbackMark(points: Sample[], ratio: number): { lat: number; ln
   return { lat: point.lat, lng: point.lng, label: `${seoulClock(point.at)} / ${kmh} km/h` };
 }
 
-function MiniTrail({ points }: { points: { lat: number; lng: number }[] }) {
-  const line = useMemo(() => {
-    if (points.length < 2) return '';
-    let minLat = Infinity;
-    let maxLat = -Infinity;
-    let minLng = Infinity;
-    let maxLng = -Infinity;
-    for (const point of points) {
-      minLat = Math.min(minLat, point.lat);
-      maxLat = Math.max(maxLat, point.lat);
-      minLng = Math.min(minLng, point.lng);
-      maxLng = Math.max(maxLng, point.lng);
-    }
-    const latSpan = Math.max(maxLat - minLat, 0.0004);
-    const lngSpan = Math.max(maxLng - minLng, 0.0004);
-    return points.map((point) => {
-      const x = ((point.lng - minLng) / lngSpan) * 260 + 10;
-      const y = (1 - (point.lat - minLat) / latSpan) * 76 + 10;
-      return `${x.toFixed(1)},${y.toFixed(1)}`;
-    }).join(' ');
-  }, [points]);
-  if (!line) return null;
-  const ends = line.split(' ');
-  const first = ends[0]?.split(',') ?? [];
-  const last = ends[ends.length - 1]?.split(',') ?? [];
+function ModeIcon({ mode }: { mode: TravelMode }) {
+  const Icon = mode === 'vehicle' ? Car : mode === 'bike' ? Bike : mode === 'plane' ? Plane : Footprints;
   return (
-    <svg viewBox="0 0 280 96" className="h-28 w-full rounded-xl bg-[#e8f3ff]" aria-hidden="true">
-      <polyline points={line} fill="none" stroke="#0084FF" strokeWidth="3" strokeLinejoin="round" strokeLinecap="round" />
-      {first.length === 2 && <circle cx={first[0]} cy={first[1]} r="4.5" fill="#0084FF" />}
-      {last.length === 2 && <circle cx={last[0]} cy={last[1]} r="5" fill="#ffffff" stroke="#0084FF" strokeWidth="2.5" />}
-    </svg>
+    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#e8f1fb] text-[#0084FF]" aria-label={modeLabel(mode)}>
+      <Icon className="h-4 w-4" aria-hidden="true" />
+    </span>
   );
 }
 
-function PlaceLine({ hollow, text }: { hollow: boolean; text: string }) {
+function PlaceLine({ text }: { text: string }) {
   return (
-    <span className="flex items-center gap-2 text-xs leading-5 text-slate-600">
-      <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${hollow ? 'border-2 border-[#0084FF] bg-white' : 'bg-[#0084FF]'}`} />
+    <span className="flex items-center gap-2 text-[13px] leading-5 text-slate-600">
+      <span className="h-2 w-2 shrink-0 rounded-full bg-[#0084FF]" />
       <span className="min-w-0 truncate">{text}</span>
     </span>
   );
 }
 
-function SummaryCard({
+function fitPreview(map: L.Map, points: { lat: number; lng: number }[]) {
+  if (points.length < 1) return;
+  map.invalidateSize();
+  const bounds = L.latLngBounds(points.map((point) => [point.lat, point.lng]));
+  if (!bounds.isValid()) return;
+  const latSpan = bounds.getNorth() - bounds.getSouth();
+  const lngSpan = bounds.getEast() - bounds.getWest();
+  if (points.length === 1 || (latSpan < 0.0002 && lngSpan < 0.0002)) {
+    map.setView(bounds.getCenter(), 16, { animate: false });
+    return;
+  }
+  map.fitBounds(bounds, { padding: [22, 22], maxZoom: 16, animate: false });
+}
+
+function RoutePreview({ points }: { points: Sample[] }) {
+  const nodeRef = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<L.Map | null>(null);
+  const trailRef = useRef<L.LayerGroup | null>(null);
+  const pointsRef = useRef(points);
+  pointsRef.current = points;
+  const signature = useMemo(() => {
+    return visibleTrail(points).map((point) => `${point.lat.toFixed(5)},${point.lng.toFixed(5)}`).join(' ');
+  }, [points]);
+
+  useEffect(() => {
+    const node = nodeRef.current;
+    if (!node || mapRef.current) return;
+    const key = vworldApiKey();
+    const map = L.map(node, {
+      center: [37.5, 127.05],
+      zoom: 13,
+      zoomControl: false,
+      attributionControl: !!key,
+      dragging: false,
+      scrollWheelZoom: false,
+      doubleClickZoom: false,
+      boxZoom: false,
+      keyboard: false,
+      touchZoom: false,
+      inertia: false,
+    });
+    if (key) {
+      map.attributionControl.setPrefix('');
+      map.attributionControl.setPosition('bottomleft');
+      L.tileLayer(vworldBaseTileUrl(key), {
+        attribution: VWORLD_ATTRIBUTION,
+        minZoom: 6,
+        maxZoom: 19,
+        bounds: L.latLngBounds([32.8, 124.0], [39.8, 132.1]),
+      }).addTo(map);
+    }
+    trailRef.current = L.layerGroup().addTo(map);
+    mapRef.current = map;
+    const observer = new ResizeObserver(() => {
+      const current = mapRef.current;
+      const group = trailRef.current;
+      if (!current || !group) return;
+      const drawn = group.getLayers().flatMap((layer) => {
+        if (layer instanceof L.Polyline && !(layer instanceof L.CircleMarker)) {
+          return (layer.getLatLngs() as L.LatLng[]).map((latlng) => ({ lat: latlng.lat, lng: latlng.lng }));
+        }
+        if (layer instanceof L.CircleMarker) {
+          const latlng = layer.getLatLng();
+          return [{ lat: latlng.lat, lng: latlng.lng }];
+        }
+        return [];
+      });
+      if (drawn.length > 0) fitPreview(current, drawn);
+    });
+    observer.observe(node);
+    return () => {
+      observer.disconnect();
+      map.remove();
+      mapRef.current = null;
+      trailRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    const group = trailRef.current;
+    if (!map || !group) return;
+    group.clearLayers();
+    const drawn = visibleTrail(pointsRef.current).filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lng));
+    const stroke = { smoothFactor: 0, interactive: false, lineCap: 'round' as const, lineJoin: 'round' as const };
+    if (drawn.length >= 2) {
+      const latlngs = drawn.map((point) => [point.lat, point.lng] as [number, number]);
+      L.polyline(latlngs, { ...stroke, color: '#ffffff', weight: 8, opacity: 0.95 }).addTo(group);
+      L.polyline(latlngs, { ...stroke, color: '#0084FF', weight: 4.5, opacity: 1 }).addTo(group);
+    }
+    if (drawn.length === 1) {
+      L.circleMarker([drawn[0].lat, drawn[0].lng], {
+        radius: 6,
+        color: '#0084FF',
+        weight: 3,
+        fillColor: '#ffffff',
+        fillOpacity: 1,
+        interactive: false,
+      }).addTo(group);
+    }
+    const fit = () => fitPreview(map, drawn);
+    fit();
+    const timer = window.setTimeout(fit, 80);
+    return () => window.clearTimeout(timer);
+  }, [signature]);
+
+  return <div ref={nodeRef} className="umap-route-preview h-full w-full" aria-hidden="true" />;
+}
+
+function TripCard({
+  title,
   journey,
   selected,
   onSelect,
   onPlay,
 }: {
-  journey: Journey;
+  title: string | null;
+  journey: OpenJourney | Journey;
   selected: boolean;
   onSelect: () => void;
   onPlay: () => void;
 }) {
+  const mode = journeyMode(journey.distanceM, journey.startedAt, journey.endedAt);
+  const start = realPlace(journey.start);
+  const end = realPlace(journey.end);
   return (
     <div
       role="button"
@@ -140,30 +245,38 @@ function SummaryCard({
           onSelect();
         }
       }}
-      className={`w-full rounded-3xl px-3 py-3 text-left ${selected ? 'bg-blue-50 ring-2 ring-[#0084FF]' : 'bg-slate-50'}`}
+      className={`w-full rounded-[28px] px-3.5 py-3.5 text-left shadow-[0_8px_24px_rgba(15,23,42,0.06)] ${selected ? 'bg-white ring-2 ring-[#0084FF]' : 'bg-white ring-1 ring-slate-200'}`}
     >
-      <span className="block text-xs font-black text-slate-400">최근 여정</span>
-      <span className="mt-1 block text-sm font-black text-slate-900">{rangeLabel(journey.startedAt, journey.endedAt)}</span>
-      <span className="mt-2 flex items-center gap-1.5 text-lg font-black text-slate-900">
-        <Route className="h-4 w-4 text-[#0084FF]" aria-hidden="true" />
+      {title && (
+        <span className="mb-1.5 flex items-center justify-between gap-2">
+          <span className={`text-sm font-black ${title === '지금' ? 'text-[#0084FF]' : 'text-slate-800'}`}>{title}</span>
+          <ChevronRight className="h-4 w-4 text-slate-400" aria-hidden="true" />
+        </span>
+      )}
+      <span className="block text-[15px] font-black tracking-tight text-slate-900">{rangeLabel(journey.startedAt, journey.endedAt)}</span>
+      <span className="mt-2 flex items-center gap-2 text-[22px] font-black leading-none text-slate-900">
+        <ModeIcon mode={mode} />
         {spacedDistance(journey.distanceM)}
       </span>
-      <span className="mt-2 block space-y-1">
-        <PlaceLine hollow={false} text={placeText(journey.start, '출발지')} />
-        <PlaceLine hollow text={placeText(journey.end, '도착지')} />
-      </span>
-      <span className="relative mt-3 block">
-        <MiniTrail points={journey.points} />
+      {(start || end) && (
+        <span className="mt-2.5 block space-y-1">
+          {start && <PlaceLine text={start} />}
+          {end && <PlaceLine text={end} />}
+        </span>
+      )}
+      <span className="relative mt-3 block h-36 overflow-hidden rounded-2xl">
+        <RoutePreview points={journey.points} />
         <button
           type="button"
-          aria-label="여정 재생"
+          aria-label="전체 기록 보기"
           onClick={(event) => {
             event.stopPropagation();
             onPlay();
           }}
-          className="absolute bottom-2 left-2 flex h-9 w-9 items-center justify-center rounded-full bg-[#0084FF] text-white shadow"
+          className="pointer-events-auto absolute bottom-2.5 right-2.5 z-20 inline-flex items-center gap-0.5 rounded-full bg-white/95 px-3 py-1.5 text-xs font-bold text-slate-800 shadow-[0_4px_14px_rgba(15,23,42,0.16)]"
         >
-          <Play className="h-4 w-4 translate-x-0.5" />
+          전체 기록 보기
+          <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
         </button>
       </span>
     </div>
@@ -239,26 +352,25 @@ export function JourneyCards({
   onPlay?: (id: string) => void;
 }) {
   const [latest, ...older] = journeys;
+  const play = (id: string) => (onPlay ?? onSelect)(id);
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
       {open && (
-        <button
-          type="button"
-          onClick={() => onSelect('open')}
-          className={`w-full rounded-2xl px-3 py-2 text-left ${selectedId === 'open' ? 'bg-blue-50 ring-2 ring-[#0084FF]' : 'bg-white ring-1 ring-slate-200'}`}
-        >
-          <span className="block text-xs font-black text-[#0084FF]">지금</span>
-          <span className="mt-0.5 block text-sm font-bold text-slate-800">
-            {rangeLabel(open.startedAt, open.endedAt)} · {spacedDistance(open.distanceM)}
-          </span>
-        </button>
+        <TripCard
+          title="지금"
+          journey={open}
+          selected={selectedId === 'open'}
+          onSelect={() => onSelect('open')}
+          onPlay={() => play('open')}
+        />
       )}
       {latest ? (
-        <SummaryCard
+        <TripCard
+          title="최근 여정"
           journey={latest}
           selected={selectedId === latest.id}
           onSelect={() => onSelect(latest.id)}
-          onPlay={() => (onPlay ?? onSelect)(latest.id)}
+          onPlay={() => play(latest.id)}
         />
       ) : (
         <p className="rounded-2xl bg-slate-50 px-3 py-3 text-xs leading-5 text-slate-500">
@@ -266,40 +378,14 @@ export function JourneyCards({
         </p>
       )}
       {older.map((journey) => (
-        <div
+        <TripCard
           key={journey.id}
-          role="button"
-          tabIndex={0}
-          onClick={() => onSelect(journey.id)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter' || event.key === ' ') {
-              event.preventDefault();
-              onSelect(journey.id);
-            }
-          }}
-          className={`flex w-full items-center justify-between gap-3 rounded-2xl px-3 py-2 text-left ${selectedId === journey.id ? 'bg-blue-50 ring-2 ring-[#0084FF]' : 'bg-slate-50'}`}
-        >
-          <span className="min-w-0">
-            <span className="block truncate text-xs font-bold text-slate-700">{rangeLabel(journey.startedAt, journey.endedAt)}</span>
-            <span className="mt-0.5 block truncate text-[11px] text-slate-500">
-              {placeText(journey.start, '출발지')} → {placeText(journey.end, '도착지')}
-            </span>
-          </span>
-          <span className="flex shrink-0 items-center gap-2">
-            <span className="text-xs font-black text-slate-900">{spacedDistance(journey.distanceM)}</span>
-            <button
-              type="button"
-              aria-label="여정 재생"
-              onClick={(event) => {
-                event.stopPropagation();
-                (onPlay ?? onSelect)(journey.id);
-              }}
-              className="flex h-8 w-8 items-center justify-center rounded-full bg-[#0084FF] text-white"
-            >
-              <Play className="h-3.5 w-3.5 translate-x-0.5" />
-            </button>
-          </span>
-        </div>
+          title={null}
+          journey={journey}
+          selected={selectedId === journey.id}
+          onSelect={() => onSelect(journey.id)}
+          onPlay={() => play(journey.id)}
+        />
       ))}
     </div>
   );
