@@ -1,8 +1,7 @@
-// Server-side Kinnex account. Google subject, Kakao user id, Naver id, and
-// recovery hash look up the same member id, room keys, and a 30-day
-// journey/visit backup. Provider ids are never the family member id.
-
-import { verifyGoogleIdToken, googleWebClientId, GOOGLE_SETUP_MESSAGE, GOOGLE_VERIFY_MESSAGE } from '../src/lib/googleAuth.mjs';
+// Server-side Kinnex account. Kakao user id, Naver id, and recovery hash
+// look up the same member id, room keys, and a 30-day journey/visit backup.
+// An old googleSub field is kept on the record and ignored. Provider ids
+// are never the family member id.
 import { allowedNaverRedirect } from '../src/lib/naverAuth.mjs';
 
 const MEMBER_ID = /^local-[a-z0-9]{3,64}$/;
@@ -19,8 +18,8 @@ const MAX_VISITS = 40;
 const HISTORY_MS = 30 * 24 * 60 * 60 * 1000;
 const EARLIEST_AT = Date.UTC(2024, 0, 1);
 
-export const ACCOUNT_SETUP_MESSAGE = GOOGLE_SETUP_MESSAGE;
-export const ACCOUNT_VERIFY_MESSAGE = GOOGLE_VERIFY_MESSAGE;
+export const ACCOUNT_SETUP_MESSAGE = '계정 확인을 마치지 못했습니다. 이 상태로 시작하지 않습니다.';
+export const ACCOUNT_VERIFY_MESSAGE = '계정 확인에 실패했습니다. 다시 로그인해 주세요.';
 export const ACCOUNT_RECOVER_MESSAGE = '복구 코드를 확인하지 못했습니다. 코드를 다시 입력해 주세요.';
 export const ACCOUNT_MISSING_MESSAGE = '저장된 계정을 찾지 못했습니다.';
 
@@ -444,10 +443,6 @@ function snapshotFromDisplayName(name) {
   };
 }
 
-function snapshotFromGoogleClaims(claims) {
-  return snapshotFromDisplayName(claims && claims.name);
-}
-
 function sameProfileKey(record, snapshot) {
   return !!record && !!snapshot && record.profileKey === snapshot.profileKey;
 }
@@ -542,36 +537,6 @@ export async function recoverAccount(store, code) {
   const next = { ...record, sessionHash: await accountKeyHash(accountKey), updatedAt: Date.now() };
   await writeRecord(store, next, record);
   return { record: next, accountKey };
-}
-
-export async function linkGoogleAccount(store, { idToken, snapshot, accountKey }, options = {}) {
-  const clientId = googleWebClientId(options.clientId);
-  if (!clientId) return { error: 'setup' };
-  const verified = await verifyGoogleIdToken(idToken, clientId, {
-    now: options.now,
-    fetchCerts: options.fetchCerts,
-  });
-  if (!verified.ok) return { error: verified.message === GOOGLE_SETUP_MESSAGE ? 'setup' : 'token' };
-  const sub = verified.claims.sub;
-  const existing = await findByGoogle(store, sub);
-  if (existing) {
-    const nextKey = mintAccountKey();
-    const next = { ...existing, sessionHash: await accountKeyHash(nextKey), updatedAt: options.now || Date.now() };
-    await writeRecord(store, next, existing);
-    return { record: next, accountKey: nextKey, restored: true };
-  }
-  if (accountKey) {
-    const current = await findBySession(store, accountKey);
-    if (current) {
-      const next = { ...current, googleSub: sub, updatedAt: options.now || Date.now() };
-      await writeRecord(store, next, current);
-      return { record: next, accountKey, linked: true };
-    }
-  }
-  const seed = snapshot || snapshotFromGoogleClaims(verified.claims);
-  const minted = await mintRecord(seed, options.now || Date.now(), { googleSub: sub });
-  await writeRecord(store, minted.record);
-  return { record: minted.record, accountKey: minted.accountKey, created: true };
 }
 
 function bearerToken(value) {
@@ -807,15 +772,8 @@ export async function parseAccountOperation(request) {
     return { kind: 'account-put', accountKey, snapshot: cleaned.snapshot };
   }
 
-  if (request.method === 'POST' && path === '/v1/account/google') {
-    const cleaned = value.snapshot ? cleanAccountSnapshot(value.snapshot) : { snapshot: null };
-    if (value.snapshot && cleaned.error) return json({ error: cleaned.error }, 400);
-    return {
-      kind: 'account-google',
-      idToken: typeof value.idToken === 'string' ? value.idToken : '',
-      snapshot: cleaned.snapshot,
-      accountKey: typeof value.accountKey === 'string' ? value.accountKey : accountKey,
-    };
+  if (path === '/v1/account/google') {
+    return json({ error: 'method' }, 404);
   }
 
   if (request.method === 'POST' && path === '/v1/account/kakao') {
@@ -865,15 +823,6 @@ export async function handleAccountOperation(store, op, options = {}) {
     const result = await backupAccount(store, op.accountKey, op.snapshot, options.now);
     if (result.error) return accountError(result.error);
     return json({ ok: true, account: publicAccount(result.record, { accountKey: result.accountKey }) });
-  }
-  if (op.kind === 'account-google') {
-    const result = await linkGoogleAccount(store, op, options);
-    if (result.error) return accountError(result.error);
-    return json({
-      ok: true,
-      restored: result.restored === true,
-      account: publicAccount(result.record, { accountKey: result.accountKey, created: result.created === true }),
-    });
   }
   if (op.kind === 'account-kakao') {
     const result = await linkKakaoAccount(store, op, options);

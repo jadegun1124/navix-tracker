@@ -2,10 +2,10 @@
 // same so the family room does not mint a second card.
 
 import { formatRecoveryCode, normalizeRecoveryCode } from '../../sync/account.mjs';
-import { clearGoogleAccount } from './googleAuth.mjs';
 
 export const ACCOUNT_KEY_STORAGE = 'umap_account_key_v1';
 export const RECOVERY_CODE_STORAGE = 'umap_recovery_code_v1';
+const LEFTOVER_GOOGLE_ACCOUNT_KEY = 'umap_google_account_v1';
 
 const MEMBER_ID = /^local-[a-z0-9]{3,64}$/;
 const KEY_PART = /^[A-Za-z0-9_-]{16,64}$/;
@@ -59,7 +59,7 @@ export function persistAccountSecretsIfCurrent(storage, account, epoch) {
 export function logoutLocalAccount(storage) {
   invalidateAccountBackup();
   clearStoredAccount(storage);
-  clearGoogleAccount(storage);
+  if (storage) storage.removeItem(LEFTOVER_GOOGLE_ACCOUNT_KEY);
 }
 
 export function rememberAccountSecrets(storage, account) {

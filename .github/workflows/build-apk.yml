@@ -52,7 +52,6 @@ jobs:
           VITE_VWORLD_API_KEY: ${{ secrets.VITE_VWORLD_API_KEY }}
           VWORLD_API_KEY: ${{ secrets.VWORLD_API_KEY }}
           VITE_FAMILY_SYNC_URL: ${{ secrets.VITE_FAMILY_SYNC_URL != '' && secrets.VITE_FAMILY_SYNC_URL || 'https://umap-family-sync.umap-jadegun.workers.dev' }}
-          VITE_GOOGLE_WEB_CLIENT_ID: ${{ secrets.VITE_GOOGLE_WEB_CLIENT_ID }}
           VITE_KAKAO_NATIVE_APP_KEY: ${{ secrets.VITE_KAKAO_NATIVE_APP_KEY }}
           VITE_KAKAO_JAVASCRIPT_KEY: ${{ secrets.VITE_KAKAO_JAVASCRIPT_KEY }}
           VITE_NAVER_CLIENT_ID: ${{ secrets.VITE_NAVER_CLIENT_ID }}
@@ -154,11 +153,10 @@ jobs:
           make_latest: true
           body: |
             ### Kinnex 안드로이드 앱 1.33.0
-            - 첫 화면은 「카카오로 시작」「네이버로 시작」「Google로 시작」「복구 코드로 불러오기」입니다. 키가 없으면 그 버튼은 비활성이고 짧은 안내만 보입니다.
+            - 첫 화면은 「카카오로 로그인」「네이버로 로그인」「복구 코드로 복원」입니다. 키가 없으면 그 버튼은 비활성이고 짧은 안내만 보입니다.
             - 카카오는 Android Kakao SDK, 네이버는 인가 코드만 앱에서 받고 Worker가 `nid/me`로 확인합니다. 여러 로그인을 한 계정에 연결할 수 있습니다.
-            - 앱을 지우고 다시 깔아도 카카오·네이버·Google 또는 복구 코드로 같은 사람과 가족 방, 최근 30일 기록을 불러옵니다. 다른 폰의 예전 카드가 살아나고 사람이 두 명이 되지 않습니다.
-            - 설정에 12자리 복구 코드가 보입니다. 첫 화면의 「복구 코드로 불러오기」는 Google 없이도 지금 동작합니다.
-            - Google 로그인은 Android Credential Manager ID 토큰을 Worker가 Google JWKS로 확인합니다. 웹 클라이언트 ID가 없으면 버튼을 누르지 않습니다.
+            - 앱을 지우고 다시 깔아도 카카오·네이버 또는 복구 코드로 같은 사람과 가족 방, 최근 30일 기록을 불러옵니다. 다른 폰의 예전 카드가 살아나고 사람이 두 명이 되지 않습니다.
+            - 설정에 12자리 복구 코드가 보입니다. 첫 화면의 「복구 코드로 복원」은 지금 동작합니다.
             - 아파트 단지 안에 있으면 「하계1차청구아파트 104동」처럼 단지·동을 쓰고, 옆 노원소방서 같은 POI는 단지 밖이고 아주 가까울 때만 씁니다. 머무름 중심점으로 GPS 흔들림을 맞춥니다.
             - 안드로이드 자동 백업이 WebView localStorage까지 포함합니다. 기기에 따라 복구가 다를 수 있어 서버 계정이 기준입니다.
             - sharing:false 위치 기록만으로 그 사람의 궤적·여정·방문을 지우지 않습니다. 서버가 떠난 것을 알려 주거나 7일 뒤 직접 지울 때만 카드를 빼고, 떠날 때도 이 폰의 기록은 남깁니다.
@@ -189,7 +187,7 @@ jobs:
             - versionCode: 37
             - 움직이는 동안 가족 전체 지도에 아직 기록으로 넘기지 않은 실시간 궤적을 그립니다. 걸음은 5분, 시속 약 7km 이상은 12분 머물면 그 구간을 기록으로 넘기고 메인 선에서는 뺍니다. 기록 화면은 고른 날짜의 저장된 궤적을 그립니다. 기록을 닫아도 아직 이동 중인 선은 메인 지도에 남습니다.
             - 항상 허용은 먼저 「앱 사용 중에만 허용」을 고르고, 삼성 「위치 액세스 권한」 화면 위에 「Kinnex 항상 허용으로 설정」 안내를 띄웁니다. 다른 앱 위에 표시를 거절해도 그 화면은 열리고, 앱 안 세 줄 안내가 남습니다.
-            - Google 로그인은 확인된 계정만 통과합니다. 웹 클라이언트 ID가 없으면 로그인으로 넘어가지 않습니다. 표시 이름은 그대로 이 기기에 둡니다.
+            - 카카오·네이버 로그인은 확인된 계정만 통과합니다. 해당 키가 없으면 그 버튼은 누르지 않습니다. 표시 이름은 그대로 이 기기에 둡니다.
             - 가족 카드의 현위치는 핀의 주소입니다. 예: 「구리시 수택동 · 지금」, 「남양주시 다산동 · 머무름」. VWorld 주소가 우선이고, 키가 없거나 실패하면 OpenStreetMap Nominatim으로 시·동을 채웁니다. 「근처」는 쓰지 않습니다.
             - 가족 방의 구성원은 같은 역할입니다. 예전 관리자·피관리자 저장은 한 가족으로 합치고, 구성원은 그대로 둡니다.
             - 예전 가족과 코기, 캐리어가 들어 있던 민트 핀 아이콘은 빼 두었습니다.

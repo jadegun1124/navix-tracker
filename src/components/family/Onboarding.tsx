@@ -1,11 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Bell, BatteryCharging, ChevronLeft, Footprints, MapPin, Shield } from 'lucide-react';
 import { deviceProfileKey, localProfile } from '../../lib/localProfile.mjs';
-import { GOOGLE_SETUP_MESSAGE } from '../../lib/googleAuth.mjs';
 import { KAKAO_SETUP_MESSAGE } from '../../lib/kakaoAuth.mjs';
 import { NAVER_SETUP_MESSAGE } from '../../lib/naverAuth.mjs';
 import { persistAccountResult, recoverFamilyAccount, type AccountSnapshot } from '../../services/familyAccount';
-import { configuredGoogleWebClientId, signInWithGoogle } from '../../services/googleSignIn';
 import { configuredKakaoLoginKey, signInWithKakao } from '../../services/kakaoSignIn';
 import { configuredNaverClientId, signInWithNaver } from '../../services/naverSignIn';
 import { KEEP_PERMISSION_ASKED_KEY, markSessionFlag } from '../../lib/systemSettings.mjs';
@@ -89,7 +87,6 @@ function Login({ onSubmit }: { onSubmit: (profile: Profile) => void }) {
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const trimmed = name.trim();
-  const googleId = configuredGoogleWebClientId();
   const kakaoKey = configuredKakaoLoginKey();
   const naverId = configuredNaverClientId();
 
@@ -129,7 +126,7 @@ function Login({ onSubmit }: { onSubmit: (profile: Profile) => void }) {
       <img src={iconSrc} alt="" className="h-16 w-16 rounded-2xl shadow-md" />
       <h1 className="mt-6 text-[28px] font-black leading-tight">이 폰에서 쓸 이름</h1>
       <p className="mt-3 text-sm leading-6 text-slate-600">
-        가족 지도에 보이는 이름입니다. 카카오·네이버·Google 또는 복구 코드로 같은 사람과 가족 방으로 돌아갑니다. 전화번호는 쓰지 않습니다.
+        가족 지도에 보이는 이름입니다. 카카오·네이버 또는 복구 코드로 같은 사람과 가족 방으로 돌아갑니다. 전화번호는 쓰지 않습니다.
       </p>
       <button
         type="button"
@@ -147,7 +144,7 @@ function Login({ onSubmit }: { onSubmit: (profile: Profile) => void }) {
         }}
         className="mt-6 w-full rounded-full bg-[#FEE500] py-3.5 text-sm font-bold text-[#191919] disabled:opacity-40"
       >
-        {busy ? '카카오 확인 중' : '카카오로 시작'}
+        {busy ? '카카오 확인 중' : '카카오로 로그인'}
       </button>
       {!kakaoKey && <p className="mt-3 whitespace-pre-line text-sm leading-6 text-slate-600">{KAKAO_SETUP_MESSAGE}</p>}
       <button
@@ -166,28 +163,9 @@ function Login({ onSubmit }: { onSubmit: (profile: Profile) => void }) {
         }}
         className="mt-3 w-full rounded-full bg-[#03C75A] py-3.5 text-sm font-bold text-white disabled:opacity-40"
       >
-        {busy ? '네이버 확인 중' : '네이버로 시작'}
+        {busy ? '네이버 확인 중' : '네이버로 로그인'}
       </button>
       {!naverId && <p className="mt-3 whitespace-pre-line text-sm leading-6 text-slate-600">{NAVER_SETUP_MESSAGE}</p>}
-      <button
-        type="button"
-        disabled={busy || !googleId}
-        onClick={() => {
-          if (!googleId) {
-            setMessage(GOOGLE_SETUP_MESSAGE);
-            return;
-          }
-          setBusy(true);
-          setMessage(null);
-          void signInWithGoogle(loginSnapshot()).then((result) => {
-            finishProvider(result, 'Google 로그인을 마치지 못했습니다. 이 상태로 시작하지 않습니다.');
-          });
-        }}
-        className="mt-3 w-full rounded-full border border-slate-200 bg-white py-3.5 text-sm font-bold text-slate-800 disabled:opacity-40"
-      >
-        {busy ? 'Google 확인 중' : 'Google로 시작'}
-      </button>
-      {!googleId && <p className="mt-3 whitespace-pre-line text-sm leading-6 text-slate-600">{GOOGLE_SETUP_MESSAGE}</p>}
       <button
         type="button"
         disabled={busy}
@@ -197,7 +175,7 @@ function Login({ onSubmit }: { onSubmit: (profile: Profile) => void }) {
         }}
         className="mt-3 w-full rounded-full bg-slate-100 py-3 text-sm font-bold text-slate-700 disabled:opacity-40"
       >
-        복구 코드로 불러오기
+        복구 코드로 복원
       </button>
       {recoverOpen && (
         <form
@@ -344,7 +322,7 @@ const TERM_COPY: { id: string; title: string; required: boolean; body: string }[
     id: 'privacy',
     title: '개인정보 수집·이용 동의',
     required: true,
-    body: '표시 이름, 가족 방 키, 최근 30일 여정·방문을 이 기기와 가족 서버 계정에 둡니다. 전화번호는 받지 않습니다. 카카오·네이버·Google 또는 복구 코드로 같은 사람을 다시 불러옵니다.',
+    body: '표시 이름, 가족 방 키, 최근 30일 여정·방문을 이 기기와 가족 서버 계정에 둡니다. 전화번호는 받지 않습니다. 카카오·네이버 또는 복구 코드로 같은 사람을 다시 불러옵니다.',
   },
   {
     id: 'guardian',
@@ -362,7 +340,7 @@ const TERM_COPY: { id: string; title: string; required: boolean; body: string }[
     id: 'overseas',
     title: '개인정보 국외 이전 동의',
     required: false,
-    body: '카카오·네이버·Google로 로그인하면 계정 확인에 그 서비스를 사용합니다. 지도 타일은 국토교통부 VWorld에서 불러옵니다.',
+    body: '카카오·네이버로 로그인하면 계정 확인에 그 서비스를 사용합니다. 지도 타일은 국토교통부 VWorld에서 불러옵니다.',
   },
 ];
 

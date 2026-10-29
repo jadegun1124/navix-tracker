@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Bell, ChevronLeft, ChevronRight, Copy, Home, LocateFixed, MapPin, Menu, Plus, Route, Settings, UserPlus, X } from 'lucide-react';
 import { currentAppVersionLabel } from '../../lib/appRelease.mjs';
 import { looksLikePhone, localProfile } from '../../lib/localProfile.mjs';
-import { GOOGLE_SETUP_MESSAGE } from '../../lib/googleAuth.mjs';
 import { KAKAO_SETUP_MESSAGE } from '../../lib/kakaoAuth.mjs';
 import { NAVER_SETUP_MESSAGE } from '../../lib/naverAuth.mjs';
 import { ACCOUNT_LINKED_OTHER_MESSAGE, linkedAccountWouldSwitch, rememberAccountSecrets, snapshotFromSession } from '../../lib/accountRestore.mjs';
@@ -38,7 +37,6 @@ import { useFamilyTracking } from './useFamilyTracking';
 import { useFamily } from './session';
 import { consumeAndroidBack } from '../../platform/androidExit';
 import { readStoredRecoveryCode } from '../../lib/accountRestore.mjs';
-import { configuredGoogleWebClientId, signInWithGoogle } from '../../services/googleSignIn';
 import { configuredKakaoLoginKey, signInWithKakao } from '../../services/kakaoSignIn';
 import { configuredNaverClientId, signInWithNaver } from '../../services/naverSignIn';
 
@@ -2334,7 +2332,6 @@ function RecoveryCodePanel() {
   const code = readStoredRecoveryCode(typeof localStorage === 'undefined' ? null : localStorage);
   const kakaoKey = configuredKakaoLoginKey();
   const naverId = configuredNaverClientId();
-  const googleId = configuredGoogleWebClientId();
   const snapshot = snapshotFromSession(family.state);
   const persistOnly = { persist: false as const };
 
@@ -2371,7 +2368,7 @@ function RecoveryCodePanel() {
         <div className="rounded-2xl bg-slate-50 px-3 py-3">
           <p className="text-xs font-bold text-slate-500">복구 코드</p>
           <p className="mt-1 font-mono text-base font-black tracking-[0.18em] text-slate-800">{code}</p>
-          <p className="mt-1 text-xs leading-5 text-slate-500">앱을 다시 설치한 뒤 「복구 코드로 불러오기」에 넣으면 같은 사람과 가족 방으로 돌아갑니다.</p>
+          <p className="mt-1 text-xs leading-5 text-slate-500">앱을 다시 설치한 뒤 「복구 코드로 복원」에 넣으면 같은 사람과 가족 방으로 돌아갑니다.</p>
           <button
             type="button"
             onClick={() => {
@@ -2387,7 +2384,7 @@ function RecoveryCodePanel() {
         </div>
       ) : (
         <p className="text-xs leading-5 text-slate-500">
-          앱을 지운 뒤에도 같은 사람과 가족으로 돌아오려면 카카오·네이버·Google 또는 복구 코드를 쓰세요. 코드는 이 폰이 서버에 계정을 만든 뒤 여기에 나타납니다.
+          앱을 지운 뒤에도 같은 사람과 가족으로 돌아오려면 카카오·네이버 또는 복구 코드를 쓰세요. 코드는 이 폰이 서버에 계정을 만든 뒤 여기에 나타납니다.
         </p>
       )}
       <p className="mt-3 text-xs leading-5 text-slate-500">여러 로그인을 한 계정에 연결할 수 있습니다. 키가 없는 버튼은 누르지 않습니다.</p>
@@ -2407,14 +2404,6 @@ function RecoveryCodePanel() {
           className="w-full rounded-full bg-[#03C75A] py-2.5 text-xs font-bold text-white disabled:opacity-40"
         >
           네이버 연결
-        </button>
-        <button
-          type="button"
-          disabled={busy || !googleId}
-          onClick={() => linkProvider(() => signInWithGoogle(snapshot, persistOnly), GOOGLE_SETUP_MESSAGE, googleId, 'Google 연결에 실패했습니다.')}
-          className="w-full rounded-full border border-slate-200 bg-white py-2.5 text-xs font-bold text-slate-800 disabled:opacity-40"
-        >
-          Google 연결
         </button>
       </div>
       {note && <p className="mt-2 whitespace-pre-line text-xs leading-5 text-slate-600">{note}</p>}

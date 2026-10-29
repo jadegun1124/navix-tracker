@@ -2,8 +2,6 @@
 
 interface ImportMetaEnv {
   readonly VITE_GOOGLE_MAPS_API_KEY?: string;
-  /** Public OAuth web client id. Not a secret. Empty keeps Google sign-in closed. */
-  readonly VITE_GOOGLE_WEB_CLIENT_ID?: string;
   /** Kakao native app key. Not a secret. Empty keeps Kakao sign-in closed on Android. */
   readonly VITE_KAKAO_NATIVE_APP_KEY?: string;
   /** Kakao JavaScript key. Not a secret. Empty keeps Kakao sign-in closed on web. */

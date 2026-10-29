@@ -127,19 +127,11 @@ export class FamilyAccount {
   async fetch(request) {
     const body = await request.json();
     return handleAccountOperation(durableAccountStore(this.ctx.storage), body.op, {
-      clientId: body.clientId || '',
       naverClientId: body.naverClientId || '',
       naverClientSecret: body.naverClientSecret || '',
-      fetchCerts: fetchGoogleCerts,
       now: body.now,
     });
   }
-}
-
-async function fetchGoogleCerts() {
-  const response = await fetch('https://www.googleapis.com/oauth2/v3/certs');
-  if (!response.ok) return null;
-  return response.json();
 }
 
 async function vapidKeys(env) {
@@ -200,10 +192,8 @@ export default {
         : null;
       if (!accounts) {
         return withCors(await handleAccountOperation(createMemoryAccountStore(), op, {
-          clientId: env.GOOGLE_WEB_CLIENT_ID || env.VITE_GOOGLE_WEB_CLIENT_ID || '',
           naverClientId: env.NAVER_CLIENT_ID || '',
           naverClientSecret: env.NAVER_CLIENT_SECRET || '',
-          fetchCerts: fetchGoogleCerts,
         }));
       }
       const response = await accounts.fetch('https://account.internal/op', {
@@ -211,7 +201,6 @@ export default {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           op,
-          clientId: env.GOOGLE_WEB_CLIENT_ID || env.VITE_GOOGLE_WEB_CLIENT_ID || '',
           naverClientId: env.NAVER_CLIENT_ID || '',
           naverClientSecret: env.NAVER_CLIENT_SECRET || '',
         }),

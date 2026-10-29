@@ -57,7 +57,7 @@ VITE_VWORLD_API_KEY=
 VITE_FAMILY_SYNC_URL=
 ```
 
-- 이름: 가족 지도에 보일 표시 이름과 프로필 사진을 이 기기에서 정합니다. 가족 서버에 연결되면 같은 초대의 다른 폰에도 보입니다. 카카오·네이버·Google 또는 복구 코드로 다시 설치해도 같은 사람과 가족 방을 불러옵니다. 전화번호 본인 확인은 없습니다.
+- 이름: 가족 지도에 보일 표시 이름과 프로필 사진을 이 기기에서 정합니다. 가족 서버에 연결되면 같은 초대의 다른 폰에도 보입니다. 카카오·네이버 또는 복구 코드로 다시 설치해도 같은 사람과 가족 방을 불러옵니다. 전화번호 본인 확인은 없습니다.
 - 지도: 국토교통부 [VWorld](https://www.vworld.kr/) 2D Base 한 종류입니다. 위성, CARTO, OpenStreetMap 전환은 없습니다.
   - `https://api.vworld.kr/req/wmts/1.0.0/{API_KEY}/Base/{z}/{y}/{x}.png`
   - 키는 `import.meta.env.VITE_VWORLD_API_KEY`만 읽습니다. 빌드 시점에 JS 안에 들어갑니다.
@@ -104,14 +104,7 @@ npm run dev
 
 ## 계정 로그인
 
-가족 지도의 이름은 계속 이 기기의 표시 이름입니다. 카카오·네이버·Google 또는 복구 코드는 다시 설치한 뒤 같은 구성원 id와 가족 방, 최근 30일 기록을 불러옵니다. 여러 로그인을 한 계정에 연결할 수 있습니다. 버튼만 누르고 통과하지 않습니다. 해당 키가 없으면 그 버튼은 비활성으로 두고 한국어 설정 안내만 보여줍니다.
-
-### Google
-
-1. [Google Cloud Console](https://console.cloud.google.com/apis/credentials) → 사용자 인증 정보 → OAuth 클라이언트 ID 만들기 → 애플리케이션 유형 **웹 애플리케이션**. 승인된 자바스크립트 원본은 `https://localhost`, `http://localhost:5173`, `https://jadegun1124.github.io`입니다.
-2. 같은 화면에서 OAuth 클라이언트 ID 만들기 → 애플리케이션 유형 **Android**. 패키지 이름 `kr.co.umap.tracker`. SHA-1은 `android/app/umap-sideload.keystore`(별칭 `umap-sideload`)의 `00:57:37:35:22:70:B8:4C:7F:B6:01:61:29:BD:A9:A3:CD:09:35:0C`입니다. SHA-256은 위 사이드로드 인증서와 같습니다.
-3. 웹 클라이언트 ID를 `VITE_GOOGLE_WEB_CLIENT_ID`에 넣습니다. 이 값은 공개 클라이언트 ID이고 시크릿이 아닙니다. 저장소에 커밋하지 않습니다. Pages와 APK 빌드는 Actions secret `VITE_GOOGLE_WEB_CLIENT_ID`를 읽습니다.
-4. Worker는 같은 웹 클라이언트 ID를 `npx wrangler secret put GOOGLE_WEB_CLIENT_ID`로 넣습니다. `aud`가 이 값과 같아야 토큰이 통과합니다.
+가족 지도의 이름은 계속 이 기기의 표시 이름입니다. 카카오·네이버 또는 복구 코드는 다시 설치한 뒤 같은 구성원 id와 가족 방, 최근 30일 기록을 불러옵니다. 여러 로그인을 한 계정에 연결할 수 있습니다. 버튼만 누르고 통과하지 않습니다. 해당 키가 없으면 그 버튼은 비활성으로 두고 한국어 설정 안내만 보여줍니다. Google 로그인은 쓰지 않습니다. 예전 계정 레코드에 google 필드가 있어도 Worker는 무시하고 깨지지 않습니다.
 
 ### 카카오 로그인
 
@@ -133,7 +126,7 @@ npm run dev
 5. Client ID를 `VITE_NAVER_CLIENT_ID`에 넣습니다. Pages와 APK 빌드는 Actions secret `VITE_NAVER_CLIENT_ID`를 읽습니다.
 6. Client Secret은 `npx wrangler secret put NAVER_CLIENT_SECRET`으로만 Worker에 넣습니다. 앱에 넣지 않습니다. Worker에 `NAVER_CLIENT_ID`도 같은 값으로 넣습니다.
 
-Google subject, 카카오 사용자 id, 네이버 id는 구성원 ID가 되지 않습니다. 같은 계정 또는 복구 코드로 다시 들어오면 Worker에 저장된 `local-` ID와 방 키를 다시 씁니다.
+카카오 사용자 id와 네이버 id는 구성원 ID가 되지 않습니다. 같은 계정 또는 복구 코드로 다시 들어오면 Worker에 저장된 `local-` ID와 방 키를 다시 씁니다.
 
 ## 데이터
 
@@ -180,7 +173,7 @@ npx wrangler@4 deploy
 
 개인 대화는 `POST /v1/rooms/:code/chat` 과 `GET /v1/rooms/:code/chat?me=&with=` 입니다. `me`만 있으면 그 이름이 참여한 대화만 돌아옵니다. 방 조회와 `GET /family`에는 글을 넣지 않습니다. 이 경로가 있는 Worker를 다시 올려야 다른 폰과 글이 오갑니다. 예전 Worker면 글은 이 기기에만 남고, 화면에 그 사실을 알립니다.
 
-`sync/wrangler.toml`이 Durable Object `FamilyRoom`과 `FamilyAccount`를 만듭니다. 계정은 Google 주제, 카카오 사용자 id, 네이버 id, 또는 복구 코드 해시로 구성원 id, 방 키, 최근 30일 여정·방문을 보관합니다. 무료 한도에서 관리자 화면 하나가 켜져 있으면 조회가 하루 약 3만 번을 넘습니다. 한도에 닿으면 `src/services/familySync.ts`의 폴링 간격을 늘립니다. Worker 비밀은 `npx wrangler secret put GOOGLE_WEB_CLIENT_ID`, `NAVER_CLIENT_ID`, `NAVER_CLIENT_SECRET` 입니다.
+`sync/wrangler.toml`이 Durable Object `FamilyRoom`과 `FamilyAccount`를 만듭니다. 계정은 카카오 사용자 id, 네이버 id, 또는 복구 코드 해시로 구성원 id, 방 키, 최근 30일 여정·방문을 보관합니다. 무료 한도에서 관리자 화면 하나가 켜져 있으면 조회가 하루 약 3만 번을 넘습니다. 한도에 닿으면 `src/services/familySync.ts`의 폴링 간격을 늘립니다. Worker 비밀은 `npx wrangler secret put NAVER_CLIENT_ID`, `NAVER_CLIENT_SECRET` 입니다.
 
 ### 두 기기로 확인
 

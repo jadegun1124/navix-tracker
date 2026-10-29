@@ -80,10 +80,11 @@ test('package.json, Gradle, and the release workflow stay on 1.33.0 / 37', () =>
   const screen = text('../components/family/FamilyMapScreen.tsx');
   assert.equal((screen.match(/<AppVersionLine \/>/g) || []).length, 2);
   assert.match(screen, /복구 코드/);
-  assert.match(text('../components/family/Onboarding.tsx'), /카카오로 시작/);
-  assert.match(text('../components/family/Onboarding.tsx'), /네이버로 시작/);
-  assert.match(text('../components/family/Onboarding.tsx'), /Google로 시작/);
-  assert.match(text('../components/family/Onboarding.tsx'), /복구 코드로 불러오기/);
+  assert.match(text('../components/family/Onboarding.tsx'), /카카오로 로그인/);
+  assert.match(text('../components/family/Onboarding.tsx'), /네이버로 로그인/);
+  assert.match(text('../components/family/Onboarding.tsx'), /복구 코드로 복원/);
+  assert.equal(text('../components/family/Onboarding.tsx').includes('Google로'), false);
+  assert.equal(text('../components/family/FamilyMapScreen.tsx').includes('Google 연결'), false);
 
   const manifest = text('../../android/app/src/main/AndroidManifest.xml');
   assert.match(manifest, /android:allowBackup="true"/);

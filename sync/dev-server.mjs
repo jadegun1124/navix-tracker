@@ -21,7 +21,6 @@ async function readBody(incoming) {
 export function startSyncServer(port = 0) {
   const store = createMemoryStore();
   const accounts = createMemoryAccountStore();
-  const googleClientId = process.env.GOOGLE_WEB_CLIENT_ID || process.env.VITE_GOOGLE_WEB_CLIENT_ID || '';
   const naverClientId = process.env.NAVER_CLIENT_ID || process.env.VITE_NAVER_CLIENT_ID || '';
   const naverClientSecret = process.env.NAVER_CLIENT_SECRET || '';
   const server = createServer(async (incoming, outgoing) => {
@@ -37,7 +36,6 @@ export function startSyncServer(port = 0) {
       });
       const response = withCors(await handleSyncRequest(store, request, {
         accounts,
-        googleClientId,
         naverClientId,
         naverClientSecret,
       }));

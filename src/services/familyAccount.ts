@@ -96,20 +96,6 @@ export async function recoverFamilyAccount(code: string) {
   return readAccountBody(response);
 }
 
-export async function linkGoogleAccount(idToken: string, snapshot?: AccountSnapshot | null) {
-  const accountKey = readStoredAccountKey(typeof localStorage === 'undefined' ? null : localStorage);
-  const response = await request('/v1/account/google', {
-    method: 'POST',
-    headers: accountHeaders(accountKey),
-    body: JSON.stringify({
-      idToken,
-      ...(snapshot ? { snapshot } : {}),
-      ...(accountKey ? { accountKey } : {}),
-    }),
-  });
-  return readAccountBody(response);
-}
-
 export async function linkKakaoAccount(accessToken: string, snapshot?: AccountSnapshot | null) {
   const accountKey = readStoredAccountKey(typeof localStorage === 'undefined' ? null : localStorage);
   const response = await request('/v1/account/kakao', {
