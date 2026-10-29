@@ -315,10 +315,18 @@ function knownSpots(state: Session, memberId: string) {
 }
 
 function archiveJourneys(state: Session, now: number): Session {
-  const tracks = tracksWithinHistory(state.tracks, now);
+  let tracks = tracksWithinHistory(state.tracks, now);
   let journeys = journeysWithinHistory(state.journeys ?? {}, now);
+  let tracksDirty = tracks !== state.tracks;
+  const putTrack = (id: string, nextPoints: Session['tracks'][string]) => {
+    if (tracks === state.tracks) tracks = { ...tracks };
+    tracksDirty = true;
+    if (nextPoints.length === 0) delete tracks[id];
+    else tracks[id] = nextPoints;
+  };
   for (const [id, points] of Object.entries(tracks)) {
     const split = splitClosedJourneys(points, now);
+    if (split.remaining !== points) putTrack(id, split.remaining);
     if (split.journeys.length === 0) continue;
     const spots = knownSpots({ ...state, journeys }, id);
     const labeled = split.journeys.map((journey: JourneyRecord) => ({
@@ -334,7 +342,7 @@ function archiveJourneys(state: Session, now: number): Session {
     else next[id] = merged;
     journeys = next;
   }
-  if (tracks === state.tracks && journeys === (state.journeys ?? {})) return state;
+  if (!tracksDirty && journeys === (state.journeys ?? {})) return state;
   return {
     ...state,
     trailDay: seoulDayKey(now),

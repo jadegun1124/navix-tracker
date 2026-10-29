@@ -44,6 +44,7 @@ import {
   JOURNEY_STAY_MS,
   splitClosedJourneys,
   liveTrailPoints,
+  playbackAnchor,
   previewOpenJourney,
   journeysWithinHistory,
   mergeJourneyLists,
@@ -149,14 +150,13 @@ test('live pin holds courtyard jitter and follows a relocation the walk filter u
   assert.equal(visibleTrail([hagye, blockLeap]).length, 1);
 
   const shortHop = { ...offset(hagye, 1000, 80, t + 15_000), accuracyM: 17, speedMps: 0, staying: true };
-  assert.equal(trailDecision(hagye, shortHop), 'keep');
-  const moved = settleTrailPoint([hagye], shortHop, shortHop.at);
-  assert.equal(moved.decision, 'keep');
-  assert.equal(moved.lat, shortHop.lat);
-  assert.equal(moved.lng, shortHop.lng);
-  assert.equal(displayCoordinate([hagye], shortHop).lat, shortHop.lat);
-  assert.equal(displayCoordinate([hagye], shortHop).lng, shortHop.lng);
-  assert.ok(visibleTrail(moved.points).length >= 2);
+  assert.equal(trailDecision(hagye, shortHop), 'drop');
+  const spiked = settleTrailPoint([hagye], shortHop, shortHop.at);
+  assert.equal(spiked.decision, 'drop');
+  assert.equal(spiked.lat, hagye.lat);
+  assert.equal(spiked.lng, hagye.lng);
+  assert.equal(displayCoordinate([hagye], shortHop).lat, hagye.lat);
+  assert.equal(visibleTrail([hagye, shortHop]).length, 1);
 
   const slowBus = { ...offset(hagye, 1000, 0, t + 90_000), accuracyM: 12, speedMps: null, staying: true };
   const driven = settleTrailPoint([hagye], slowBus, slowBus.at);
@@ -164,11 +164,11 @@ test('live pin holds courtyard jitter and follows a relocation the walk filter u
   assert.equal(driven.lat, slowBus.lat);
   assert.equal(liveCoordinate(hagye, slowBus).lat, slowBus.lat);
 
-  const wiggle = { ...offset(shortHop, 18, -12, shortHop.at + 10_000), accuracyM: 17, speedMps: 0, staying: true };
-  const stayed = settleTrailPoint(moved.points, wiggle, wiggle.at);
-  assert.equal(stayed.lat, shortHop.lat);
-  assert.equal(stayed.lng, shortHop.lng);
-  assert.equal(displayCoordinate(moved.points, wiggle).lat, shortHop.lat);
+  const wiggle = { ...offset(slowBus, 18, -12, slowBus.at + 10_000), accuracyM: 17, speedMps: 0, staying: true };
+  const stayed = settleTrailPoint(driven.points, wiggle, wiggle.at);
+  assert.equal(stayed.lat, slowBus.lat);
+  assert.equal(stayed.lng, slowBus.lng);
+  assert.equal(displayCoordinate(driven.points, wiggle).lat, slowBus.lat);
 });
 
 test('admin, managed, and remote trails drop courtyard spikes and keep a block corner', () => {
@@ -424,7 +424,13 @@ test('a block walk keeps midpoints, stay jitter does not grow, a thin spur drops
   for (let index = 1; index <= 5; index += 1) onward.push(step(2, 4 + index * 20, t + 24_000 + index * 12_000, 1.3, false));
   for (const point of visibleTrail(onward)) assert.ok(northOf(point) < 22, `spur remained at north ${northOf(point)}`);
 
-  const far = step(1000, 40, t + 20_000, 0, true);
+  const flash = step(1000, 40, t + 20_000, 0, true);
+  const spiked = settleTrailPoint([origin], flash, flash.at);
+  assert.equal(spiked.decision, 'drop');
+  assert.equal(spiked.lat, origin.lat);
+  assert.equal(spiked.lng, origin.lng);
+  assert.equal(visibleTrail([origin, flash]).length, 1);
+  const far = step(1000, 40, t + 90_000, 0, true);
   const moved = settleTrailPoint([origin], far, far.at);
   assert.equal(moved.decision, 'keep');
   assert.equal(moved.lat, far.lat);
@@ -800,4 +806,176 @@ test('같은 이동을 조금 다르게 다시 쌓아도 카드는 하나다', (
     end: { lat: 37.66, lng: 127.09, label: null },
   };
   assert.equal(mergeJourneyLists(merged, [later]).length, 2);
+});
+
+test('a stay-to-stay hole is not a live line, an open trip, or a journey card', () => {
+  const start = Date.UTC(2026, 9, 28, 0, 20, 0);
+  const end = start + (1 * 60 + 29) * 60 * 1000;
+  const origin = { lat: 37.6365, lng: 127.0678, at: start, accuracyM: 16, speedMps: 0, staying: true };
+  const hole = [
+    origin,
+    { ...offset(origin, 0, 140, end), accuracyM: 16, speedMps: 0, staying: true },
+  ];
+  const now = end + 71 * 60 * 1000;
+  const split = splitClosedJourneys(hole, now);
+  assert.equal(split.journeys.length, 0);
+  assert.equal(split.remaining.length, 1);
+  assert.equal(liveTrailDrawable(hole, now), false);
+  assert.equal(previewOpenJourney(hole, end), null);
+  assert.equal(trailDrawParts(split.remaining).some((part) => part.points.length >= 2), false);
+  const startMark = playbackAnchor(hole, 0);
+  const endMark = playbackAnchor(hole, 1);
+  assert.equal(startMark.lat, endMark.lat);
+  assert.equal(startMark.lng, endMark.lng);
+  assert.equal(startMark.speedMps, 0);
+  assert.equal(endMark.speedMps, 0);
+});
+
+test('overnight jitter in one neighborhood does not become a journey', () => {
+  const start = Date.UTC(2026, 9, 27, 11, 42, 0);
+  const origin = { lat: 37.6362, lng: 127.0675, at: start, accuracyM: 18, speedMps: 0, staying: true };
+  const hops = [
+    [0, 0, 0],
+    [40, 30, 40 * 60 * 1000],
+    [-20, 55, 3 * 60 * 60 * 1000],
+    [70, -15, 7 * 60 * 60 * 1000],
+    [15, 25, 11 * 60 * 60 * 1000],
+    [5, -10, 14 * 60 * 60 * 1000 + 38 * 60 * 1000],
+  ];
+  const cloud = hops.map(([north, east, dt]) => ({
+    ...offset(origin, north, east, start + dt),
+    accuracyM: 18,
+    speedMps: 0,
+    staying: true,
+  }));
+  const now = cloud[cloud.length - 1].at + 6 * 60 * 1000;
+  const split = splitClosedJourneys(cloud, now);
+  assert.equal(split.journeys.length, 0);
+  assert.equal(liveTrailDrawable(cloud, now), false);
+  assert.equal(previewOpenJourney(cloud, cloud[cloud.length - 1].at), null);
+  const kept = journeysWithinHistory({
+    self: [{
+      id: 'overnight',
+      startedAt: cloud[0].at,
+      endedAt: cloud[cloud.length - 1].at,
+      distanceM: 253,
+      points: cloud,
+      start: { lat: cloud[0].lat, lng: cloud[0].lng, label: '노원구 하계동' },
+      end: { lat: cloud[cloud.length - 1].lat, lng: cloud[cloud.length - 1].lng, label: '노원구 하계동' },
+    }],
+  }, now);
+  assert.equal(kept.self, undefined);
+});
+
+test('a flash jump is dropped from the trail and does not move the pin', () => {
+  const t = Date.UTC(2026, 9, 28, 1, 0, 0);
+  const origin = { lat: 37.55, lng: 127.02, at: t, accuracyM: 12, speedMps: 0, staying: true };
+  const spike = { ...offset(origin, 0, 480, t + 4_000), accuracyM: 12, speedMps: 0, staying: true };
+  const settled = settleTrailPoint([origin], spike, spike.at);
+  assert.equal(settled.decision, 'drop');
+  assert.equal(settled.lat, origin.lat);
+  assert.equal(settled.lng, origin.lng);
+  assert.equal(liveCoordinate(origin, spike).lat, origin.lat);
+  assert.equal(visibleTrail([origin, spike]).some((point) => point.lng === spike.lng), false);
+  const parts = trailDrawParts([origin, spike]);
+  assert.equal(parts.some((part) => part.points.length >= 2), false);
+});
+
+test('playback stays inside a dense walk and does not cross a later hole', () => {
+  const t = Date.UTC(2026, 9, 28, 2, 0, 0);
+  const origin = { lat: 37.55, lng: 127.07, at: t, accuracyM: 12, speedMps: 1.3, staying: false };
+  const walk = [];
+  for (let index = 0; index <= 20; index += 1) {
+    walk.push({
+      ...offset(origin, 0, index * 12, t + index * 10_000),
+      accuracyM: 12,
+      speedMps: 1.3,
+      staying: false,
+    });
+  }
+  const hole = {
+    ...offset(walk[walk.length - 1], 0, 160, walk[walk.length - 1].at + 80 * 60 * 1000),
+    accuracyM: 12,
+    speedMps: 0,
+    staying: true,
+  };
+  const begin = playbackAnchor(walk, 0);
+  const mid = playbackAnchor(walk, 0.5);
+  const end = playbackAnchor(walk, 1);
+  assert.ok(begin.at < mid.at && mid.at < end.at);
+  assert.ok(Math.abs(begin.lng - origin.lng) < 0.0002);
+  assert.ok(end.lng > begin.lng);
+  const across = playbackAnchor([...walk, hole], 1);
+  assert.ok(Math.abs(across.lat - hole.lat) > 0 || Math.abs(across.lng - hole.lng) > 0.0002);
+  assert.ok(Math.abs(across.lng - walk[walk.length - 1].lng) < 0.0004);
+});
+
+test('walk and ride samples stay dense; only a jump or stationary noise is dropped', () => {
+  const t = Date.UTC(2026, 9, 28, 5, 0, 0);
+  const origin = { lat: 37.55, lng: 127.07, at: t, accuracyM: 8, speedMps: 1.4, staying: false };
+  const walk = [];
+  for (let index = 0; index <= 24; index += 1) {
+    const north = index < 12 ? 0 : (index - 12) * 4;
+    const east = index < 12 ? index * 4 : 48;
+    walk.push({
+      ...offset(origin, north, east, t + index * 2_500),
+      accuracyM: 8,
+      speedMps: 1.4,
+      staying: false,
+    });
+  }
+  let recorded = [walk[0]];
+  for (const point of walk.slice(1)) recorded = settleTrailPoint(recorded, point, point.at).points;
+  const walkVertices = recorded.filter((point) => !point.stayEnd);
+  assert.equal(walkVertices.length, walk.length);
+
+  const rideOrigin = { ...offset(origin, 200, 0, t), accuracyM: 8, speedMps: 12, staying: false };
+  const ride = [];
+  for (let index = 0; index <= 20; index += 1) {
+    ride.push({
+      ...offset(rideOrigin, index < 10 ? 0 : (index - 10) * 18, index < 10 ? index * 18 : 180, t + index * 1_000),
+      accuracyM: 8,
+      speedMps: 12,
+      staying: false,
+    });
+  }
+  let driven = [ride[0]];
+  for (const point of ride.slice(1)) driven = settleTrailPoint(driven, point, point.at).points;
+  assert.equal(driven.filter((point) => !point.stayEnd).length, ride.length);
+
+  const slow = TRAIL_RIDE_MIN_MPS;
+  const vehicle = [];
+  for (let index = 0; index <= 12; index += 1) {
+    vehicle.push({
+      ...offset(origin, 0, index * slow * 2.5, t + index * 2_500),
+      accuracyM: 8,
+      speedMps: slow,
+      staying: false,
+    });
+  }
+  let rolling = [vehicle[0]];
+  for (const point of vehicle.slice(1)) rolling = settleTrailPoint(rolling, point, point.at).points;
+  assert.equal(rolling.filter((point) => !point.stayEnd).length, vehicle.length);
+
+  const beforeNoise = walkVertices.length;
+  let noisy = recorded;
+  for (let index = 0; index < 8; index += 1) {
+    const jitter = {
+      ...offset(walk[walk.length - 1], index % 2 === 0 ? 6 : -4, index % 3, walk[walk.length - 1].at + (index + 1) * 2_000),
+      accuracyM: 14,
+      speedMps: 0,
+      staying: true,
+    };
+    noisy = settleTrailPoint(noisy, jitter, jitter.at).points;
+  }
+  assert.equal(noisy.filter((point) => !point.stayEnd).length, beforeNoise);
+  const flash = {
+    ...offset(walk[walk.length - 1], 0, 500, walk[walk.length - 1].at + 4_000),
+    accuracyM: 12,
+    speedMps: 0,
+    staying: true,
+  };
+  const spiked = settleTrailPoint(noisy, flash, flash.at);
+  assert.equal(spiked.decision, 'drop');
+  assert.equal(spiked.points.filter((point) => !point.stayEnd).length, beforeNoise);
 });

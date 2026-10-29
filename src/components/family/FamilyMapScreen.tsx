@@ -4,10 +4,10 @@ import { currentAppVersionLabel } from '../../lib/appRelease.mjs';
 import { looksLikePhone, localProfile } from '../../lib/localProfile.mjs';
 import { buildInviteLink, formatClock, hasLocation, haversineMeters, shouldAlertLeave } from '../../lib/geo';
 import { ALWAYS_GUIDE_DISMISSED_KEY, CHAT_NOTIFY_ASKED_KEY, KEEP_PERMISSION_ASKED_KEY, KEEP_START_ASKED_KEY, keepEntryPrompt, markSessionFlag, readSessionFlag } from '../../lib/systemSettings.mjs';
-import { familyMapShowsTrail, recordsDayTrails } from '../../lib/mapTrail.mjs';
+import { familyMapShowsTrail, mainOverviewTrails, recordsDayTrails } from '../../lib/mapTrail.mjs';
 import { shouldDeleteCreatedRoom } from '../../lib/familyRoom.mjs';
 import { motionAlertCopy, motionNotifyNames, nextMotionAlert } from '../../lib/motionAlert.mjs';
-import { collapseDuplicateJourneys, collapseIndoorStayDisplay, displayCoordinate, historyDayKeys, historyDayLabel, lastTravelAt, liveMotionLabel, liveTrailDrawable, liveTrailPoints, MOTION_STILL_HOLD_MS, previewOpenJourney, seoulDayEndMs, seoulDayKey, visibleTrail } from '../../lib/tracking.mjs';
+import { collapseDuplicateJourneys, collapseIndoorStayDisplay, displayCoordinate, historyDayKeys, historyDayLabel, lastTravelAt, liveMotionLabel, liveTrailDrawable, liveTrailPoints, MOTION_STILL_HOLD_MS, previewOpenJourney, seoulDayEndMs, seoulDayKey } from '../../lib/tracking.mjs';
 import { ackFamilyAlert, isFamilyAlertAcked, publishFamilyAlert, readFamilyAlert, subscribeFamilyAlerts, type FamilyAlert } from '../../services/familyAlert';
 import { readSharedPlaces, subscribeSharedPlaces } from '../../services/familyShare';
 import { abandonFamilySync, currentSyncPhase, deleteFamilyRoomRemote, familySyncConfigured, familySyncUrl, fetchMyDirectThreads, registerRoomPush, revokeFamilyPlace, splitSyncToken, startAdminRemoteSync, startSyncMonitor, subscribeSyncPhase, syncTokenFor, type SyncPhase } from '../../services/familySync';
@@ -570,22 +570,17 @@ export function FamilyMapScreen() {
   const mapTrails = useMemo(() => {
     if (detailOpen) return detailPoints.length >= 2 ? [detailPoints] : [];
     if (viewingRecords) {
-      if (!showPath) return [];
-      return recordsDayTrails({ journeys: dayJourneys, livePoints: liveLine, liveDrawable });
+      if (!showPath || !selected) return [];
+      const saved = recordsDayTrails({ journeys: dayJourneys, livePoints: [], liveDrawable: false });
+      if (pathDay !== liveDay) return saved;
+      return saved.concat(overviewLinesFor(selected, state.tracks, now, liveDay));
     }
     const lines = [];
     for (const member of state.members) {
-      if (member.role === 'guardian' || !hasLocation(member)) continue;
-      if (member.id !== 'self' && member.share !== 'allowed' && member.role !== 'admin-share') continue;
-      const points = liveTrailPoints(
-        (state.tracks[member.id] ?? []).filter((point) => seoulDayKey(point.at) === liveDay),
-        now,
-      );
-      if (!liveTrailDrawable(points, now)) continue;
-      lines.push(points);
+      for (const line of overviewLinesFor(member, state.tracks, now, liveDay)) lines.push(line);
     }
     return lines;
-  }, [dayJourneys, detailOpen, detailPoints, liveDay, liveDrawable, liveLine, now, showPath, state.members, state.tracks, viewingRecords]);
+  }, [dayJourneys, detailOpen, detailPoints, liveDay, now, pathDay, selected, showPath, state.members, state.tracks, viewingRecords]);
   const dayVisits = useMemo(() => {
     const list = selected ? state.visits[selected.id] ?? [] : [];
     return list.filter((visit) => seoulDayKey(visit.arrivedAt) === pathDay);
@@ -622,10 +617,7 @@ export function FamilyMapScreen() {
 
   const focusMember = (member: Member, fitTrail: boolean) => {
     setSelectedId(member.id);
-    const points = visibleTrail(liveTrailPoints(
-      (state.tracks[member.id] ?? []).filter((point) => seoulDayKey(point.at) === liveDay),
-      now,
-    ));
+    const points = overviewLinesFor(member, state.tracks, now, liveDay).flat();
     if (fitTrail && showTrail && points.length >= 2) mapRef.current?.fit(points);
     else if (hasLocation(member)) mapRef.current?.panTo(member.lat, member.lng);
   };
@@ -781,6 +773,7 @@ export function FamilyMapScreen() {
             members={detailOpen ? [] : visibleMembers}
             home={detailOpen ? null : (draftHome ?? (showZone ? state.home : null))}
             trails={mapTrails}
+            solidOnly={!viewingRecords}
             trailColor="#0084FF"
             playback={playback}
             selectedId={selected?.id}
@@ -843,8 +836,10 @@ export function FamilyMapScreen() {
               onClick={() => {
                 setShowTrail((value) => {
                   const next = !value;
-                  if (next) {
-                    const points = recordsDayTrails({ journeys: dayJourneys, livePoints: liveLine, liveDrawable }).flat();
+                  if (next && selected) {
+                    const saved = recordsDayTrails({ journeys: dayJourneys, livePoints: [], liveDrawable: false });
+                    const live = pathDay === liveDay ? overviewLinesFor(selected, state.tracks, now, liveDay) : [];
+                    const points = saved.concat(live).flat();
                     if (points.length >= 2) mapRef.current?.fit(points);
                   }
                   return next;
@@ -1841,6 +1836,39 @@ function personArea(member: Member, home: HomeZone | null) {
     located: hasLocation(member),
     atHome,
     homeLabel: home?.label,
+  });
+}
+
+function overviewLinesFor(
+  member: Member,
+  tracks: Session['tracks'],
+  now: number,
+  liveDay: string,
+) {
+  if (member.role === 'guardian' || !hasLocation(member)) return [];
+  if (member.id !== 'self' && member.share !== 'allowed' && member.role !== 'admin-share') return [];
+  const today = (tracks[member.id] ?? []).filter((point) => seoulDayKey(point.at) === liveDay);
+  const points = liveTrailPoints(today, now);
+  const staying = liveMotionLabel({
+    located: true,
+    moving: member.moving,
+    points: tracks[member.id],
+    now,
+  }) === '머무름';
+  const stable = displayCoordinate(points, {
+    lat: member.lat,
+    lng: member.lng,
+    at: member.updatedAt || now,
+    accuracyM: member.accuracyM,
+    staying,
+  });
+  return mainOverviewTrails({
+    points,
+    motionPoints: tracks[member.id],
+    pin: { lat: stable.lat, lng: stable.lng, at: member.updatedAt || now, accuracyM: member.accuracyM },
+    moving: member.moving,
+    located: true,
+    now,
   });
 }
 

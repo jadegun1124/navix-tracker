@@ -42,9 +42,11 @@ export const StreetMap = forwardRef<StreetMapHandle, {
   trailColor: string;
   selectedId?: string;
   playback?: { lat: number; lng: number; label: string } | null;
+  /** Family overview never paints a dashed hole. Records may still show one. */
+  solidOnly?: boolean;
   onSelect: (id: string) => void;
   onMove?: (center: { lat: number; lng: number }) => void;
-}>(function StreetMap({ center, zoom, members, home, trails, trailColor, selectedId, playback, onSelect, onMove }, ref) {
+}>(function StreetMap({ center, zoom, members, home, trails, trailColor, selectedId, playback, solidOnly = false, onSelect, onMove }, ref) {
   const nodeRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
   const layersRef = useRef<L.LayerGroup | null>(null);
@@ -242,9 +244,9 @@ export const StreetMap = forwardRef<StreetMapHandle, {
     const stroke = { smoothFactor: 0, lineCap: 'round' as const, lineJoin: 'round' as const };
     for (const trail of trails) {
       if (!trail || trail.length < 2) continue;
-      const parts = trailDrawParts(trail);
+      const parts = trailDrawParts(trail).filter((part) => part.points.length >= 2 && !(solidOnly && part.dashed));
+      if (parts.length === 0) continue;
       for (const part of parts) {
-        if (part.points.length < 2) continue;
         const latlngs = part.points.map((point) => [point.lat, point.lng] as [number, number]);
         const dashed = part.dashed;
         L.polyline(latlngs, {
@@ -282,7 +284,7 @@ export const StreetMap = forwardRef<StreetMapHandle, {
         }).addTo(trailGroup);
       }
     }
-  }, [ready, trails, trailColor]);
+  }, [ready, solidOnly, trails, trailColor]);
 
   const missingKey = !key;
 

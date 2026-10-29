@@ -2,8 +2,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { Bike, Car, ChevronRight, Footprints, Pause, Plane, Play } from 'lucide-react';
-import { haversineMeters } from '../../lib/geo';
-import { classifyMode, formatJourneyDistance, modeLabel, visibleTrail, type TravelMode } from '../../lib/tracking.mjs';
+import { classifyMode, formatJourneyDistance, modeLabel, playbackAnchor, visibleTrail, type TravelMode } from '../../lib/tracking.mjs';
 import { VWORLD_ATTRIBUTION, vworldApiKey, vworldBaseTileUrl } from '../../services/vworld';
 import type { Journey } from '../../types/family';
 
@@ -72,23 +71,10 @@ function journeyMode(distanceM: number, startedAt: number, endedAt: number): Tra
 }
 
 export function playbackMark(points: Sample[], ratio: number): { lat: number; lng: number; label: string } | null {
-  if (!points.length) return null;
-  const clamped = Math.min(1, Math.max(0, ratio));
-  const target = points[0].at + (points[points.length - 1].at - points[0].at) * clamped;
-  let index = 0;
-  for (let i = 1; i < points.length; i += 1) {
-    if (points[i].at <= target) index = i;
-    else break;
-  }
-  const point = points[index];
-  const next = points[Math.min(points.length - 1, index + 1)];
-  let speed = typeof point.speedMps === 'number' ? point.speedMps : null;
-  if (speed == null && next !== point) {
-    const dt = (next.at - point.at) / 1000;
-    if (dt > 0) speed = haversineMeters(point, next) / dt;
-  }
-  const kmh = speed == null || !Number.isFinite(speed) ? 0 : Math.max(0, Math.round(speed * 3.6));
-  return { lat: point.lat, lng: point.lng, label: `${seoulClock(point.at)} / ${kmh} km/h` };
+  const anchor = playbackAnchor(points, ratio);
+  if (!anchor) return null;
+  const kmh = Math.max(0, Math.round((anchor.speedMps || 0) * 3.6));
+  return { lat: anchor.lat, lng: anchor.lng, label: `${seoulClock(anchor.at)} / ${kmh} km/h` };
 }
 
 function ModeIcon({ mode }: { mode: TravelMode }) {
