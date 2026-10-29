@@ -8,7 +8,7 @@
 
 제품 표시 이름은 Kinnex. 저장소는 `jadegun1124/kinnex`.
 
-회사 홈은 GitHub Pages `https://jadegun1124.github.io/kinnex/`. 안드로이드 설치 파일은 GitHub Releases `https://github.com/jadegun1124/kinnex/releases/download/v1.29.0/kinnex-v1.29.0.apk`. Play 스토어와 App Store 배포는 없다.
+회사 홈은 GitHub Pages `https://jadegun1124.github.io/kinnex/`. 안드로이드 설치 파일은 GitHub Releases `https://github.com/jadegun1124/kinnex/releases/download/v1.29.1/kinnex-v1.29.1.apk`. Play 스토어와 App Store 배포는 없다.
 
 ## 웹
 

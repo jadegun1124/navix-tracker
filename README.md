@@ -10,12 +10,12 @@
 | :--- | :--- | :--- |
 | 회사 홈 | GitHub Pages | https://jadegun1124.github.io/kinnex/ |
 | 앱 화면 미리보기 | 같은 Pages의 `?app=1` | https://jadegun1124.github.io/kinnex/?app=1 |
-| 안드로이드 앱 | GitHub Releases APK v1.29.0 | https://github.com/jadegun1124/kinnex/releases/download/v1.29.0/kinnex-v1.29.0.apk |
-| 릴리스 페이지 | GitHub Releases | https://github.com/jadegun1124/kinnex/releases/tag/v1.29.0 |
+| 안드로이드 앱 | GitHub Releases APK v1.29.1 | https://github.com/jadegun1124/kinnex/releases/download/v1.29.1/kinnex-v1.29.1.apk |
+| 릴리스 페이지 | GitHub Releases | https://github.com/jadegun1124/kinnex/releases/tag/v1.29.1 |
 
 Google Play, App Store, TestFlight에는 올리지 않았습니다. iOS는 아이콘 에셋만 있고 설치 파일은 없습니다.
 
-`main`에 푸시하면 GitHub Actions가 회사 홈을 Pages에 배포하고, 같은 커밋으로 디버그 APK를 만들어 GitHub Release `v1.29.0`의 `kinnex-v1.29.0.apk`를 갱신합니다. 이전 빌드는 `v1.27.0`, `v1.26.0`, `v1.25.0`, `v1.24.0`, `v1.23.0`, `v1.22.0`, `v1.21.0`, `v1.20.0`, `v1.19.0`, `v1.18.0`, `v1.17.0`, `v1.16.0`, `v1.15.0`, `v1.14.0`, `v1.13.0`, `v1.12.0`, `v1.11.0`, `v1.10.0`, `v1.9.0`, `v1.8.0`, `v1.7.0`, `v1.6.0`, `v1.5.0`, `v1.4.0`, `v1.3.0`, `v1.2.0`, `v1.1.0`, `v1.0.0`에 남아 있습니다.
+`main`에 푸시하면 GitHub Actions가 회사 홈을 Pages에 배포하고, 같은 커밋으로 디버그 APK를 만들어 GitHub Release `v1.29.1`의 `kinnex-v1.29.1.apk`를 갱신합니다. 이전 빌드는 `v1.29.0`, `v1.27.0`, `v1.26.0`, `v1.25.0`, `v1.24.0`, `v1.23.0`, `v1.22.0`, `v1.21.0`, `v1.20.0`, `v1.19.0`, `v1.18.0`, `v1.17.0`, `v1.16.0`, `v1.15.0`, `v1.14.0`, `v1.13.0`, `v1.12.0`, `v1.11.0`, `v1.10.0`, `v1.9.0`, `v1.8.0`, `v1.7.0`, `v1.6.0`, `v1.5.0`, `v1.4.0`, `v1.3.0`, `v1.2.0`, `v1.1.0`, `v1.0.0`에 남아 있습니다.
 
 ## 화면
 
@@ -94,9 +94,9 @@ npm run dev
 
 ## 안드로이드 APK
 
-받는 곳: https://github.com/jadegun1124/kinnex/releases/download/v1.29.0/kinnex-v1.29.0.apk
+받는 곳: https://github.com/jadegun1124/kinnex/releases/download/v1.29.1/kinnex-v1.29.1.apk
 
-`main` 푸시마다 `Build Android APK (Kinnex)` 워크플로가 웹을 빌드하고 `dist` 를 안드로이드 에셋으로 복사한 뒤 `assembleDebug` 로 APK를 만듭니다. 결과 파일은 GitHub Release `v1.29.0`에 올립니다. 앱 `versionName`은 `1.29.0`, `versionCode`는 30입니다. Play 스토어 트랙은 없습니다.
+`main` 푸시마다 `Build Android APK (Kinnex)` 워크플로가 웹을 빌드하고 `dist` 를 안드로이드 에셋으로 복사한 뒤 `assembleDebug` 로 APK를 만듭니다. 결과 파일은 GitHub Release `v1.29.1`에 올립니다. 앱 `versionName`은 `1.29.1`, `versionCode`는 31입니다. Play 스토어 트랙은 없습니다.
 
 1.16.0까지 그 빌드는 러너마다 새로 만든 디버그 키로 서명했습니다. 패키지가 `kr.co.umap.tracker`여도 인증서가 다르면 안드로이드는 덮어쓰기를 거절해서, 지우고 다시 깔아야 했습니다. 1.17.0부터 debug와 release는 저장소의 `android/app/umap-sideload.keystore`(별칭 `umap-sideload`)로 서명합니다. 비밀번호는 `android/app/build.gradle`에 있습니다. 인증서 SHA-256은 `4A:15:08:0F:72:C3:87:D1:E8:50:A8:DE:5A:89:34:9A:B4:1A:48:0D:C5:97:71:AB:22:9C:85:44:C8:61:7A:6C`입니다. 이 키는 가족 폰에 직접 설치하는 사이드로드 전용이고, Play 앱 서명 키가 아닙니다.
 
