@@ -2,6 +2,10 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Bell, ChevronLeft, ChevronRight, Copy, Home, LocateFixed, MapPin, Menu, Plus, Route, Settings, UserPlus, X } from 'lucide-react';
 import { currentAppVersionLabel } from '../../lib/appRelease.mjs';
 import { looksLikePhone, localProfile } from '../../lib/localProfile.mjs';
+import { GOOGLE_SETUP_MESSAGE } from '../../lib/googleAuth.mjs';
+import { KAKAO_SETUP_MESSAGE } from '../../lib/kakaoAuth.mjs';
+import { NAVER_SETUP_MESSAGE } from '../../lib/naverAuth.mjs';
+import { snapshotFromSession } from '../../lib/accountRestore.mjs';
 import { buildInviteLink, formatClock, hasLocation, haversineMeters, shouldAlertLeave } from '../../lib/geo';
 import { ALWAYS_GUIDE_DISMISSED_KEY, CHAT_NOTIFY_ASKED_KEY, KEEP_PERMISSION_ASKED_KEY, KEEP_START_ASKED_KEY, keepEntryPrompt, markSessionFlag, readSessionFlag } from '../../lib/systemSettings.mjs';
 import { familyMapShowsTrail, mainOverviewTrails, recordsDayTrails } from '../../lib/mapTrail.mjs';
@@ -33,6 +37,9 @@ import { useFamilyTracking } from './useFamilyTracking';
 import { useFamily } from './session';
 import { consumeAndroidBack } from '../../platform/androidExit';
 import { readStoredRecoveryCode } from '../../lib/accountRestore.mjs';
+import { configuredGoogleWebClientId, signInWithGoogle } from '../../services/googleSignIn';
+import { configuredKakaoNativeAppKey, signInWithKakao } from '../../services/kakaoSignIn';
+import { configuredNaverClientId, signInWithNaver } from '../../services/naverSignIn';
 
 export function FamilyMapScreen() {
   const family = useFamily();
@@ -2319,32 +2326,92 @@ function AppVersionLine() {
 }
 
 function RecoveryCodePanel() {
+  const family = useFamily();
   const [copied, setCopied] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   const code = readStoredRecoveryCode(typeof localStorage === 'undefined' ? null : localStorage);
-  if (!code) {
-    return (
-      <p className="mt-3 text-xs leading-5 text-slate-500">
-        앱을 지운 뒤에도 같은 사람과 가족으로 돌아오려면 Google 로그인 또는 복구 코드를 쓰세요. 코드는 이 폰이 서버에 계정을 만든 뒤 여기에 나타납니다.
-      </p>
-    );
-  }
+  const kakaoKey = configuredKakaoNativeAppKey();
+  const naverId = configuredNaverClientId();
+  const googleId = configuredGoogleWebClientId();
+  const snapshot = snapshotFromSession(family.state);
+
+  const linkProvider = (
+    start: () => Promise<{ ok: boolean; snapshot?: { memberId?: string }; message?: string }>,
+    setup: string,
+    configured: string,
+    missing: string,
+  ) => {
+    if (!configured) {
+      setNote(setup);
+      return;
+    }
+    setBusy(true);
+    setNote(null);
+    void start().then((result) => {
+      setBusy(false);
+      if (!result.ok) {
+        setNote(result.message || missing);
+        return;
+      }
+      if (result.snapshot && result.snapshot.memberId) family.restoreAccount(result.snapshot as Parameters<typeof family.restoreAccount>[0]);
+      setNote('이 계정에 연결했습니다. 다시 설치한 뒤에도 같은 사람으로 돌아옵니다.');
+    });
+  };
+
   return (
-    <div className="mt-3 rounded-2xl bg-slate-50 px-3 py-3">
-      <p className="text-xs font-bold text-slate-500">복구 코드</p>
-      <p className="mt-1 font-mono text-base font-black tracking-[0.18em] text-slate-800">{code}</p>
-      <p className="mt-1 text-xs leading-5 text-slate-500">앱을 다시 설치한 뒤 「복구 코드로 불러오기」에 넣으면 같은 사람과 가족 방으로 돌아갑니다.</p>
-      <button
-        type="button"
-        onClick={() => {
-          void navigator.clipboard?.writeText(code).then(() => {
-            setCopied(true);
-            window.setTimeout(() => setCopied(false), 1500);
-          }).catch(() => undefined);
-        }}
-        className="mt-2 text-xs font-bold text-[#0084FF]"
-      >
-        {copied ? '복사했습니다' : '코드 복사'}
-      </button>
+    <div className="mt-3">
+      {code ? (
+        <div className="rounded-2xl bg-slate-50 px-3 py-3">
+          <p className="text-xs font-bold text-slate-500">복구 코드</p>
+          <p className="mt-1 font-mono text-base font-black tracking-[0.18em] text-slate-800">{code}</p>
+          <p className="mt-1 text-xs leading-5 text-slate-500">앱을 다시 설치한 뒤 「복구 코드로 불러오기」에 넣으면 같은 사람과 가족 방으로 돌아갑니다.</p>
+          <button
+            type="button"
+            onClick={() => {
+              void navigator.clipboard?.writeText(code).then(() => {
+                setCopied(true);
+                window.setTimeout(() => setCopied(false), 1500);
+              }).catch(() => undefined);
+            }}
+            className="mt-2 text-xs font-bold text-[#0084FF]"
+          >
+            {copied ? '복사했습니다' : '코드 복사'}
+          </button>
+        </div>
+      ) : (
+        <p className="text-xs leading-5 text-slate-500">
+          앱을 지운 뒤에도 같은 사람과 가족으로 돌아오려면 카카오·네이버·Google 또는 복구 코드를 쓰세요. 코드는 이 폰이 서버에 계정을 만든 뒤 여기에 나타납니다.
+        </p>
+      )}
+      <p className="mt-3 text-xs leading-5 text-slate-500">여러 로그인을 한 계정에 연결할 수 있습니다. 키가 없는 버튼은 누르지 않습니다.</p>
+      <div className="mt-2 space-y-2">
+        <button
+          type="button"
+          disabled={busy || !kakaoKey}
+          onClick={() => linkProvider(() => signInWithKakao(snapshot), KAKAO_SETUP_MESSAGE, kakaoKey, '카카오 연결에 실패했습니다.')}
+          className="w-full rounded-full bg-[#FEE500] py-2.5 text-xs font-bold text-[#191919] disabled:opacity-40"
+        >
+          카카오 연결
+        </button>
+        <button
+          type="button"
+          disabled={busy || !naverId}
+          onClick={() => linkProvider(() => signInWithNaver(snapshot), NAVER_SETUP_MESSAGE, naverId, '네이버 연결에 실패했습니다.')}
+          className="w-full rounded-full bg-[#03C75A] py-2.5 text-xs font-bold text-white disabled:opacity-40"
+        >
+          네이버 연결
+        </button>
+        <button
+          type="button"
+          disabled={busy || !googleId}
+          onClick={() => linkProvider(() => signInWithGoogle(snapshot), GOOGLE_SETUP_MESSAGE, googleId, 'Google 연결에 실패했습니다.')}
+          className="w-full rounded-full border border-slate-200 bg-white py-2.5 text-xs font-bold text-slate-800 disabled:opacity-40"
+        >
+          Google 연결
+        </button>
+      </div>
+      {note && <p className="mt-2 whitespace-pre-line text-xs leading-5 text-slate-600">{note}</p>}
     </div>
   );
 }
