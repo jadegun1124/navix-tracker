@@ -104,13 +104,14 @@ npm run dev
 
 ## Google 로그인
 
-가족 지도의 이름은 계속 이 기기의 표시 이름입니다. Google은 같은 계정이 그 이름을 잇도록 확인하는 용도입니다. 버튼만 누르고 통과하지 않습니다. ID 토큰 서명이 Google 인증서와 맞고, 웹에서는 Google userinfo가 `sub`를 돌려줄 때만 로그인됩니다. 클라이언트 ID가 없으면 설정 순서를 한국어로 보여주고 시작하지 않습니다.
+가족 지도의 이름은 계속 이 기기의 표시 이름입니다. Google 로그인 또는 복구 코드는 다시 설치한 뒤 같은 구성원 id와 가족 방, 최근 30일 기록을 불러옵니다. 버튼만 누르고 통과하지 않습니다. Worker가 ID 토큰을 Google JWKS로 확인하고 `aud`는 웹 클라이언트 ID입니다. 클라이언트 ID가 없으면 버튼을 누르지 않고 설정 순서를 한국어로 보여줍니다.
 
-1. Google Cloud에서 OAuth 웹 클라이언트를 만듭니다. 승인된 자바스크립트 원본은 `https://localhost`와 `http://localhost:5173`입니다.
-2. Android OAuth 클라이언트 패키지는 `kr.co.umap.tracker`입니다. SHA-1은 `android/app/umap-sideload.keystore`(별칭 `umap-sideload`)의 `00:57:37:35:22:70:B8:4C:7F:B6:01:61:29:BD:A9:A3:CD:09:35:0C`입니다. SHA-256은 위 사이드로드 인증서와 같습니다.
+1. [Google Cloud Console](https://console.cloud.google.com/apis/credentials) → 사용자 인증 정보 → OAuth 클라이언트 ID 만들기 → 애플리케이션 유형 **웹 애플리케이션**. 승인된 자바스크립트 원본은 `https://localhost`, `http://localhost:5173`, `https://jadegun1124.github.io`입니다.
+2. 같은 화면에서 OAuth 클라이언트 ID 만들기 → 애플리케이션 유형 **Android**. 패키지 이름 `kr.co.umap.tracker`. SHA-1은 `android/app/umap-sideload.keystore`(별칭 `umap-sideload`)의 `00:57:37:35:22:70:B8:4C:7F:B6:01:61:29:BD:A9:A3:CD:09:35:0C`입니다. SHA-256은 위 사이드로드 인증서와 같습니다.
 3. 웹 클라이언트 ID를 `VITE_GOOGLE_WEB_CLIENT_ID`에 넣습니다. 이 값은 공개 클라이언트 ID이고 시크릿이 아닙니다. 저장소에 커밋하지 않습니다. Pages와 APK 빌드는 Actions secret `VITE_GOOGLE_WEB_CLIENT_ID`를 읽습니다.
+4. Worker는 같은 웹 클라이언트 ID를 `npx wrangler secret put GOOGLE_WEB_CLIENT_ID`로 넣습니다. `aud`가 이 값과 같아야 토큰이 통과합니다.
 
-Google subject는 구성원 ID가 되지 않습니다. 같은 계정으로 다시 들어오면 이 기기에 저장한 `local-` ID와 표시 이름을 다시 씁니다.
+Google subject는 구성원 ID가 되지 않습니다. 같은 계정 또는 복구 코드로 다시 들어오면 Worker에 저장된 `local-` ID와 방 키를 다시 씁니다.
 
 ## 데이터
 
