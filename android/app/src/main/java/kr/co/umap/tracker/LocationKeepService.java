@@ -41,10 +41,11 @@ import org.json.JSONObject;
  * Thresholds match src/lib/tracking.mjs: drop fixes older than 30s, precise
  * accuracy above 80m, later fixes worse than 40m, jumps faster than 350 m/s.
  * Coordinates are the real fix. The live pin's stay bubble is applied in JS.
- * Keep-alive is not a continuous 2.5s GNSS stream. GPS is requested every
- * 2.5s after a walk is clear (about 12m at walking pace, or a reported speed
- * with real displacement) or the pace is a bike or vehicle (about 7 km/h,
- * 8m when speed is reported, 18m when it is not). A short light does not drop
+ * Keep-alive is not a continuous GNSS stream. A walk requests GPS every
+ * 2.5s once the step is clear (about 12m at walking pace, or a reported speed
+ * with real displacement). A bike or vehicle (about 7 km/h, 8m when speed is
+ * reported, 18m when it is not) requests every 1s so the line stays dense.
+ * A short light does not drop
  * a walk: the stream stays dense until the phone has barely moved for 45s.
  * After a ride, a stop holds 12s fixes for 3 minutes so the next departure is
  * not a 20s hole. It does not stay at 2.5s while parked. A confirmed stay is
@@ -72,8 +73,10 @@ public class LocationKeepService {
     private static Location stableFix;
     private static Location lastPublished;
     private static long lastPublishedAt;
-    /** Dense trail samples. Only while a walk or ride is already clear. */
+    /** Walk samples once the step is clear. */
     private static final long GPS_MOVING_MS = 2_500L;
+    /** Bike and vehicle. Denser than a walk, still above a same-second provider burst. */
+    private static final long GPS_RIDE_MS = 1_000L;
     /** Confirmed stay, and the interval keep-alive uses before a walk is clear. */
     private static final long GPS_STILL_MS = 120_000L;
     /** After 7 minutes still, matching JOURNEY_STAY_MS. */
@@ -290,7 +293,7 @@ public class LocationKeepService {
             /* 이미 해제된 감시 */
         }
         boolean precise = config.optBoolean("precise", true);
-        long gpsMs = requestedGpsMs < GPS_MOVING_MS ? GPS_MOVING_MS : requestedGpsMs;
+        long gpsMs = requestedGpsMs < GPS_RIDE_MS ? GPS_RIDE_MS : requestedGpsMs;
         boolean gpsOn = false;
         try {
             if (precise && locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
@@ -447,7 +450,9 @@ public class LocationKeepService {
             long sinceSample = now - lastSampleAt;
             float jumped = lastSample.distanceTo(location);
             boolean relocation = jumped > stayGate(lastSample, location);
-            if (sinceSample >= 0 && sinceSample < SAMPLE_GAP_MS && !relocation) {
+            float implied = sinceSample > 0 ? jumped / (sinceSample / 1000f) : 0f;
+            boolean rideSample = implied >= RIDE_MIN_MPS && jumped >= RIDE_STEP_M && sinceSample >= 800L;
+            if (sinceSample >= 0 && sinceSample < SAMPLE_GAP_MS && !relocation && !rideSample) {
                 rememberFilter(context);
                 return null;
             }
@@ -543,7 +548,10 @@ public class LocationKeepService {
     }
 
     private static long gpsInterval(boolean moving, long now) {
-        if (moving) return GPS_MOVING_MS;
+        if (moving) {
+            if (lastRideAt > 0L && now - lastRideAt <= MOVING_HOLD_MS) return GPS_RIDE_MS;
+            return GPS_MOVING_MS;
+        }
         long stillFor = stillSinceMs > 0L ? Math.max(0L, now - stillSinceMs) : 0L;
         if (stillFor >= STILL_LONG_AFTER_MS) return GPS_STILL_LONG_MS;
         if (lastRideAt > 0L && now - lastRideAt < RIDE_BRIDGE_FOR_MS) return RIDE_BRIDGE_MS;

@@ -4,15 +4,15 @@ import { currentAppVersionLabel } from '../../lib/appRelease.mjs';
 import { looksLikePhone, localProfile } from '../../lib/localProfile.mjs';
 import { buildInviteLink, formatClock, hasLocation, haversineMeters, shouldAlertLeave } from '../../lib/geo';
 import { ALWAYS_GUIDE_DISMISSED_KEY, CHAT_NOTIFY_ASKED_KEY, KEEP_PERMISSION_ASKED_KEY, KEEP_START_ASKED_KEY, keepEntryPrompt, markSessionFlag, readSessionFlag } from '../../lib/systemSettings.mjs';
-import { familyMapShowsTrail } from '../../lib/mapTrail.mjs';
+import { familyMapShowsTrail, recordsDayTrails } from '../../lib/mapTrail.mjs';
 import { shouldDeleteCreatedRoom } from '../../lib/familyRoom.mjs';
-import { collapseDuplicateJourneys, displayCoordinate, historyDayKeys, historyDayLabel, liveMotionLabel, liveTrailPoints, MOTION_STILL_HOLD_MS, previewOpenJourney, seoulDayEndMs, seoulDayKey, visibleTrail } from '../../lib/tracking.mjs';
+import { collapseDuplicateJourneys, displayCoordinate, historyDayKeys, historyDayLabel, liveMotionLabel, liveTrailDrawable, liveTrailPoints, MOTION_STILL_HOLD_MS, previewOpenJourney, seoulDayEndMs, seoulDayKey, visibleTrail } from '../../lib/tracking.mjs';
 import { ackFamilyAlert, isFamilyAlertAcked, publishFamilyAlert, readFamilyAlert, subscribeFamilyAlerts, type FamilyAlert } from '../../services/familyAlert';
 import { readSharedPlaces, subscribeSharedPlaces } from '../../services/familyShare';
 import { abandonFamilySync, currentSyncPhase, deleteFamilyRoomRemote, familySyncConfigured, familySyncUrl, fetchMyDirectThreads, registerRoomPush, revokeFamilyPlace, splitSyncToken, startAdminRemoteSync, startSyncMonitor, subscribeSyncPhase, syncTokenFor, type SyncPhase } from '../../services/familySync';
 import { consumePendingChat, listenChatOpen, overlayPermissionGranted, umapLocation, umapLocationNative } from '../../services/umapLocation';
 import { sounds } from '../../utils/audio';
-import { DEFAULT_CENTER, type GuardianLink, type HomeZone, type Member, type TrackPoint } from '../../types/family';
+import { DEFAULT_CENTER, type GuardianLink, type HomeZone, type Member } from '../../types/family';
 import { AlwaysAllowGuide, AlwaysAllowMapHint } from './AlwaysAllowGuide';
 import { AlwaysAllowSetup } from './AlwaysAllowSetup';
 import { memberPlaceLabel } from '../../lib/memberPlace.mjs';
@@ -30,8 +30,6 @@ import { askAlwaysLocation, askBattery, askNotifications } from '../../services/
 import { useFamilyTracking } from './useFamilyTracking';
 import { useFamily } from './session';
 import { consumeAndroidBack } from '../../platform/androidExit';
-
-const HIDDEN_TRAIL: TrackPoint[] = [];
 
 export function FamilyMapScreen() {
   const family = useFamily();
@@ -512,13 +510,33 @@ export function FamilyMapScreen() {
     : null;
   const detailOpen = viewingRecords && !!detailId && (detailId === 'open' ? !!openJourney : !!detailJourney);
   const detailPoints = detailId === 'open' ? liveLine : detailJourney?.points ?? [];
-  const mapPoints = detailOpen ? detailPoints : liveLine;
+  const liveDrawable = liveTrailDrawable(liveLine, dayNow);
   const showPath = familyMapShowsTrail({
     viewingRecords,
     detailOpen,
     showTrail,
     member: selected,
+    liveDrawable,
   });
+  const mapTrails = useMemo(() => {
+    if (detailOpen) return detailPoints.length >= 2 ? [detailPoints] : [];
+    if (viewingRecords) {
+      if (!showPath) return [];
+      return recordsDayTrails({ journeys: dayJourneys, livePoints: liveLine, liveDrawable });
+    }
+    const lines = [];
+    for (const member of state.members) {
+      if (member.role === 'guardian' || !hasLocation(member)) continue;
+      if (member.id !== 'self' && member.share !== 'allowed' && member.role !== 'admin-share') continue;
+      const points = liveTrailPoints(
+        (state.tracks[member.id] ?? []).filter((point) => seoulDayKey(point.at) === liveDay),
+        now,
+      );
+      if (!liveTrailDrawable(points, now)) continue;
+      lines.push(points);
+    }
+    return lines;
+  }, [dayJourneys, detailOpen, detailPoints, liveDay, liveDrawable, liveLine, now, showPath, state.members, state.tracks, viewingRecords]);
   const dayVisits = useMemo(() => {
     const list = selected ? state.visits[selected.id] ?? [] : [];
     return list.filter((visit) => seoulDayKey(visit.arrivedAt) === pathDay);
@@ -710,7 +728,7 @@ export function FamilyMapScreen() {
             zoom={16}
             members={detailOpen ? [] : visibleMembers}
             home={detailOpen ? null : (draftHome ?? (showZone ? state.home : null))}
-            trail={showPath ? mapPoints : HIDDEN_TRAIL}
+            trails={mapTrails}
             trailColor="#0084FF"
             playback={playback}
             selectedId={selected?.id}
@@ -773,8 +791,8 @@ export function FamilyMapScreen() {
               onClick={() => {
                 setShowTrail((value) => {
                   const next = !value;
-                  if (next && selected) {
-                    const points = visibleTrail(liveLine);
+                  if (next) {
+                    const points = recordsDayTrails({ journeys: dayJourneys, livePoints: liveLine, liveDrawable }).flat();
                     if (points.length >= 2) mapRef.current?.fit(points);
                   }
                   return next;
@@ -1129,7 +1147,7 @@ export function FamilyMapScreen() {
             home={state.home}
             alertHint={unreadAlerts ? '새 알림이 있습니다' : '들어오고 나간 기록'}
             shareSelf={state.shareSelfWithFamily}
-            shareNote={tracking.familyShareNote}
+            shareNote={state.shareSelfWithFamily ? null : tracking.familyShareNote}
             onProfile={() => setProfileOpen(true)}
             onClose={() => {
               setProfileOpen(false);
@@ -1152,7 +1170,9 @@ export function FamilyMapScreen() {
               setAdminSettings(false);
               setConfirm({ kind: 'delete-room', id: 'room', name: '가족 방' });
             }}
-            onToggleShare={() => family.setShareSelf(!state.shareSelfWithFamily)}
+            onToggleShare={() => {
+              if (!state.shareSelfWithFamily) family.setShareSelf(true);
+            }}
           />
         )}
         {profileOpen && (
@@ -1229,15 +1249,17 @@ export function FamilyMapScreen() {
           <Sheet title="설정" onClose={() => setAdminSettings(false)}>
             <p className="text-sm leading-6 text-slate-500">가족은 같은 방에서 위치를 나눕니다. 위치 유지를 켠 뒤에는 이 화면에서 끄지 않습니다.</p>
             <AppVersionLine />
-            <button
-              type="button"
-              onClick={() => family.setShareSelf(!state.shareSelfWithFamily)}
-              className={`mt-4 w-full rounded-2xl px-3 py-3 text-left text-xs font-bold ${state.shareSelfWithFamily ? 'bg-blue-50 text-[#0084FF]' : 'bg-slate-50 text-slate-600'}`}
-            >
-              {state.shareSelfWithFamily ? '내 위치를 가족에게 보여주는 중 · 끄기' : '내 위치를 가족에게 공유'}
-              {tracking.familyShareNote && <span className="mt-1 block font-semibold text-amber-700">{tracking.familyShareNote}</span>}
-            </button>
-            <div className="mt-3">
+            {!state.shareSelfWithFamily && (
+              <button
+                type="button"
+                onClick={() => family.setShareSelf(true)}
+                className="mt-4 w-full rounded-2xl bg-slate-50 px-3 py-3 text-left text-xs font-bold text-slate-600"
+              >
+                내 위치를 가족에게 공유
+                {tracking.familyShareNote && <span className="mt-1 block font-semibold text-amber-700">{tracking.familyShareNote}</span>}
+              </button>
+            )}
+            <div className={state.shareSelfWithFamily ? 'mt-3' : ''}>
               <AlwaysAllowNotice
                 locationMode={state.permissions.locationMode}
                 keepAlive={state.backgroundKeepAlive}
@@ -1561,22 +1583,22 @@ function AdminMenu({
           <MenuRow icon={<MapPin className="h-4 w-4" />} label="항상 허용 방법" hint="앱을 닫아도 위치를 보내기" onClick={onAlwaysGuide} />
           <MenuRow icon={<UserPlus className="h-4 w-4" />} label="초대 수락" hint="가족에게 받은 코드" onClick={onAcceptInvite} />
         </div>
+        {!shareSelf && (
+          <div className="mt-4 overflow-hidden rounded-2xl bg-white shadow-sm">
+            <button type="button" onClick={onToggleShare} className="flex w-full items-center gap-3 px-4 py-3.5 text-left">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-700">
+                <MapPin className="h-4 w-4" />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm font-bold">내 위치를 가족에게 공유</span>
+                <span className="block truncate text-xs text-slate-400">{shareNote || '아직 허용하지 않았습니다'}</span>
+              </span>
+              <span className="text-xs font-bold text-slate-400">허용</span>
+            </button>
+          </div>
+        )}
         <div className="mt-4 overflow-hidden rounded-2xl bg-white shadow-sm">
-          <button type="button" onClick={onToggleShare} className="flex w-full items-center gap-3 px-4 py-3.5 text-left">
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-700">
-              <MapPin className="h-4 w-4" />
-            </span>
-            <span className="min-w-0 flex-1">
-              <span className="block text-sm font-bold">내 위치 공유</span>
-              <span className="block truncate text-xs text-slate-400">{shareNote || (shareSelf ? '가족에게 보여주는 중' : '가족에게 보여 주지 않음')}</span>
-            </span>
-            <span className={`text-xs font-bold ${shareSelf ? 'text-[#0084FF]' : 'text-slate-400'}`}>
-              {shareSelf ? '공유 중' : '공유 안 함'}
-            </span>
-          </button>
-        </div>
-        <div className="mt-4 overflow-hidden rounded-2xl bg-white shadow-sm">
-          <MenuRow icon={<Settings className="h-4 w-4" />} label="설정" hint="위치 권한 · 위치 공유" onClick={onSettings} />
+          <MenuRow icon={<Settings className="h-4 w-4" />} label="설정" hint="위치 권한" onClick={onSettings} />
           <MenuRow icon={<X className="h-4 w-4" />} label="가족 방 지우기" hint="이 폰에서 나가고 동기화를 멈춥니다" onClick={onLeaveFamily} />
         </div>
       </div>

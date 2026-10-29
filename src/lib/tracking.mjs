@@ -93,11 +93,17 @@ export const TRAIL_RIDE_STAY_STEP_M = 18;
 /** Family card keeps 「지금」 this long after the last ride vertex. Same 45s as the walk GPS hold. */
 export const RIDE_STATUS_FRESH_MS = 45_000;
 /**
- * Do not flip the family card to 「머무름」 until this long after the last
- * walk or ride step. Longer than the 45s ride-fresh window so a brief GPS
- * gap or a noisy accelerometer does not oscillate the label during travel.
+ * Walk: flip the family card to 「머무름」 after this quiet stretch.
+ * Shorter than a ride so a finished walk does not stay 「지금」.
  */
-export const STAY_LABEL_DWELL_MS = 90_000;
+export const WALK_STAY_LABEL_MS = 45_000;
+/**
+ * Vehicle or bike at or above ~7 km/h. A signal or a brief stop stays 「지금」.
+ * Longer than the walk dwell so the card does not flicker during a drive.
+ */
+export const RIDE_STAY_LABEL_MS = 3 * 60 * 1000;
+/** Walk dwell. Ride uses RIDE_STAY_LABEL_MS via stayLabelDwellMs. */
+export const STAY_LABEL_DWELL_MS = WALK_STAY_LABEL_MS;
 /** Accelerometer must stay quiet this long before the phone is treated as still. Matches the native moving hold. */
 export const MOTION_STILL_HOLD_MS = 45_000;
 /** A vertex this far off the shortcut, on a thin triangle, is courtyard multipath. */
@@ -115,12 +121,19 @@ const TRAIL_SPUR_WINDOW_MS = 180_000;
 export const TRAIL_GAP_M = 48;
 export const TRAIL_GAP_MS = 20_000;
 /**
- * Close the in-progress trip after the phone has lingered this long.
- * 7 minutes sits in the 5–10 minute band. The linger is the same 50m stay
- * cluster as a stop, and it must already have been observed for STOP_MIN_MS
- * before the wall clock can finish the wait. A speed reading alone does not close it.
+ * Walk: hand the open segment to 기록 after this stay.
+ * Shorter than a ride. The linger is the same 50m stay cluster as a stop,
+ * and it must already have been observed for STOP_MIN_MS before the wall
+ * clock can finish the wait. A speed reading alone does not close it.
  */
-export const JOURNEY_STAY_MS = 7 * 60 * 1000;
+export const WALK_JOURNEY_STAY_MS = 5 * 60 * 1000;
+/**
+ * Vehicle or bike at or above ~7 km/h. A longer stop is required before the
+ * live line is archived, so a traffic light does not close the trip.
+ */
+export const RIDE_JOURNEY_STAY_MS = 12 * 60 * 1000;
+/** Walk archive threshold. A ride into the stay uses RIDE_JOURNEY_STAY_MS. */
+export const JOURNEY_STAY_MS = WALK_JOURNEY_STAY_MS;
 /** Latest stay fix may be this old. A 2 minute still sample is still fresh enough to close the 7 minute wait. */
 export const JOURNEY_STAY_FRESH_MS = 150 * 1000;
 /** Shorter than this is courtyard noise, not a card in 기록. */
@@ -387,23 +400,47 @@ export function lastTravelAt(points) {
   return null;
 }
 
+/** True when the latest travel, or a ride step just before it, was at or above ~7 km/h. */
+export function lastTravelWasRide(points) {
+  const drawn = drawnPoints(points);
+  let lastTravelIndex = -1;
+  for (let index = drawn.length - 1; index >= 1; index -= 1) {
+    if (travelStep(drawn[index - 1], drawn[index])) {
+      lastTravelIndex = index;
+      break;
+    }
+  }
+  if (lastTravelIndex < 0) return false;
+  const from = Math.max(1, lastTravelIndex - 12);
+  for (let index = lastTravelIndex; index >= from; index -= 1) {
+    if (isRideStep(drawn[index - 1], drawn[index])) return true;
+  }
+  return false;
+}
+
+/** Walk quiets faster than a vehicle. The card and the motion flag share this window. */
+export function stayLabelDwellMs(points) {
+  return lastTravelWasRide(points) ? RIDE_STAY_LABEL_MS : WALK_STAY_LABEL_MS;
+}
+
 /**
- * Family row. 「지금」 while a walk or a ride (≥ ~7 km/h) is still inside
- * STAY_LABEL_DWELL_MS, and while the accelerometer has just gone active
- * before the first travel vertex. 「머무름」 only after that dwell.
- * moving === false does not flip the label during that window.
- * Peers leave moving null; the same trail dwell decides their card.
+ * Family row. 「지금」 while a walk is still inside WALK_STAY_LABEL_MS, or a
+ * ride (≥ ~7 km/h) is still inside RIDE_STAY_LABEL_MS, and while the
+ * accelerometer has just gone active before the first travel vertex.
+ * 「머무름」 only after that dwell. moving === false does not flip the label
+ * during that window. Peers leave moving null; the same trail dwell decides their card.
  */
 export function liveMotionLabel({ located, moving, points, now }) {
   if (!located || !Number.isFinite(now)) return '';
+  const dwell = stayLabelDwellMs(points);
   const movedAt = lastTravelAt(points);
-  if (movedAt != null && now >= movedAt && now - movedAt < STAY_LABEL_DWELL_MS) return '지금';
+  if (movedAt != null && now >= movedAt && now - movedAt < dwell) return '지금';
   if (moving === true && movedAt == null) return '지금';
   if (moving === false) return '머무름';
   const drawn = drawnPoints(points);
   const end = drawn[drawn.length - 1];
   if (!end) return '지금';
-  if (now >= end.at && now - end.at < STAY_LABEL_DWELL_MS) return '지금';
+  if (now >= end.at && now - end.at < dwell) return '지금';
   return '머무름';
 }
 
@@ -1181,14 +1218,26 @@ function orderedTrail(points) {
   return list;
 }
 
-function stayDwell(startAt, endAt, open, now) {
+function stayDwell(startAt, endAt, open, now, limit) {
   const observed = endAt - startAt;
   if (!open) return Math.max(0, observed);
-  if (observed >= JOURNEY_STAY_MS) return observed;
+  if (observed >= limit) return observed;
   if (!Number.isFinite(now) || now < endAt) return Math.max(0, observed);
   if (now - endAt > JOURNEY_STAY_FRESH_MS) return Math.max(0, observed);
   if (observed < STOP_MIN_MS) return Math.max(0, observed);
   return Math.max(0, now - startAt);
+}
+
+/** A ride into this stay archives later than a walk. */
+function journeyStayLimit(points, stayStart) {
+  const from = Math.max(1, stayStart - 40);
+  for (let index = stayStart; index >= from; index -= 1) {
+    const prev = points[index - 1];
+    const next = points[index];
+    if (!prev || !next || prev.stayEnd || next.stayEnd) continue;
+    if (isRideStep(prev, next)) return RIDE_JOURNEY_STAY_MS;
+  }
+  return WALK_JOURNEY_STAY_MS;
 }
 
 /**
@@ -1204,7 +1253,8 @@ function findClosingStays(points, now) {
     let end = index;
     while (end + 1 < points.length && haversineMeters(anchor, points[end + 1]) <= STOP_RADIUS_M) end += 1;
     const open = end === points.length - 1;
-    if (end > index && stayDwell(anchor.at, points[end].at, open, now) >= JOURNEY_STAY_MS) {
+    const limit = journeyStayLimit(points, index);
+    if (end > index && stayDwell(anchor.at, points[end].at, open, now, limit) >= limit) {
       let start = index;
       while (start < end) {
         const next = start + 1;
@@ -1215,7 +1265,7 @@ function findClosingStays(points, now) {
             break;
           }
         }
-        if (!near || stayDwell(points[next].at, points[end].at, open, now) < JOURNEY_STAY_MS) break;
+        if (!near || stayDwell(points[next].at, points[end].at, open, now, limit) < limit) break;
         start = next;
       }
       stays.push({ startAt: points[start].at, endAt: points[end].at });
@@ -1286,11 +1336,12 @@ function buildClosedJourney(points, departAt, arriveAt) {
 }
 
 /**
- * Split a trail at stays that have lasted JOURNEY_STAY_MS.
- * Journeys are the walks between those stays. Remaining is the open stay
- * and anything after it, which is the live map line.
- * A stay under 7 minutes, or a walk under JOURNEY_MIN_DISTANCE_M, does not
- * become a card. The short walk still leaves the live line once a real stay closes.
+ * Split a trail at a stay long enough for that segment.
+ * A walk closes after WALK_JOURNEY_STAY_MS. A ride at or above ~7 km/h closes
+ * after RIDE_JOURNEY_STAY_MS. Journeys are the trips between those stays.
+ * Remaining is the open stay and anything after it, which is the live map line.
+ * A shorter stay, or a trip under JOURNEY_MIN_DISTANCE_M, does not become a card.
+ * The short trip still leaves the live line once a real stay closes.
  */
 export function splitClosedJourneys(points, now) {
   const source = Array.isArray(points) ? points : [];
@@ -1317,6 +1368,11 @@ export function splitClosedJourneys(points, now) {
 /** In-progress line for the family map. Finished stays are not on this overlay. */
 export function liveTrailPoints(points, now) {
   return splitClosedJourneys(points, now).remaining;
+}
+
+/** The open segment still has a line. A stay cluster and courtyard jitter do not. */
+export function liveTrailDrawable(points, now = Date.now()) {
+  return visibleTrail(liveTrailPoints(points, now)).length >= 2;
 }
 
 /** Today's walk that has not closed yet. Too-short noise stays off the 기록 list. */

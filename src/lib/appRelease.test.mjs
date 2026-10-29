@@ -14,13 +14,13 @@ function text(path) {
 }
 
 test('설정 shows versionName and versionCode', () => {
-  assert.equal(APP_VERSION_NAME, '1.24.0');
-  assert.equal(APP_VERSION_CODE, 25);
-  assert.equal(formatAppVersion(), '앱 버전 1.24.0 (25)');
-  assert.equal(formatAppVersion('1.24.0', ''), '앱 버전 1.24.0');
+  assert.equal(APP_VERSION_NAME, '1.25.0');
+  assert.equal(APP_VERSION_CODE, 26);
+  assert.equal(formatAppVersion(), '앱 버전 1.25.0 (26)');
+  assert.equal(formatAppVersion('1.25.0', ''), '앱 버전 1.25.0');
   assert.equal(labelFromInstalled('1.10.0 10'), '앱 버전 1.10.0 (10)');
-  assert.equal(labelFromInstalled(''), '앱 버전 1.24.0 (25)');
-  assert.equal(labelFromInstalled('not-a-version'), '앱 버전 1.24.0 (25)');
+  assert.equal(labelFromInstalled(''), '앱 버전 1.25.0 (26)');
+  assert.equal(labelFromInstalled('not-a-version'), '앱 버전 1.25.0 (26)');
 });
 
 test('an installed APK version replaces the bundled label', () => {
@@ -29,47 +29,47 @@ test('an installed APK version replaces the bundled label', () => {
   try {
     assert.equal(currentAppVersionLabel(), '앱 버전 1.10.0 (10)');
     globalThis.window = { UmapAndroid: { appVersion: () => '' } };
-    assert.equal(currentAppVersionLabel(), '앱 버전 1.24.0 (25)');
+    assert.equal(currentAppVersionLabel(), '앱 버전 1.25.0 (26)');
     globalThis.window = {};
-    assert.equal(currentAppVersionLabel(), '앱 버전 1.24.0 (25)');
+    assert.equal(currentAppVersionLabel(), '앱 버전 1.25.0 (26)');
   } finally {
     if (previous === undefined) delete globalThis.window;
     else globalThis.window = previous;
   }
 });
 
-test('package.json, Gradle, and the release workflow stay on 1.24.0 / 25', () => {
+test('package.json, Gradle, and the release workflow stay on 1.25.0 / 26', () => {
   const pkg = JSON.parse(text('../../package.json'));
   const lock = JSON.parse(text('../../package-lock.json'));
-  assert.equal(pkg.version, '1.24.0');
-  assert.equal(lock.version, '1.24.0');
-  assert.equal(lock.packages[''].version, '1.24.0');
+  assert.equal(pkg.version, '1.25.0');
+  assert.equal(lock.version, '1.25.0');
+  assert.equal(lock.packages[''].version, '1.25.0');
 
   const gradle = text('../../android/app/build.gradle');
-  assert.match(gradle, /versionCode 25\b/);
-  assert.match(gradle, /versionName "1\.24\.0"/);
-  assert.match(text('../../android/app/src/main/res/values/strings.xml'), /<string name="version_name">1\.24\.0<\/string>/);
+  assert.match(gradle, /versionCode 26\b/);
+  assert.match(gradle, /versionName "1\.25\.0"/);
+  assert.match(text('../../android/app/src/main/res/values/strings.xml'), /<string name="version_name">1\.25\.0<\/string>/);
 
   const workflow = text('../../.github/workflows/build-apk.yml');
-  assert.match(workflow, /tag_name: v1\.24\.0/);
-  assert.match(workflow, /versionName: 1\.24\.0/);
-  assert.match(workflow, /versionCode: 25/);
-  assert.match(workflow, /umap-v1\.24\.0-tracker\.apk/);
-  assert.equal(workflow.includes('1.23.0'), false);
+  assert.match(workflow, /tag_name: v1\.25\.0/);
+  assert.match(workflow, /versionName: 1\.25\.0/);
+  assert.match(workflow, /versionCode: 26/);
+  assert.match(workflow, /umap-v1\.25\.0-tracker\.apk/);
+  assert.equal(workflow.includes('1.24.0'), false);
 
   const readme = text('../../README.md');
-  assert.match(readme, /versionName`은 `1\.24\.0`/);
-  assert.match(readme, /versionCode`는 25입니다/);
-  assert.match(readme, /`v1\.23\.0`/);
-  assert.match(text('../../PRD.md'), /umap-v1\.24\.0-tracker\.apk/);
+  assert.match(readme, /versionName`은 `1\.25\.0`/);
+  assert.match(readme, /versionCode`는 26입니다/);
+  assert.match(readme, /`v1\.24\.0`/);
+  assert.match(text('../../PRD.md'), /umap-v1\.25\.0-tracker\.apk/);
 
   const home = text('../components/home/CompanyHome.tsx');
   assert.match(home, /APP_VERSION_NAME/);
-  assert.equal(home.includes('1.23.0'), false);
+  assert.equal(home.includes('1.24.0'), false);
 
   const geocode = text('./placeGeocode.mjs');
   assert.match(geocode, /APP_VERSION_NAME/);
-  assert.equal(geocode.includes('1.23.0'), false);
+  assert.equal(geocode.includes('1.24.0'), false);
 
   const main = text('../../android/app/src/main/java/kr/co/umap/tracker/MainActivity.java');
   assert.match(main, /String appVersion\(\)/);
