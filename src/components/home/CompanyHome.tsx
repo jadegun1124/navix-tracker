@@ -4,8 +4,8 @@ import { APP_VERSION_NAME } from '../../lib/appRelease.mjs';
 const iconSrc = `${import.meta.env.BASE_URL}umap-icon.png`;
 
 export const COMPANY_HOME_URL = 'https://jadegun1124.github.io/kinnex/';
-export const ANDROID_RELEASES_URL = `https://github.com/jadegun1124/kinnex/releases/tag/v${APP_VERSION_NAME}`;
-export const ANDROID_APK_URL = `https://github.com/jadegun1124/kinnex/releases/download/v${APP_VERSION_NAME}/kinnex-v${APP_VERSION_NAME}.apk`;
+export const ANDROID_RELEASES_URL = `https://github.com/jadegun1124/umap/releases/tag/v${APP_VERSION_NAME}`;
+export const ANDROID_APK_URL = `https://github.com/jadegun1124/umap/releases/download/v${APP_VERSION_NAME}/kinnex-v${APP_VERSION_NAME}.apk`;
 
 export function CompanyHome() {
   const [sent, setSent] = useState(false);

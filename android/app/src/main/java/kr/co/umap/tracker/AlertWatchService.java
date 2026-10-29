@@ -413,7 +413,7 @@ public class AlertWatchService {
         builder.setContentTitle(title)
             .setContentText(body)
             .setStyle(new Notification.BigTextStyle().bigText(body))
-            .setSmallIcon(android.R.drawable.ic_dialog_alert)
+            .setSmallIcon(R.drawable.ic_stat_notify)
             .setContentIntent(content)
             .setAutoCancel(true)
             .setCategory(Notification.CATEGORY_ALARM);
@@ -435,7 +435,7 @@ public class AlertWatchService {
             : new Notification.Builder(context);
         builder.setContentTitle(body)
             .setStyle(new Notification.BigTextStyle().bigText(body))
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setSmallIcon(R.drawable.ic_stat_notify)
             .setContentIntent(content)
             .setAutoCancel(true)
             .setCategory(Notification.CATEGORY_STATUS);
@@ -466,7 +466,7 @@ public class AlertWatchService {
         builder.setContentTitle(from)
             .setContentText(body)
             .setStyle(new Notification.BigTextStyle().bigText(body))
-            .setSmallIcon(android.R.drawable.ic_dialog_email)
+            .setSmallIcon(R.drawable.ic_stat_notify)
             .setContentIntent(content)
             .setAutoCancel(true)
             .setCategory(Notification.CATEGORY_MESSAGE);

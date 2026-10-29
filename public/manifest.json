@@ -3,8 +3,8 @@
   "short_name": "Kinnex",
   "start_url": "./",
   "display": "standalone",
-  "background_color": "#0B1E38",
-  "theme_color": "#0B1E38",
+  "background_color": "#023272",
+  "theme_color": "#023272",
   "orientation": "portrait",
   "description": "동의한 가족의 위치를 함께 보는 Kinnex",
   "icons": [
@@ -19,6 +19,18 @@
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any"
+    },
+    {
+      "src": "umap-icon-192-maskable.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "umap-icon-512-maskable.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
     }
   ]
 }
