@@ -1,7 +1,6 @@
 package kr.co.umap.tracker;
 
 import android.app.Activity;
-import android.content.Intent;
 import android.net.Uri;
 import androidx.browser.customtabs.CustomTabsIntent;
 import androidx.core.content.ContextCompat;
@@ -29,11 +28,10 @@ import kotlin.Unit;
 
 @CapacitorPlugin(name = "UmapAuth")
 public class UmapAuthPlugin extends Plugin {
-    static final int NAVER_TAB_REQUEST = 7101;
     private static volatile UmapAuthPlugin instance;
     private PluginCall pendingNaver;
     private String pendingNaverState = "";
-    private final android.os.Handler naverCancel = new android.os.Handler(android.os.Looper.getMainLooper());
+    private boolean naverLeftForTab;
 
     @Override
     public void load() {
@@ -42,10 +40,21 @@ public class UmapAuthPlugin extends Plugin {
 
     @Override
     protected void handleOnDestroy() {
-        naverCancel.removeCallbacksAndMessages(null);
         if (pendingNaver != null) resolveNaverCanceled();
         if (instance == this) instance = null;
         super.handleOnDestroy();
+    }
+
+    @Override
+    protected void handleOnPause() {
+        super.handleOnPause();
+        if (pendingNaver != null) naverLeftForTab = true;
+    }
+
+    public static void onMainWindowFocused() {
+        UmapAuthPlugin plugin = instance;
+        if (plugin == null || !plugin.naverLeftForTab || plugin.pendingNaver == null) return;
+        plugin.resolveNaverCanceled();
     }
 
     @PluginMethod
@@ -152,6 +161,7 @@ public class UmapAuthPlugin extends Plugin {
         String state = randomState();
         pendingNaver = call;
         pendingNaverState = state;
+        naverLeftForTab = false;
         Uri uri = Uri.parse("https://nid.naver.com/oauth2.0/authorize").buildUpon()
             .appendQueryParameter("response_type", "code")
             .appendQueryParameter("client_id", clientId)
@@ -159,9 +169,7 @@ public class UmapAuthPlugin extends Plugin {
             .appendQueryParameter("state", state)
             .build();
         CustomTabsIntent tabs = new CustomTabsIntent.Builder().build();
-        Intent intent = tabs.intent;
-        intent.setData(uri);
-        activity.startActivityForResult(intent, NAVER_TAB_REQUEST);
+        tabs.launchUrl(activity, uri);
     }
 
     public static void completeNaverRedirect(Uri data) {
@@ -175,23 +183,11 @@ public class UmapAuthPlugin extends Plugin {
         activity.runOnUiThread(() -> plugin.finishNaver(data));
     }
 
-    public static void onNaverTabClosed() {
-        UmapAuthPlugin plugin = instance;
-        if (plugin == null || plugin.pendingNaver == null) return;
-        plugin.naverCancel.removeCallbacksAndMessages(null);
-        plugin.naverCancel.postDelayed(plugin::cancelNaverIfStillPending, 800);
-    }
-
-    private void cancelNaverIfStillPending() {
-        if (pendingNaver == null) return;
-        resolveNaverCanceled();
-    }
-
     private void resolveNaverCanceled() {
         PluginCall call = pendingNaver;
         pendingNaver = null;
         pendingNaverState = "";
-        naverCancel.removeCallbacksAndMessages(null);
+        naverLeftForTab = false;
         if (call == null) return;
         JSObject payload = failure("canceled");
         payload.put("error", "canceled");
@@ -199,7 +195,7 @@ public class UmapAuthPlugin extends Plugin {
     }
 
     private void finishNaver(Uri data) {
-        naverCancel.removeCallbacksAndMessages(null);
+        naverLeftForTab = false;
         PluginCall call = pendingNaver;
         pendingNaver = null;
         if (call == null) return;

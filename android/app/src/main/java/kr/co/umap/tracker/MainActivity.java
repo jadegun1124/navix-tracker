@@ -3,7 +3,6 @@ package kr.co.umap.tracker;
 import android.content.Intent;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
-import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.webkit.JavascriptInterface;
@@ -28,7 +27,6 @@ public class MainActivity extends BridgeActivity {
             webView.addJavascriptInterface(new UmapAndroidExit(this), "UmapAndroid");
         }
         captureChatIntent(getIntent());
-        captureNaverIntent(getIntent());
         getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
             @Override
             public void handleOnBackPressed() {
@@ -47,23 +45,18 @@ public class MainActivity extends BridgeActivity {
         super.onNewIntent(intent);
         setIntent(intent);
         captureChatIntent(intent);
-        captureNaverIntent(intent);
     }
 
     @Override
     public void onResume() {
         super.onResume();
         resumed = true;
-        captureNaverIntent(getIntent());
     }
 
     @Override
-    @SuppressWarnings("deprecation")
-    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-        super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode != UmapAuthPlugin.NAVER_TAB_REQUEST) return;
-        captureNaverIntent(getIntent());
-        UmapAuthPlugin.onNaverTabClosed();
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) UmapAuthPlugin.onMainWindowFocused();
     }
 
     @Override
@@ -80,14 +73,6 @@ public class MainActivity extends BridgeActivity {
         UmapLocationPlugin.openChat(code, peer);
         intent.removeExtra("umap_chat_code");
         intent.removeExtra("umap_chat_peer");
-    }
-
-    private void captureNaverIntent(Intent intent) {
-        if (intent == null || intent.getData() == null) return;
-        Uri data = intent.getData();
-        if (!"kinnex".equals(data.getScheme()) || !"naver".equals(data.getHost())) return;
-        UmapAuthPlugin.completeNaverRedirect(data);
-        intent.setData(null);
     }
 
     static final class UmapAndroidExit {
