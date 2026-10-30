@@ -111,8 +111,8 @@ function Login({ onSubmit }: { onSubmit: (profile: Profile) => void }) {
     return { snapshot, mode };
   };
 
-  const finishAccount = (account: AccountSnapshot) => {
-    void openAccountSecrets(account, typeof localStorage === 'undefined' ? null : localStorage).then((opened) => {
+  const finishAccount = (account: AccountSnapshot, typedCode = '') => {
+    void openAccountSecrets(account, typeof localStorage === 'undefined' ? null : localStorage, typedCode).then((opened) => {
       if (accountNeedsDisplayName(opened)) {
         openName(opened);
         return;
@@ -294,7 +294,7 @@ function Login({ onSubmit }: { onSubmit: (profile: Profile) => void }) {
                 return;
               }
               void persistAccountResult(result);
-              finishAccount(result.account);
+              finishAccount(result.account, recovery);
             }).catch(() => {
               setBusy(false);
               setMessage('복구 코드를 확인하지 못했습니다. 위치 서버에 다시 연결해 주세요.');

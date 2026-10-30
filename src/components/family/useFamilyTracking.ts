@@ -5,7 +5,9 @@ import { placePriorName } from '../../lib/placeAlias.mjs';
 import { buildDayRecord, labelCoordinate, liveMotionLabel } from '../../lib/tracking.mjs';
 import type { AcceptedFix } from '../../lib/tracking.mjs';
 import { readSharedPlaces, publishSharedPlace, subscribeSharedPlaces, type SharedPlace } from '../../services/familyShare';
-import { familyEndpointAvailable, familySyncUrl, publishProfileRemote, publishTrailRemote, splitSyncToken, startManagedFamilySync, syncTokenFor } from '../../services/familySync';
+import { bytesToBase64Url } from '../../lib/familySeal.mjs';
+import { familyKeyRecord } from '../../lib/familyVault.mjs';
+import { familyEndpointAvailable, familySyncUrl, publishProfileRemote, publishTrailRemote, splitSyncToken, startManagedFamilySync, syncFamilyKeys, syncTokenFor } from '../../services/familySync';
 import { startLocationWatch } from '../../services/locationWatch';
 import { cleanPlace } from '../../lib/memberPlace.mjs';
 import { cachedAddress, placeGridKey, presentPlace, reverseGeocodeCached } from '../../services/placeGeocode';
@@ -347,12 +349,24 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
         }
         return;
       }
+      const memberId = current.profile?.profileKey ? current.profile.id : '';
+      const profileKey = current.profile?.profileKey || '';
+      const seals: Record<string, { kid: string; key: string }> = {};
+      if (memberId && profileKey) {
+        for (const target of targets) {
+          if (!target.sharing) continue;
+          await syncFamilyKeys(target.code, target.token, memberId, profileKey);
+          const record = familyKeyRecord(localStorage, target.code);
+          if (record) seals[target.code] = { kid: record.kid, key: bytesToBase64Url(record.key) };
+        }
+      }
       const config: Parameters<typeof JSON.stringify>[0] = {
         baseUrl: base,
         name: (current.profile?.name || '가족').trim().slice(0, 20) || '가족',
-        memberId: current.profile?.profileKey ? current.profile.id : '',
-        profileKey: current.profile?.profileKey || '',
+        memberId,
+        profileKey,
         precise: current.permissions.accuracy === 'precise',
+        seals,
         targets,
       };
       await umapLocation.start({ config: JSON.stringify(config) }).catch(() => undefined);

@@ -12,7 +12,12 @@ import android.location.LocationManager;
 import android.net.Uri;
 import android.os.BatteryManager;
 import android.os.Build;
+import android.util.Base64;
 import java.io.OutputStream;
+import java.security.SecureRandom;
+import javax.crypto.Cipher;
+import javax.crypto.spec.GCMParameterSpec;
+import javax.crypto.spec.SecretKeySpec;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
@@ -616,8 +621,18 @@ public class LocationKeepService {
                     body.put("lat", JSONObject.NULL);
                     body.put("lng", JSONObject.NULL);
                 } else {
-                    body.put("lat", location.getLatitude());
-                    body.put("lng", location.getLongitude());
+                    JSONObject seals = current.optJSONObject("seals");
+                    JSONObject sealInfo = seals == null ? null : seals.optJSONObject(target.optString("code"));
+                    JSONObject secret = new JSONObject();
+                    secret.put("lat", location.getLatitude());
+                    secret.put("lng", location.getLongitude());
+                    secret.put("accuracyM", Math.round(Math.max(0f, location.getAccuracy())));
+                    JSONObject envelope = sealInfo == null ? null : sealCoordinates(sealInfo.optString("key"), sealInfo.optString("kid"), secret.toString());
+                    if (envelope == null) continue;
+                    body.put("lat", JSONObject.NULL);
+                    body.put("lng", JSONObject.NULL);
+                    body.put("accuracyM", 0);
+                    body.put("seal", envelope);
                     if (battery >= 0) body.put("batteryPct", battery);
                     body.put("charging", charging);
                 }
@@ -630,6 +645,29 @@ public class LocationKeepService {
             }
         }
         if (changed) prefs(context).edit().putString("config", current.toString()).apply();
+    }
+
+    /** Same envelope as src/lib/familySeal.mjs sealJson. Without a family key the fix is not uploaded. */
+    private static JSONObject sealCoordinates(String keyB64, String kid, String plaintext) {
+        if (keyB64 == null || kid == null || kid.length() < 16 || kid.length() > 64) return null;
+        try {
+            byte[] key = Base64.decode(keyB64, Base64.URL_SAFE | Base64.NO_PADDING | Base64.NO_WRAP);
+            if (key.length != 32) return null;
+            byte[] iv = new byte[12];
+            new SecureRandom().nextBytes(iv);
+            Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+            cipher.init(Cipher.ENCRYPT_MODE, new SecretKeySpec(key, "AES"), new GCMParameterSpec(128, iv));
+            byte[] ct = cipher.doFinal(plaintext.getBytes(StandardCharsets.UTF_8));
+            JSONObject envelope = new JSONObject();
+            envelope.put("v", 1);
+            envelope.put("alg", "A256GCM");
+            envelope.put("kid", kid);
+            envelope.put("iv", Base64.encodeToString(iv, Base64.URL_SAFE | Base64.NO_PADDING | Base64.NO_WRAP));
+            envelope.put("ct", Base64.encodeToString(ct, Base64.URL_SAFE | Base64.NO_PADDING | Base64.NO_WRAP));
+            return envelope;
+        } catch (Exception ignored) {
+            return null;
+        }
     }
 
     private static boolean put(String base, String token, JSONObject body, String profileKey) {

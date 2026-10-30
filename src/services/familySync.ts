@@ -523,15 +523,18 @@ export async function rotateRemovedMember(input: {
   const directory = await putRoomKeys(input.code, input.token, input.profileKey, {
     memberId: input.memberId,
     publicKey: device.publicKey,
-    revoke: input.removedId,
   });
+  if (!directory) return;
   const minted = await mintFamilyKey();
   const wraps: Record<string, { epk: string; iv: string; ct: string }> = {};
-  for (const [id, pub] of Object.entries(directory?.pubs || {})) {
-    if (id === input.removedId || (directory?.revoked || []).includes(id)) continue;
+  const pubs = { ...(directory.pubs || {}), [input.memberId]: device.publicKey };
+  delete pubs[input.removedId];
+  for (const [id, pub] of Object.entries(pubs)) {
+    if ((directory.revoked || []).includes(id)) continue;
     const wrap = await wrapFamilyKey(pub, minted.key, minted.kid);
     if (wrap) wraps[id] = wrap;
   }
+  if (!wraps[input.memberId]) return;
   const saved = await putRoomKeys(input.code, input.token, input.profileKey, {
     memberId: input.memberId,
     publicKey: device.publicKey,

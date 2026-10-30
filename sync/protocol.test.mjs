@@ -1045,6 +1045,35 @@ test('family view keeps the newest place when one memberId was stored twice', ()
   assert.equal(mine[0].name, '민지');
 });
 
+test('an older plaintext fix does not replace a newer sealed place', () => {
+  const sealed = applyPlace(emptyRoom(), {
+    code: '48291',
+    name: '하나',
+    lat: null,
+    lng: null,
+    accuracyM: 0,
+    at: 200,
+    sharing: true,
+    audience: 'family',
+    memberId: 'local-sealowner',
+    seal: { v: 1, alg: 'A256GCM', kid: 'abcdefghijklmnop', iv: 'AAAAAAAAAAAAAAAA', ct: 'BBBBBBBBBBBBBBBBBBBBBBBB' },
+  });
+  const older = applyPlace(sealed.room, {
+    code: '48291',
+    name: '하나',
+    lat: 37.1,
+    lng: 127.1,
+    accuracyM: 8,
+    at: 100,
+    sharing: true,
+    audience: 'family',
+    memberId: 'local-sealowner',
+  });
+  const stored = Object.values(older.room.places)[0];
+  assert.equal(stored.lat, null);
+  assert.equal(stored.seal.kid, 'abcdefghijklmnop');
+});
+
 test('a sealed place keeps ciphertext only and a removed member cannot register again', async () => {
   const { mintFamilyKey, sealJson } = await import('../src/lib/familySeal.mjs');
   const store = createMemoryStore();

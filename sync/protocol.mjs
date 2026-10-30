@@ -324,7 +324,7 @@ function hasFix(place) {
 }
 
 function isPlaceholder(place) {
-  return !!place && place.sharing === true && place.lat == null && place.lng == null;
+  return !!place && place.sharing === true && !isSeal(place.seal) && place.lat == null && place.lng == null;
 }
 
 function adoptCurrent(places, place) {

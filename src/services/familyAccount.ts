@@ -145,7 +145,7 @@ export async function linkKakaoAccount(
     body: JSON.stringify({
       accessToken,
       mode,
-      ...(snapshot ? { snapshot } : {}),
+      ...(snapshot ? { snapshot: await sealedSnapshot(snapshot) } : {}),
       ...(accountKey ? { accountKey } : {}),
     }),
   });
@@ -169,7 +169,7 @@ export async function linkNaverAccount(
       ...(payload.code ? { code: payload.code } : {}),
       ...(payload.state ? { state: payload.state } : {}),
       ...(payload.redirectUri ? { redirectUri: payload.redirectUri } : {}),
-      ...(snapshot ? { snapshot } : {}),
+      ...(snapshot ? { snapshot: await sealedSnapshot(snapshot) } : {}),
       ...(accountKey ? { accountKey } : {}),
     }),
   });
