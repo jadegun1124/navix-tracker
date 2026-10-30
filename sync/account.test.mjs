@@ -159,7 +159,11 @@ test('Google login route is closed and leftover googleSub still recovers', async
   assert.equal(put.status, 200);
   const view = await handleSyncRequest(rooms, new Request(`http://sync.local/v1/rooms/${code}/family`, {
     method: 'GET',
-    headers: { 'x-umap-sync-key': token },
+    headers: {
+      'x-umap-sync-key': token,
+      'x-umap-profile-key': recovered.body.account.profileKey,
+      'x-umap-member': recovered.body.account.memberId,
+    },
   }));
   const family = await view.json();
   const same = family.places.filter((item) => item.memberId === 'local-restore1');

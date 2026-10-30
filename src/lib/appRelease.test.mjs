@@ -14,13 +14,13 @@ function text(path) {
 }
 
 test('설정 shows versionName and versionCode', () => {
-  assert.equal(APP_VERSION_NAME, '1.36.0');
-  assert.equal(APP_VERSION_CODE, 40);
-  assert.equal(formatAppVersion(), '앱 버전 1.36.0 (40)');
+  assert.equal(APP_VERSION_NAME, '1.36.1');
+  assert.equal(APP_VERSION_CODE, 41);
+  assert.equal(formatAppVersion(), '앱 버전 1.36.1 (41)');
   assert.equal(formatAppVersion('1.36.0', ''), '앱 버전 1.36.0');
   assert.equal(labelFromInstalled('1.10.0 10'), '앱 버전 1.10.0 (10)');
-  assert.equal(labelFromInstalled(''), '앱 버전 1.36.0 (40)');
-  assert.equal(labelFromInstalled('not-a-version'), '앱 버전 1.36.0 (40)');
+  assert.equal(labelFromInstalled(''), '앱 버전 1.36.1 (41)');
+  assert.equal(labelFromInstalled('not-a-version'), '앱 버전 1.36.1 (41)');
 });
 
 test('an installed APK version replaces the bundled label', () => {
@@ -29,32 +29,32 @@ test('an installed APK version replaces the bundled label', () => {
   try {
     assert.equal(currentAppVersionLabel(), '앱 버전 1.10.0 (10)');
     globalThis.window = { UmapAndroid: { appVersion: () => '' } };
-    assert.equal(currentAppVersionLabel(), '앱 버전 1.36.0 (40)');
+    assert.equal(currentAppVersionLabel(), '앱 버전 1.36.1 (41)');
     globalThis.window = {};
-    assert.equal(currentAppVersionLabel(), '앱 버전 1.36.0 (40)');
+    assert.equal(currentAppVersionLabel(), '앱 버전 1.36.1 (41)');
   } finally {
     if (previous === undefined) delete globalThis.window;
     else globalThis.window = previous;
   }
 });
 
-test('package.json, Gradle, and the release workflow stay on 1.36.0 / 40', () => {
+test('package.json, Gradle, and the release workflow stay on 1.36.1 / 41', () => {
   const pkg = JSON.parse(text('../../package.json'));
   const lock = JSON.parse(text('../../package-lock.json'));
-  assert.equal(pkg.version, '1.36.0');
-  assert.equal(lock.version, '1.36.0');
-  assert.equal(lock.packages[''].version, '1.36.0');
+  assert.equal(pkg.version, '1.36.1');
+  assert.equal(lock.version, '1.36.1');
+  assert.equal(lock.packages[''].version, '1.36.1');
 
   const gradle = text('../../android/app/build.gradle');
-  assert.match(gradle, /versionCode 40\b/);
-  assert.match(gradle, /versionName "1\.36\.0"/);
-  assert.match(text('../../android/app/src/main/res/values/strings.xml'), /<string name="version_name">1\.36\.0<\/string>/);
+  assert.match(gradle, /versionCode 41\b/);
+  assert.match(gradle, /versionName "1\.36\.1"/);
+  assert.match(text('../../android/app/src/main/res/values/strings.xml'), /<string name="version_name">1\.36\.1<\/string>/);
 
   const workflow = text('../../.github/workflows/build-apk.yml');
-  assert.match(workflow, /tag_name: v1\.36\.0/);
-  assert.match(workflow, /versionName: 1\.36\.0/);
-  assert.match(workflow, /versionCode: 40/);
-  assert.match(workflow, /kinnex-v1\.36\.0\.apk/);
+  assert.match(workflow, /tag_name: v1\.36\.1/);
+  assert.match(workflow, /versionName: 1\.36\.1/);
+  assert.match(workflow, /versionCode: 41/);
+  assert.match(workflow, /kinnex-v1\.36\.1\.apk/);
   assert.match(workflow, /assembleRelease/);
   assert.match(workflow, /005737352270b84c7fb6016129bda9a3cd09350c/);
   assert.match(workflow, /keytool/);
@@ -63,10 +63,10 @@ test('package.json, Gradle, and the release workflow stay on 1.36.0 / 40', () =>
   assert.equal(workflow.includes('1.26.0'), false);
 
   const readme = text('../../README.md');
-  assert.match(readme, /versionName`은 `1\.36\.0`/);
-  assert.match(readme, /versionCode`는 40입니다/);
+  assert.match(readme, /versionName`은 `1\.36\.1`/);
+  assert.match(readme, /versionCode`는 41입니다/);
   assert.match(readme, /`v1\.26\.0`/);
-  assert.match(text('../../PRD.md'), /kinnex-v1\.36\.0\.apk/);
+  assert.match(text('../../PRD.md'), /kinnex-v1\.36\.1\.apk/);
 
   const home = text('../components/home/CompanyHome.tsx');
   assert.match(home, /APP_VERSION_NAME/);
@@ -82,6 +82,12 @@ test('package.json, Gradle, and the release workflow stay on 1.36.0 / 40', () =>
 
   const screen = text('../components/family/FamilyMapScreen.tsx');
   assert.equal((screen.match(/<AppVersionLine \/>/g) || []).length, 2);
+  assert.equal((screen.match(/<DisclosureLogPanel \/>/g) || []).length, 2);
+  assert.match(screen, /위치정보 이용·제공 기록/);
+  assert.match(screen, /개인위치정보 이용 동의/);
+  assert.match(screen, /제3자에게 개인정보나 위치, 기록을 제공한 내역이 없습니다/);
+  assert.match(screen, /표시 이름, 카카오·네이버 계정, 가족 구성, 기기, 계정·복구 정보/);
+  assert.match(screen, /6개월이 지난 뒤에 지웁니다/);
   assert.match(screen, /계정 연결/);
   assert.match(screen, /카카오 연결/);
   assert.match(screen, /네이버 연결/);

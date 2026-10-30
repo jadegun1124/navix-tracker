@@ -108,6 +108,154 @@ export async function backupFamilyAccount(snapshot: AccountSnapshot, accountKey 
   return readAccountBody(response);
 }
 
+export type DisclosureCategory = 'name' | 'kakao' | 'naver' | 'family' | 'device' | 'account' | 'location' | 'history' | 'place' | 'other';
+
+export interface DisclosureRecord {
+  categories: DisclosureCategory[];
+  detail?: string;
+  rangeStart: number;
+  rangeEnd: number;
+  recipient: string;
+  purpose: string;
+  at: number;
+  actor: string;
+}
+
+function cleanDisclosure(value: unknown): DisclosureRecord | null {
+  if (!value || typeof value !== 'object') return null;
+  const row = value as Record<string, unknown>;
+  if ('lat' in row || 'lng' in row || 'latitude' in row || 'longitude' in row) return null;
+  if ('kakaoId' in row || 'naverId' in row || 'recoveryCode' in row || 'accountKey' in row) return null;
+  if (!Array.isArray(row.categories) || !row.categories.length) return null;
+  const categories: DisclosureCategory[] = [];
+  for (const item of row.categories) {
+    if (item !== 'name' && item !== 'kakao' && item !== 'naver' && item !== 'family' && item !== 'device' && item !== 'account' && item !== 'location' && item !== 'history' && item !== 'place' && item !== 'other') return null;
+    if (!categories.includes(item)) categories.push(item);
+  }
+  if (typeof row.rangeStart !== 'number' || typeof row.rangeEnd !== 'number' || typeof row.at !== 'number') return null;
+  if (!Number.isInteger(row.rangeStart) || !Number.isInteger(row.rangeEnd) || !Number.isInteger(row.at)) return null;
+  if (typeof row.recipient !== 'string' || typeof row.purpose !== 'string' || typeof row.actor !== 'string') return null;
+  if (!row.recipient || !row.purpose || !row.actor) return null;
+  const detail = typeof row.detail === 'string' && row.detail ? row.detail : '';
+  if (categories.includes('other') && !detail) return null;
+  return {
+    categories,
+    ...(detail ? { detail } : {}),
+    rangeStart: row.rangeStart,
+    rangeEnd: row.rangeEnd,
+    recipient: row.recipient,
+    purpose: row.purpose,
+    at: row.at,
+    actor: row.actor,
+  };
+}
+
+export interface HandlingEvent {
+  kind: 'collect' | 'use';
+  memberId: string;
+  actor: string;
+  categories: Array<'location' | 'history' | 'place'>;
+  at: number;
+}
+
+export async function loadOwnHandling(accountKey = readStoredAccountKey(typeof localStorage === 'undefined' ? null : localStorage)): Promise<{
+  ok: boolean;
+  intact: boolean;
+  events: HandlingEvent[];
+  message?: string;
+}> {
+  if (!accountKey || !familySyncUrl()) return { ok: false, intact: true, events: [], message: '위치 서버에 연결되지 않아 이용 기록을 확인하지 못했습니다.' };
+  try {
+    const response = await request('/v1/account/handling', { method: 'GET', headers: accountHeaders(accountKey) });
+    const body = await response.json().catch(() => null) as { ok?: boolean; intact?: boolean; events?: unknown } | null;
+    if (!response.ok || !body || body.ok !== true || !Array.isArray(body.events)) {
+      return { ok: false, intact: true, events: [], message: '이용 기록을 불러오지 못했습니다.' };
+    }
+    const events: HandlingEvent[] = [];
+    for (const item of body.events) {
+      if (!item || typeof item !== 'object') continue;
+      const row = item as Record<string, unknown>;
+      if (row.kind !== 'collect' && row.kind !== 'use') continue;
+      if (typeof row.at !== 'number' || typeof row.actor !== 'string') continue;
+      if (!Array.isArray(row.categories)) continue;
+      events.push({
+        kind: row.kind,
+        memberId: typeof row.memberId === 'string' ? row.memberId : '',
+        actor: row.actor,
+        categories: row.categories.filter((category): category is HandlingEvent['categories'][number] => category === 'location' || category === 'history' || category === 'place'),
+        at: row.at,
+      });
+    }
+    return { ok: true, intact: body.intact !== false, events };
+  } catch {
+    return { ok: false, intact: true, events: [], message: '이용 기록을 불러오지 못했습니다.' };
+  }
+}
+
+export async function mintFamilyInvite(code: string, syncToken: string, memberId: string) {
+  if (!familySyncUrl()) return { ok: false as const, message: '위치 서버가 없습니다.' };
+  try {
+    const response = await request('/v1/invites', {
+      method: 'POST',
+      headers: accountHeaders(),
+      body: JSON.stringify({ code, syncToken, memberId }),
+    });
+    const body = await response.json().catch(() => null) as { ok?: boolean; ticket?: string; message?: string } | null;
+    if (!response.ok || !body || body.ok !== true || typeof body.ticket !== 'string') {
+      return { ok: false as const, message: '초대 링크를 만들지 못했습니다.' };
+    }
+    return { ok: true as const, ticket: body.ticket };
+  } catch {
+    return { ok: false as const, message: '초대 링크를 만들지 못했습니다.' };
+  }
+}
+
+export async function redeemFamilyInvite(ticket: string) {
+  if (!familySyncUrl()) return { ok: false as const, message: '위치 서버가 없습니다.' };
+  try {
+    const response = await request(`/v1/invites/${encodeURIComponent(ticket)}/redeem`, {
+      method: 'POST',
+      headers: accountHeaders(),
+      body: '{}',
+    });
+    const body = await response.json().catch(() => null) as { ok?: boolean; code?: string; syncToken?: string; message?: string } | null;
+    if (!response.ok || !body || body.ok !== true || typeof body.syncToken !== 'string' || typeof body.code !== 'string') {
+      return { ok: false as const, message: body && typeof body.message === 'string' ? body.message : '초대 링크를 확인하지 못했습니다.' };
+    }
+    return { ok: true as const, code: body.code, syncToken: body.syncToken };
+  } catch {
+    return { ok: false as const, message: '초대 링크를 확인하지 못했습니다.' };
+  }
+}
+
+export async function loadOwnDisclosures(accountKey = readStoredAccountKey(typeof localStorage === 'undefined' ? null : localStorage)): Promise<{
+  ok: boolean;
+  intact: boolean;
+  disclosures: DisclosureRecord[];
+  message?: string;
+}> {
+  if (!accountKey || !familySyncUrl()) {
+    return { ok: false, intact: true, disclosures: [], message: '위치 서버에 연결되지 않아 제공 기록을 확인하지 못했습니다.' };
+  }
+  try {
+    const response = await request('/v1/account/disclosures', {
+      method: 'GET',
+      headers: accountHeaders(accountKey),
+    });
+    const body = await response.json().catch(() => null) as { ok?: boolean; intact?: boolean; disclosures?: unknown } | null;
+    if (!response.ok || !body || body.ok !== true || !Array.isArray(body.disclosures)) {
+      return { ok: false, intact: true, disclosures: [], message: '제공 기록을 불러오지 못했습니다.' };
+    }
+    return {
+      ok: true,
+      intact: body.intact !== false,
+      disclosures: body.disclosures.map(cleanDisclosure).filter((row): row is DisclosureRecord => row !== null),
+    };
+  } catch {
+    return { ok: false, intact: true, disclosures: [], message: '제공 기록을 불러오지 못했습니다.' };
+  }
+}
+
 export async function deleteFamilyAccount(accountKey = readStoredAccountKey(typeof localStorage === 'undefined' ? null : localStorage)) {
   if (!accountKey) return { ok: false, message: '저장된 계정을 찾지 못했습니다.' };
   try {

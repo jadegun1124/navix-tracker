@@ -407,6 +407,8 @@ public class LocationKeepService {
     private static Location readStoredFix(SharedPreferences stored, String key) {
         String raw = stored.getString(key, "");
         if (raw == null || raw.isEmpty()) return null;
+        if (raw.startsWith("umap-device-seal:")) raw = DeviceCipher.open(raw);
+        if (raw == null || raw.isEmpty()) return null;
         try {
             JSONObject json = new JSONObject(raw);
             Location location = new Location(json.optString("provider", LocationManager.GPS_PROVIDER));
@@ -434,7 +436,9 @@ public class LocationKeepService {
             json.put("time", location.getTime());
             json.put("acc", location.getAccuracy());
             if (location.hasSpeed()) json.put("speed", location.getSpeed());
-            editor.putString(key, json.toString());
+            String sealed = DeviceCipher.seal(json.toString());
+            if (sealed.isEmpty()) editor.remove(key);
+            else editor.putString(key, sealed);
         } catch (Exception error) {
             editor.remove(key);
         }

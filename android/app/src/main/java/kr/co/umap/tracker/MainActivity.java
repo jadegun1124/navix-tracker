@@ -21,6 +21,7 @@ public class MainActivity extends BridgeActivity {
     protected void onCreate(Bundle savedInstanceState) {
         registerPlugin(UmapLocationPlugin.class);
         registerPlugin(UmapAuthPlugin.class);
+        registerPlugin(DeviceSealPlugin.class);
         super.onCreate(savedInstanceState);
         WebView webView = bridge != null ? bridge.getWebView() : null;
         if (webView != null) {

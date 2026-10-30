@@ -10,12 +10,12 @@
 | :--- | :--- | :--- |
 | 회사 홈 | GitHub Pages | https://jadegun1124.github.io/kinnex/ |
 | 앱 화면 미리보기 | 같은 Pages의 `?app=1` | https://jadegun1124.github.io/kinnex/?app=1 |
-| 안드로이드 앱 | GitHub Releases APK v1.36.0 | https://github.com/jadegun1124/umap/releases/download/v1.36.0/kinnex-v1.36.0.apk |
-| 릴리스 페이지 | GitHub Releases | https://github.com/jadegun1124/umap/releases/tag/v1.36.0 |
+| 안드로이드 앱 | GitHub Releases APK v1.36.1 | https://github.com/jadegun1124/umap/releases/download/v1.36.1/kinnex-v1.36.1.apk |
+| 릴리스 페이지 | GitHub Releases | https://github.com/jadegun1124/umap/releases/tag/v1.36.1 |
 
 Google Play, App Store, TestFlight에는 올리지 않았습니다. iOS는 아이콘 에셋만 있고 설치 파일은 없습니다.
 
-`main`에 푸시하면 GitHub Actions가 회사 홈을 Pages에 배포하고, 같은 커밋으로 디버그 APK를 만들어 GitHub Release `v1.36.0`의 `kinnex-v1.36.0.apk`를 갱신합니다. 이전 빌드는 `v1.35.0`, `v1.34.0`, `v1.33.0`, `v1.32.0`, `v1.31.1`, `v1.31.0`, `v1.30.0`, `v1.29.2`, `v1.29.1`, `v1.29.0`, `v1.27.0`, `v1.26.0`, `v1.25.0`, `v1.24.0`, `v1.23.0`, `v1.22.0`, `v1.21.0`, `v1.20.0`, `v1.19.0`, `v1.18.0`, `v1.17.0`, `v1.16.0`, `v1.15.0`, `v1.14.0`, `v1.13.0`, `v1.12.0`, `v1.11.0`, `v1.10.0`, `v1.9.0`, `v1.8.0`, `v1.7.0`, `v1.6.0`, `v1.5.0`, `v1.4.0`, `v1.3.0`, `v1.2.0`, `v1.1.0`, `v1.0.0`에 남아 있습니다.
+`main`에 푸시하면 GitHub Actions가 회사 홈을 Pages에 배포하고, 같은 커밋으로 디버그 APK를 만들어 GitHub Release `v1.36.1`의 `kinnex-v1.36.1.apk`를 갱신합니다. 이전 빌드는 `v1.36.0`, `v1.35.0`, `v1.34.0`, `v1.33.0`, `v1.32.0`, `v1.31.1`, `v1.31.0`, `v1.30.0`, `v1.29.2`, `v1.29.1`, `v1.29.0`, `v1.27.0`, `v1.26.0`, `v1.25.0`, `v1.24.0`, `v1.23.0`, `v1.22.0`, `v1.21.0`, `v1.20.0`, `v1.19.0`, `v1.18.0`, `v1.17.0`, `v1.16.0`, `v1.15.0`, `v1.14.0`, `v1.13.0`, `v1.12.0`, `v1.11.0`, `v1.10.0`, `v1.9.0`, `v1.8.0`, `v1.7.0`, `v1.6.0`, `v1.5.0`, `v1.4.0`, `v1.3.0`, `v1.2.0`, `v1.1.0`, `v1.0.0`에 남아 있습니다.
 
 ## 화면
 
@@ -94,9 +94,9 @@ npm run dev
 
 ## 안드로이드 APK
 
-받는 곳: https://github.com/jadegun1124/umap/releases/download/v1.36.0/kinnex-v1.36.0.apk
+받는 곳: https://github.com/jadegun1124/umap/releases/download/v1.36.1/kinnex-v1.36.1.apk
 
-`main` 푸시마다 `Build Android APK (Kinnex)` 워크플로가 웹을 빌드하고 `dist` 를 안드로이드 에셋으로 복사한 뒤 `assembleRelease` 로 APK를 만듭니다. 서명은 `android/app/umap-sideload.keystore` 이고 SHA-1은 `00:57:37:35:22:70:B8:4C:7F:B6:01:61:29:BD:A9:A3:CD:09:35:0C` 입니다. 결과 파일은 GitHub Release `v1.36.0`에 올립니다. 앱 `versionName`은 `1.36.0`, `versionCode`는 40입니다. Play 스토어 트랙은 없습니다.
+`main` 푸시마다 `Build Android APK (Kinnex)` 워크플로가 웹을 빌드하고 `dist` 를 안드로이드 에셋으로 복사한 뒤 `assembleRelease` 로 APK를 만듭니다. 서명은 `android/app/umap-sideload.keystore` 이고 SHA-1은 `00:57:37:35:22:70:B8:4C:7F:B6:01:61:29:BD:A9:A3:CD:09:35:0C` 입니다. 결과 파일은 GitHub Release `v1.36.1`에 올립니다. 앱 `versionName`은 `1.36.1`, `versionCode`는 41입니다. Play 스토어 트랙은 없습니다.
 
 1.16.0까지 그 빌드는 러너마다 새로 만든 디버그 키로 서명했습니다. 패키지가 `kr.co.umap.tracker`여도 인증서가 다르면 안드로이드는 덮어쓰기를 거절해서, 지우고 다시 깔아야 했습니다. 1.17.0부터 debug와 release는 저장소의 `android/app/umap-sideload.keystore`(별칭 `umap-sideload`)로 서명합니다. 비밀번호는 `android/app/build.gradle`에 있습니다. 인증서 SHA-256은 `4A:15:08:0F:72:C3:87:D1:E8:50:A8:DE:5A:89:34:9A:B4:1A:48:0D:C5:97:71:AB:22:9C:85:44:C8:61:7A:6C`입니다. 이 키는 가족 폰에 직접 설치하는 사이드로드 전용이고, Play 앱 서명 키가 아닙니다.
 
@@ -104,7 +104,7 @@ npm run dev
 
 ## 계정 로그인
 
-첫 화면은 카카오, 네이버, 복구 코드로 불러오기, 새로 시작입니다. 서버에 이미 있는 계정은 표시 이름과 가족, 기록을 그대로 불러오고 이름을 다시 묻지 않습니다. 새 계정이면 그 다음에 표시 이름을 묻습니다. 카카오·네이버 또는 복구 코드는 다시 설치한 뒤 같은 구성원 id와 가족 방, 최근 30일 기록을 불러옵니다. 설정 「로그아웃」은 서버 백업을 남깁니다. 설정 「회원 탈퇴」는 서버 계정, 기록, 카카오·네이버 연결, 복구 코드를 지웁니다. 여러 로그인을 한 계정에 연결할 수 있습니다. 버튼만 누르고 통과하지 않습니다. 해당 키가 없으면 그 버튼은 비활성으로 두고 한국어 설정 안내만 보여줍니다. Google 로그인은 쓰지 않습니다. 예전 계정 레코드에 google 필드가 있어도 Worker는 무시하고 깨지지 않습니다.
+첫 화면은 카카오, 네이버, 복구 코드로 불러오기, 새로 시작입니다. 서버에 이미 있는 계정은 표시 이름과 가족, 기록을 그대로 불러오고 이름을 다시 묻지 않습니다. 새 계정이면 그 다음에 표시 이름을 묻습니다. 카카오·네이버 또는 복구 코드는 다시 설치한 뒤 같은 구성원 id와 가족 방, 최근 30일 기록을 불러옵니다. 설정 「로그아웃」은 서버 백업을 남깁니다. 설정 「회원 탈퇴」는 서버 계정, 기록, 카카오·네이버 연결, 복구 코드를 지웁니다. 제3자 제공 기록은 개인정보 값과 좌표 없이 6개월이 지난 뒤에 지웁니다. 설정에 「정보 제공 기록」이 있습니다. 여러 로그인을 한 계정에 연결할 수 있습니다. 버튼만 누르고 통과하지 않습니다. 해당 키가 없으면 그 버튼은 비활성으로 두고 한국어 설정 안내만 보여줍니다. Google 로그인은 쓰지 않습니다. 예전 계정 레코드에 google 필드가 있어도 Worker는 무시하고 깨지지 않습니다.
 
 ### 카카오 로그인
 
@@ -121,7 +121,7 @@ npm run dev
 
 1. [Naver Developers](https://developers.naver.com/apps/#/register) → 애플리케이션 등록 → 사용 API **네아로(네이버 로그인)**.
 2. 로그인 오픈 API 서비스 환경 **Android**. 패키지 이름 `kr.co.umap.tracker`.
-3. 다운로드 URL `https://github.com/jadegun1124/umap/releases/download/v1.36.0/kinnex-v1.36.0.apk`.
+3. 다운로드 URL `https://github.com/jadegun1124/umap/releases/download/v1.36.1/kinnex-v1.36.1.apk`.
 4. Callback URL은 `https://umap-family-sync.umap-jadegun.workers.dev/v1/naver/callback` 입니다. Worker가 그 주소를 `kinnex://naver` 로 돌려 앱이 인가 코드를 받습니다. 웹은 `https://jadegun1124.github.io/kinnex/` 와 `http://localhost:5173/` 입니다.
 5. Client ID `dQCiRLIzbNkDG6ULiroD` 는 공개 값이라 앱과 Worker `NAVER_CLIENT_ID`에 들어 있습니다. `VITE_NAVER_CLIENT_ID`가 있으면 그 값이 우선입니다.
 6. Client Secret은 `npx wrangler secret put NAVER_CLIENT_SECRET`으로만 Worker에 넣습니다. 앱, 저장소, APK에 넣지 않습니다. 비밀이 없으면 Worker는 네이버 로그인을 거절하고 `NAVER_CLIENT_SECRET`이 없다고 알립니다.

@@ -31,8 +31,18 @@ export class FamilyRoom {
     }
 
     let room = (await this.ctx.storage.get('room')) || emptyRoom();
-    if (op.kind === 'get') return Response.json(viewRoom(room, op.since));
-    if (op.kind === 'family') return Response.json(viewFamilyPlaces(room));
+    if (op.kind === 'get') {
+      const { authorizeReader } = await import('./protocol.mjs');
+      const auth = await authorizeReader(room, op.viewerId, op.profileKey);
+      if (auth.error) return auth.error;
+      return Response.json(viewRoom(room, op.since));
+    }
+    if (op.kind === 'family') {
+      const { authorizeReader } = await import('./protocol.mjs');
+      const auth = await authorizeReader(room, op.viewerId, op.profileKey);
+      if (auth.error) return auth.error;
+      return Response.json(viewFamilyPlaces(room));
+    }
     if (op.kind === 'chat-get') {
       const view = op.peer ? viewDirectMessages(room, op.me, op.peer) : viewMyThreads(room, op.me);
       if (!view) return Response.json({ error: 'chat' }, { status: 400 });
@@ -59,7 +69,12 @@ export class FamilyRoom {
         room = next.room;
         await this.ctx.storage.put('room', room);
       }
-      return Response.json({ ok: true });
+      return Response.json({
+        ok: true,
+        collected: next.ignored !== true && !!op.place?.memberId,
+        memberId: op.place?.memberId || '',
+        at: op.place?.at || Date.now(),
+      });
     }
     if (op.kind === 'profile') {
       const next = await commitProfile(room, op.profile, op.profileKey || '');
@@ -77,7 +92,13 @@ export class FamilyRoom {
         room = next.room;
         await this.ctx.storage.put('room', room);
       }
-      return Response.json({ ok: true });
+      return Response.json({
+        ok: true,
+        collected: next.ignored !== true && !!op.trail?.memberId,
+        memberId: op.trail?.memberId || '',
+        at: op.trail?.at || Date.now(),
+        history: true,
+      });
     }
     if (op.kind === 'keys') {
       const next = await commitKeys(room, op.keys, op.profileKey || '');
@@ -217,7 +238,64 @@ async function deliverAlert(env, stub, data) {
   }).catch(() => undefined);
 }
 
+async function noteHandling(env, op, data) {
+  if (!env?.FAMILY_ACCOUNT || !data) return;
+  const accounts = env.FAMILY_ACCOUNT.get(env.FAMILY_ACCOUNT.idFromName('umap-account-book'));
+  const post = (event) => accounts.fetch('https://account.internal/op', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ op: { kind: 'account-handling-record', event } }),
+  });
+  if ((op.kind === 'place' || op.kind === 'trail') && data.collected && data.memberId) {
+    await post({
+      kind: 'collect',
+      memberId: data.memberId,
+      actor: data.memberId,
+      categories: data.history ? ['history'] : ['location'],
+      at: data.at,
+    });
+    return;
+  }
+  if ((op.kind !== 'family' && op.kind !== 'get') || !op.viewerId) return;
+  const seen = new Set();
+  for (const place of Array.isArray(data.places) ? data.places : []) {
+    if (!place || typeof place.memberId !== 'string' || place.memberId === op.viewerId || seen.has(`p:${place.memberId}`)) continue;
+    seen.add(`p:${place.memberId}`);
+    await post({
+      kind: 'use',
+      memberId: place.memberId,
+      actor: op.viewerId,
+      categories: ['location'],
+      at: Date.now(),
+    });
+  }
+  for (const trail of Array.isArray(data.trails) ? data.trails : []) {
+    if (!trail || typeof trail.memberId !== 'string' || trail.memberId === op.viewerId || seen.has(`t:${trail.memberId}`)) continue;
+    seen.add(`t:${trail.memberId}`);
+    await post({
+      kind: 'use',
+      memberId: trail.memberId,
+      actor: op.viewerId,
+      categories: ['history'],
+      at: Date.now(),
+    });
+  }
+}
+
+async function purgeDisclosureLedger(env) {
+  if (!env?.FAMILY_ACCOUNT) return;
+  const accounts = env.FAMILY_ACCOUNT.get(env.FAMILY_ACCOUNT.idFromName('umap-account-book'));
+  await accounts.fetch('https://account.internal/op', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ op: { kind: 'account-disclosure-purge' } }),
+  });
+}
+
 export default {
+  async scheduled(_event, env, ctx) {
+    ctx.waitUntil(purgeDisclosureLedger(env).catch(() => undefined));
+  },
   async fetch(request, env) {
     if (request.method === 'OPTIONS') return withCors(new Response(null, { status: 204 }));
     const op = await parseOperation(request);
@@ -257,6 +335,11 @@ export default {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(op),
     });
+    if (op.kind === 'place' || op.kind === 'trail' || op.kind === 'family' || op.kind === 'get') {
+      const data = await response.json();
+      await noteHandling(env, op, data).catch(() => undefined);
+      return withCors(Response.json(data, { status: response.status }));
+    }
     if (op.kind !== 'alert' && op.kind !== 'chat') return withCors(response);
     const data = await response.json();
     await deliverAlert(env, stub, data);
