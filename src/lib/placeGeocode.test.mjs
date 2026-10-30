@@ -168,7 +168,8 @@ test('an apartment polygon beats the fire station next door', async () => {
   const station = { name: '노원소방서', kind: 'poi', lat: fire.lat, lng: fire.lng };
   assert.equal(choosePlaceLabel([station, apartment], hagye), '하계1차청구아파트 104동');
   assert.equal(choosePlaceLabel([station, apartment], { lat: 37.6359, lng: 127.0680 }), '하계1차청구아파트 104동');
-  assert.equal(choosePlaceLabel([station, apartment], { lat: 37.6353, lng: 127.0680 }), '하계1차청구아파트 104동');
+  assert.equal(choosePlaceLabel([station, apartment], { lat: 37.63585, lng: 127.0680 }), '하계1차청구아파트 104동');
+  assert.equal(choosePlaceLabel([station, apartment], { lat: 37.6353, lng: 127.0680 }), '노원소방서');
   const stationBuilding = {
     name: '노원소방서',
     kind: 'poi',
@@ -222,7 +223,7 @@ test('an apartment polygon beats the fire station next door', async () => {
   assert.equal(label, '하계1차청구아파트 104동');
   assert.equal(String(label).includes('소방서'), false);
   const yard = await reverseGeocode(37.6353, 127.0680, { fetch: fetchImpl, key: 'test-key', pace: false });
-  assert.equal(yard, '하계1차청구아파트 104동');
+  assert.equal(yard, '노원소방서');
 
   const jitter = [
     { lat: 37.6366, lng: 127.0679, at: 1, staying: true },

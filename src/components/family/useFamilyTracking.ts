@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { hasLocation, haversineMeters } from '../../lib/geo';
 import { isSelfEchoPlace } from '../../lib/peerFamily.mjs';
 import { placePriorName } from '../../lib/placeAlias.mjs';
-import { buildDayRecord, liveMotionLabel, stayLabelPoint } from '../../lib/tracking.mjs';
+import { buildDayRecord, liveMotionLabel } from '../../lib/tracking.mjs';
 import type { AcceptedFix } from '../../lib/tracking.mjs';
 import { readSharedPlaces, publishSharedPlace, subscribeSharedPlaces, type SharedPlace } from '../../services/familyShare';
 import { familyEndpointAvailable, familySyncUrl, publishProfileRemote, publishTrailRemote, splitSyncToken, startManagedFamilySync, syncTokenFor } from '../../services/familySync';
@@ -581,11 +581,10 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
         }, 60_000);
         return;
       }
-      const snapped = stayLabelPoint(current.tracks[pending.id], { lat: pending.lat, lng: pending.lng }, pending.moving)
-        || { lat: pending.lat, lng: pending.lng };
-      const key = placeGridKey(snapped.lat, snapped.lng);
+      const here = { lat: pending.lat, lng: pending.lng };
+      const key = placeGridKey(here.lat, here.lng);
       const id = pending.id;
-      if (home && id === 'self' && haversineMeters({ lat: snapped.lat, lng: snapped.lng }, home) <= home.radiusM) {
+      if (home && id === 'self' && haversineMeters(here, home) <= home.radiusM) {
         placeKeys.current[id] = key;
         const label = home.label || '우리 집';
         if (pending.place !== label) familyRef.current.setMemberPlace(id, label);
@@ -603,12 +602,12 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
         if (cleanPlace(pending.place) !== short) familyRef.current.setMemberPlace(id, short);
         else step();
       };
-      const cached = cachedAddress(snapped.lat, snapped.lng);
+      const cached = cachedAddress(here.lat, here.lng);
       if (cached) {
         apply(cached);
         return;
       }
-      void reverseGeocodeCached(snapped.lat, snapped.lng).then(apply);
+      void reverseGeocodeCached(here.lat, here.lng).then(apply);
     };
     step();
     return () => {
