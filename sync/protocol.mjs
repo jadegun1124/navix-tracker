@@ -944,8 +944,11 @@ export async function handleSyncRequest(store, request, extras = {}) {
     const { createMemoryAccountStore, handleAccountOperation } = await import('./account.mjs');
     const accounts = extras.accounts || extras.accountStore || createMemoryAccountStore();
     return handleAccountOperation(accounts, op, {
-      clientId: extras.clientId || extras.googleClientId || '',
-      fetchCerts: extras.fetchCerts,
+      fetchKakaoUser: extras.fetchKakaoUser,
+      fetchNaverUser: extras.fetchNaverUser,
+      exchangeNaverCode: extras.exchangeNaverCode,
+      naverClientId: extras.naverClientId || '',
+      naverClientSecret: extras.naverClientSecret || '',
       now: extras.now,
     });
   }

@@ -1,8 +1,8 @@
-// Server-side Kinnex account. Google subject and recovery hash look up the
-// same member id, room keys, and a 30-day journey/visit backup.
-// Google subject is never the family member id.
-
-import { verifyGoogleIdToken, googleWebClientId, GOOGLE_SETUP_MESSAGE, GOOGLE_VERIFY_MESSAGE } from '../src/lib/googleAuth.mjs';
+// Server-side Kinnex account. Kakao user id, Naver id, and recovery hash
+// look up the same member id, room keys, and a 30-day journey/visit backup.
+// An old googleSub field is kept on the record and ignored. Provider ids
+// are never the family member id.
+import { allowedNaverRedirect } from '../src/lib/naverAuth.mjs';
 
 const MEMBER_ID = /^local-[a-z0-9]{3,64}$/;
 const KEY_PART = /^[A-Za-z0-9_-]{16,64}$/;
@@ -18,8 +18,10 @@ const MAX_VISITS = 40;
 const HISTORY_MS = 30 * 24 * 60 * 60 * 1000;
 const EARLIEST_AT = Date.UTC(2024, 0, 1);
 
-export const ACCOUNT_SETUP_MESSAGE = GOOGLE_SETUP_MESSAGE;
-export const ACCOUNT_VERIFY_MESSAGE = GOOGLE_VERIFY_MESSAGE;
+export const ACCOUNT_SETUP_MESSAGE = '계정 확인을 마치지 못했습니다. 이 상태로 시작하지 않습니다.';
+export const NAVER_SECRET_MESSAGE = '네이버 로그인 확인에 필요한 서버 비밀 NAVER_CLIENT_SECRET이 없습니다. 이 상태로 로그인하지 않습니다.';
+export const ACCOUNT_LINK_CONFLICT_MESSAGE = '이 로그인은 다른 사람에 이미 연결되어 있습니다. 이 폰의 지도를 바꾸지 않았습니다.';
+export const ACCOUNT_VERIFY_MESSAGE = '계정 확인에 실패했습니다. 다시 로그인해 주세요.';
 export const ACCOUNT_RECOVER_MESSAGE = '복구 코드를 확인하지 못했습니다. 코드를 다시 입력해 주세요.';
 export const ACCOUNT_MISSING_MESSAGE = '저장된 계정을 찾지 못했습니다.';
 
@@ -310,6 +312,8 @@ export function publicAccount(record, extras = {}) {
     visits: record.visits || [],
     recoveryCode: formatRecoveryCode(record.recoveryCode),
     googleLinked: typeof record.googleSub === 'string' && record.googleSub.length > 0,
+    kakaoLinked: typeof record.kakaoId === 'string' && record.kakaoId.length > 0,
+    naverLinked: typeof record.naverId === 'string' && record.naverId.length > 0,
     ...(extras.accountKey ? { accountKey: extras.accountKey } : {}),
     ...(extras.created ? { created: true } : {}),
   };
@@ -326,6 +330,8 @@ function accountKeys(record) {
     session: `session:${record.sessionHash}`,
     recovery: `recovery:${record.recoveryHash}`,
     google: record.googleSub ? `google:${record.googleSub}` : '',
+    kakao: record.kakaoId ? `kakao:${record.kakaoId}` : '',
+    naver: record.naverId ? `naver:${record.naverId}` : '',
   };
 }
 
@@ -357,8 +363,16 @@ async function writeRecord(store, record, previous = null) {
   await store.put(keys.session, record.id);
   await store.put(keys.recovery, record.id);
   if (keys.google) await store.put(keys.google, record.id);
+  if (keys.kakao) await store.put(keys.kakao, record.id);
+  if (keys.naver) await store.put(keys.naver, record.id);
   if (previous?.googleSub && previous.googleSub !== record.googleSub) {
     await store.delete(`google:${previous.googleSub}`);
+  }
+  if (previous?.kakaoId && previous.kakaoId !== record.kakaoId) {
+    await store.delete(`kakao:${previous.kakaoId}`);
+  }
+  if (previous?.naverId && previous.naverId !== record.naverId) {
+    await store.delete(`naver:${previous.naverId}`);
   }
   if (previous?.sessionHash && previous.sessionHash !== record.sessionHash) {
     await store.delete(`session:${previous.sessionHash}`);
@@ -383,9 +397,14 @@ async function findByRecovery(store, code) {
   return readRecord(store, await store.get(`recovery:${hash}`));
 }
 
-async function findByGoogle(store, sub) {
-  if (typeof sub !== 'string' || !/^[0-9]{5,}$/.test(sub)) return null;
-  return readRecord(store, await store.get(`google:${sub}`));
+async function findByKakao(store, id) {
+  if (typeof id !== 'string' || !/^[0-9]{3,20}$/.test(id)) return null;
+  return readRecord(store, await store.get(`kakao:${id}`));
+}
+
+async function findByNaver(store, id) {
+  if (typeof id !== 'string' || !/^[A-Za-z0-9_-]{4,64}$/.test(id)) return null;
+  return readRecord(store, await store.get(`naver:${id}`));
 }
 
 async function findByMember(store, memberId) {
@@ -408,12 +427,11 @@ function mintRoomCode() {
   return String(10000 + ((bytes[0] << 8) | bytes[1]) % 90000);
 }
 
-function snapshotFromGoogleClaims(claims) {
-  const name = cleanName(claims && claims.name) || '가족';
+function snapshotFromDisplayName(name) {
   return {
     memberId: mintLocalMemberId(),
     profileKey: randomKey(16),
-    profile: { name, photo: null },
+    profile: { name: cleanName(name) || '가족', photo: null },
     room: { code: mintRoomCode(), writeKey: randomKey(16), readKey: randomKey(16) },
     guardians: [],
     home: null,
@@ -426,7 +444,7 @@ function sameProfileKey(record, snapshot) {
   return !!record && !!snapshot && record.profileKey === snapshot.profileKey;
 }
 
-async function mintRecord(snapshot, now, googleSub = '') {
+async function mintRecord(snapshot, now, providers = {}) {
   const recoveryCode = mintRecoveryCode();
   const accountKey = mintAccountKey();
   const record = {
@@ -439,7 +457,9 @@ async function mintRecord(snapshot, now, googleSub = '') {
     home: snapshot.home,
     journeys: snapshot.journeys,
     visits: snapshot.visits,
-    googleSub: googleSub || '',
+    googleSub: providers.googleSub || '',
+    kakaoId: providers.kakaoId || '',
+    naverId: providers.naverId || '',
     recoveryCode,
     recoveryHash: await recoveryHash(recoveryCode),
     sessionHash: await accountKeyHash(accountKey),
@@ -516,41 +536,206 @@ export async function recoverAccount(store, code) {
   return { record: next, accountKey };
 }
 
-export async function linkGoogleAccount(store, { idToken, snapshot, accountKey }, options = {}) {
-  const clientId = googleWebClientId(options.clientId);
-  if (!clientId) return { error: 'setup' };
-  const verified = await verifyGoogleIdToken(idToken, clientId, {
-    now: options.now,
-    fetchCerts: options.fetchCerts,
+function bearerToken(value) {
+  const token = typeof value === 'string' ? value.trim() : '';
+  if (!token || token.length > 2048 || /\s/.test(token)) return '';
+  return token;
+}
+
+function kakaoUserId(value) {
+  const id = value == null ? '' : String(value);
+  return /^[0-9]{3,20}$/.test(id) ? id : '';
+}
+
+function naverUserId(value) {
+  const id = typeof value === 'string' ? value.trim() : '';
+  return /^[A-Za-z0-9_-]{4,64}$/.test(id) ? id : '';
+}
+
+function naverClientId(value) {
+  const id = typeof value === 'string' ? value.trim() : '';
+  if (!id || /your-|placeholder|example/i.test(id)) return '';
+  if (id.length < 8 || id.length > 64) return '';
+  return id;
+}
+
+function naverClientSecret(value) {
+  const secret = typeof value === 'string' ? value.trim() : '';
+  if (!secret || /your-|placeholder|example/i.test(secret)) return '';
+  if (secret.length < 8 || secret.length > 128) return '';
+  return secret;
+}
+
+async function defaultFetchKakaoUser(accessToken) {
+  const headers = { Authorization: `Bearer ${accessToken}` };
+  const info = await fetch('https://kapi.kakao.com/v1/user/access_token_info', { headers });
+  if (!info.ok) return null;
+  const me = await fetch('https://kapi.kakao.com/v2/user/me', { headers });
+  if (!me.ok) return null;
+  return me.json();
+}
+
+async function defaultFetchNaverUser(accessToken) {
+  const response = await fetch('https://openapi.naver.com/v1/nid/me', {
+    headers: { Authorization: `Bearer ${accessToken}` },
   });
-  if (!verified.ok) return { error: verified.message === GOOGLE_SETUP_MESSAGE ? 'setup' : 'token' };
-  const sub = verified.claims.sub;
-  const existing = await findByGoogle(store, sub);
+  if (!response.ok) return null;
+  return response.json();
+}
+
+async function defaultExchangeNaverCode({ code, state, clientId, clientSecret, redirectUri }) {
+  const body = new URLSearchParams({
+    grant_type: 'authorization_code',
+    client_id: clientId,
+    client_secret: clientSecret,
+    code,
+    state,
+    redirect_uri: redirectUri,
+  });
+  const response = await fetch('https://nid.naver.com/oauth2.0/token', {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded;charset=utf-8' },
+    body,
+  });
+  if (!response.ok) return null;
+  return response.json();
+}
+
+export async function verifyKakaoAccessToken(accessToken, options = {}) {
+  const token = bearerToken(accessToken);
+  if (!token) return { ok: false };
+  const fetchUser = typeof options.fetchKakaoUser === 'function' ? options.fetchKakaoUser : defaultFetchKakaoUser;
+  const profile = await fetchUser(token).catch(() => null);
+  const id = kakaoUserId(profile && profile.id);
+  if (!id) return { ok: false };
+  const name = cleanName(
+    profile?.kakao_account?.profile?.nickname
+    || profile?.properties?.nickname
+    || '',
+  );
+  return { ok: true, id, name };
+}
+
+export async function verifyNaverAccessToken(accessToken, options = {}) {
+  const token = bearerToken(accessToken);
+  if (!token) return { ok: false };
+  const fetchUser = typeof options.fetchNaverUser === 'function' ? options.fetchNaverUser : defaultFetchNaverUser;
+  const profile = await fetchUser(token).catch(() => null);
+  const response = profile && profile.response;
+  const id = naverUserId(response && response.id);
+  if (!id || profile.resultcode !== '00') return { ok: false };
+  const name = cleanName(response.nickname || response.name || '');
+  return { ok: true, id, name };
+}
+
+export async function exchangeNaverAuthCode({ code, state, redirectUri, clientId, clientSecret, exchangeNaverCode }) {
+  const authCode = typeof code === 'string' ? code.trim() : '';
+  const csrf = typeof state === 'string' ? state.trim() : '';
+  const redirect = allowedNaverRedirect(redirectUri);
+  const id = naverClientId(clientId);
+  const secret = naverClientSecret(clientSecret);
+  if (!secret) return { error: 'naver-secret' };
+  if (!id) return { error: 'setup' };
+  if (!authCode || authCode.length > 256 || !csrf || csrf.length > 128 || !redirect) return { error: 'token' };
+  const exchange = typeof exchangeNaverCode === 'function' ? exchangeNaverCode : defaultExchangeNaverCode;
+  const issued = await exchange({
+    code: authCode,
+    state: csrf,
+    redirectUri: redirect,
+    clientId: id,
+    clientSecret: secret,
+  }).catch(() => null);
+  const access = bearerToken(issued && issued.access_token);
+  if (!access) return { error: 'token' };
+  return { accessToken: access };
+}
+
+async function attachLinkedProvider(store, {
+  existing,
+  currentKey,
+  snapshot,
+  displayName,
+  field,
+  providerId,
+  now,
+  mode,
+}) {
+  const linking = mode === 'link';
+  const current = currentKey ? await findBySession(store, currentKey) : null;
+  if (existing && linking) {
+    if (!current || current.id !== existing.id) return { error: 'member' };
+    const next = { ...current, [field]: providerId, updatedAt: now };
+    await writeRecord(store, next, current);
+    return { record: next, accountKey: currentKey, linked: true };
+  }
   if (existing) {
     const nextKey = mintAccountKey();
-    const next = { ...existing, sessionHash: await accountKeyHash(nextKey), updatedAt: options.now || Date.now() };
+    const next = { ...existing, sessionHash: await accountKeyHash(nextKey), updatedAt: now };
     await writeRecord(store, next, existing);
     return { record: next, accountKey: nextKey, restored: true };
   }
-  if (accountKey) {
-    const current = await findBySession(store, accountKey);
-    if (current) {
-      const next = { ...current, googleSub: sub, updatedAt: options.now || Date.now() };
-      await writeRecord(store, next, current);
-      return { record: next, accountKey, linked: true };
-    }
+  if (current) {
+    const next = { ...current, [field]: providerId, updatedAt: now };
+    await writeRecord(store, next, current);
+    return { record: next, accountKey: currentKey, linked: true };
   }
-  const seed = snapshot || snapshotFromGoogleClaims(verified.claims);
-  const minted = await mintRecord(seed, options.now || Date.now(), sub);
+  if (linking && !snapshot) return { error: 'account' };
+  const seed = snapshot || snapshotFromDisplayName(displayName);
+  const minted = await mintRecord(seed, now, { [field]: providerId });
   await writeRecord(store, minted.record);
   return { record: minted.record, accountKey: minted.accountKey, created: true };
 }
 
+export async function linkKakaoAccount(store, { accessToken, snapshot, accountKey, mode }, options = {}) {
+  const verified = await verifyKakaoAccessToken(accessToken, options);
+  if (!verified.ok) return { error: 'token' };
+  return attachLinkedProvider(store, {
+    existing: await findByKakao(store, verified.id),
+    currentKey: accountKey,
+    snapshot,
+    displayName: verified.name,
+    field: 'kakaoId',
+    providerId: verified.id,
+    now: options.now || Date.now(),
+    mode,
+  });
+}
+
+export async function linkNaverAccount(store, { accessToken, code, state, redirectUri, snapshot, accountKey, mode }, options = {}) {
+  let token = bearerToken(accessToken);
+  if (!token && (code || state)) {
+    const exchanged = await exchangeNaverAuthCode({
+      code,
+      state,
+      redirectUri,
+      clientId: options.naverClientId,
+      clientSecret: options.naverClientSecret,
+      exchangeNaverCode: options.exchangeNaverCode,
+    });
+    if (exchanged.error) return exchanged;
+    token = exchanged.accessToken;
+  }
+  if (!token) return { error: 'token' };
+  const verified = await verifyNaverAccessToken(token, options);
+  if (!verified.ok) return { error: 'token' };
+  return attachLinkedProvider(store, {
+    existing: await findByNaver(store, verified.id),
+    currentKey: accountKey,
+    snapshot,
+    displayName: verified.name,
+    field: 'naverId',
+    providerId: verified.id,
+    now: options.now || Date.now(),
+    mode,
+  });
+}
+
 export function accountError(code) {
+  if (code === 'naver-secret') return json({ error: 'setup', message: NAVER_SECRET_MESSAGE }, 503);
   if (code === 'setup') return json({ error: 'setup', message: ACCOUNT_SETUP_MESSAGE }, 503);
   if (code === 'token') return json({ error: 'token', message: ACCOUNT_VERIFY_MESSAGE }, 401);
   if (code === 'recovery') return json({ error: 'recovery', message: ACCOUNT_RECOVER_MESSAGE }, 403);
-  if (code === 'member') return json({ error: 'member' }, 409);
+  if (code === 'member') return json({ error: 'member', message: ACCOUNT_LINK_CONFLICT_MESSAGE }, 409);
   if (code === 'snapshot' || code === 'name' || code === 'room' || code === 'profile-key' || code === 'photo') {
     return json({ error: code }, 400);
   }
@@ -595,14 +780,34 @@ export async function parseAccountOperation(request) {
     return { kind: 'account-put', accountKey, snapshot: cleaned.snapshot };
   }
 
-  if (request.method === 'POST' && path === '/v1/account/google') {
+  if (path === '/v1/account/google') {
+    return json({ error: 'method' }, 404);
+  }
+
+  if (request.method === 'POST' && path === '/v1/account/kakao') {
     const cleaned = value.snapshot ? cleanAccountSnapshot(value.snapshot) : { snapshot: null };
     if (value.snapshot && cleaned.error) return json({ error: cleaned.error }, 400);
     return {
-      kind: 'account-google',
-      idToken: typeof value.idToken === 'string' ? value.idToken : '',
+      kind: 'account-kakao',
+      accessToken: typeof value.accessToken === 'string' ? value.accessToken : '',
       snapshot: cleaned.snapshot,
       accountKey: typeof value.accountKey === 'string' ? value.accountKey : accountKey,
+      mode: value.mode === 'link' ? 'link' : 'login',
+    };
+  }
+
+  if (request.method === 'POST' && path === '/v1/account/naver') {
+    const cleaned = value.snapshot ? cleanAccountSnapshot(value.snapshot) : { snapshot: null };
+    if (value.snapshot && cleaned.error) return json({ error: cleaned.error }, 400);
+    return {
+      kind: 'account-naver',
+      accessToken: typeof value.accessToken === 'string' ? value.accessToken : '',
+      code: typeof value.code === 'string' ? value.code : '',
+      state: typeof value.state === 'string' ? value.state : '',
+      redirectUri: typeof value.redirectUri === 'string' ? value.redirectUri : '',
+      snapshot: cleaned.snapshot,
+      accountKey: typeof value.accountKey === 'string' ? value.accountKey : accountKey,
+      mode: value.mode === 'link' ? 'link' : 'login',
     };
   }
 
@@ -629,8 +834,17 @@ export async function handleAccountOperation(store, op, options = {}) {
     if (result.error) return accountError(result.error);
     return json({ ok: true, account: publicAccount(result.record, { accountKey: result.accountKey }) });
   }
-  if (op.kind === 'account-google') {
-    const result = await linkGoogleAccount(store, op, options);
+  if (op.kind === 'account-kakao') {
+    const result = await linkKakaoAccount(store, op, options);
+    if (result.error) return accountError(result.error);
+    return json({
+      ok: true,
+      restored: result.restored === true,
+      account: publicAccount(result.record, { accountKey: result.accountKey, created: result.created === true }),
+    });
+  }
+  if (op.kind === 'account-naver') {
+    const result = await linkNaverAccount(store, op, options);
     if (result.error) return accountError(result.error);
     return json({
       ok: true,

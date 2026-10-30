@@ -10,12 +10,12 @@
 | :--- | :--- | :--- |
 | 회사 홈 | GitHub Pages | https://jadegun1124.github.io/kinnex/ |
 | 앱 화면 미리보기 | 같은 Pages의 `?app=1` | https://jadegun1124.github.io/kinnex/?app=1 |
-| 안드로이드 앱 | GitHub Releases APK v1.32.0 | https://github.com/jadegun1124/umap/releases/download/v1.32.0/kinnex-v1.32.0.apk |
-| 릴리스 페이지 | GitHub Releases | https://github.com/jadegun1124/umap/releases/tag/v1.32.0 |
+| 안드로이드 앱 | GitHub Releases APK v1.33.0 | https://github.com/jadegun1124/umap/releases/download/v1.33.0/kinnex-v1.33.0.apk |
+| 릴리스 페이지 | GitHub Releases | https://github.com/jadegun1124/umap/releases/tag/v1.33.0 |
 
 Google Play, App Store, TestFlight에는 올리지 않았습니다. iOS는 아이콘 에셋만 있고 설치 파일은 없습니다.
 
-`main`에 푸시하면 GitHub Actions가 회사 홈을 Pages에 배포하고, 같은 커밋으로 디버그 APK를 만들어 GitHub Release `v1.32.0`의 `kinnex-v1.32.0.apk`를 갱신합니다. 이전 빌드는 `v1.31.1`, `v1.31.0`, `v1.30.0`, `v1.29.2`, `v1.29.1`, `v1.29.0`, `v1.27.0`, `v1.26.0`, `v1.25.0`, `v1.24.0`, `v1.23.0`, `v1.22.0`, `v1.21.0`, `v1.20.0`, `v1.19.0`, `v1.18.0`, `v1.17.0`, `v1.16.0`, `v1.15.0`, `v1.14.0`, `v1.13.0`, `v1.12.0`, `v1.11.0`, `v1.10.0`, `v1.9.0`, `v1.8.0`, `v1.7.0`, `v1.6.0`, `v1.5.0`, `v1.4.0`, `v1.3.0`, `v1.2.0`, `v1.1.0`, `v1.0.0`에 남아 있습니다.
+`main`에 푸시하면 GitHub Actions가 회사 홈을 Pages에 배포하고, 같은 커밋으로 디버그 APK를 만들어 GitHub Release `v1.33.0`의 `kinnex-v1.33.0.apk`를 갱신합니다. 이전 빌드는 `v1.32.0`, `v1.31.1`, `v1.31.0`, `v1.30.0`, `v1.29.2`, `v1.29.1`, `v1.29.0`, `v1.27.0`, `v1.26.0`, `v1.25.0`, `v1.24.0`, `v1.23.0`, `v1.22.0`, `v1.21.0`, `v1.20.0`, `v1.19.0`, `v1.18.0`, `v1.17.0`, `v1.16.0`, `v1.15.0`, `v1.14.0`, `v1.13.0`, `v1.12.0`, `v1.11.0`, `v1.10.0`, `v1.9.0`, `v1.8.0`, `v1.7.0`, `v1.6.0`, `v1.5.0`, `v1.4.0`, `v1.3.0`, `v1.2.0`, `v1.1.0`, `v1.0.0`에 남아 있습니다.
 
 ## 화면
 
@@ -57,7 +57,7 @@ VITE_VWORLD_API_KEY=
 VITE_FAMILY_SYNC_URL=
 ```
 
-- 이름: 가족 지도에 보일 표시 이름과 프로필 사진을 이 기기에서 정합니다. 가족 서버에 연결되면 같은 초대의 다른 폰에도 보입니다. Google 로그인 또는 복구 코드로 다시 설치해도 같은 사람과 가족 방을 불러옵니다. 전화번호 본인 확인은 없습니다.
+- 이름: 가족 지도에 보일 표시 이름과 프로필 사진을 이 기기에서 정합니다. 가족 서버에 연결되면 같은 초대의 다른 폰에도 보입니다. 카카오·네이버 또는 복구 코드로 다시 설치해도 같은 사람과 가족 방을 불러옵니다. 전화번호 본인 확인은 없습니다.
 - 지도: 국토교통부 [VWorld](https://www.vworld.kr/) 2D Base 한 종류입니다. 위성, CARTO, OpenStreetMap 전환은 없습니다.
   - `https://api.vworld.kr/req/wmts/1.0.0/{API_KEY}/Base/{z}/{y}/{x}.png`
   - 키는 `import.meta.env.VITE_VWORLD_API_KEY`만 읽습니다. 빌드 시점에 JS 안에 들어갑니다.
@@ -94,24 +94,39 @@ npm run dev
 
 ## 안드로이드 APK
 
-받는 곳: https://github.com/jadegun1124/umap/releases/download/v1.32.0/kinnex-v1.32.0.apk
+받는 곳: https://github.com/jadegun1124/umap/releases/download/v1.33.0/kinnex-v1.33.0.apk
 
-`main` 푸시마다 `Build Android APK (Kinnex)` 워크플로가 웹을 빌드하고 `dist` 를 안드로이드 에셋으로 복사한 뒤 `assembleDebug` 로 APK를 만듭니다. 결과 파일은 GitHub Release `v1.32.0`에 올립니다. 앱 `versionName`은 `1.32.0`, `versionCode`는 36입니다. Play 스토어 트랙은 없습니다.
+`main` 푸시마다 `Build Android APK (Kinnex)` 워크플로가 웹을 빌드하고 `dist` 를 안드로이드 에셋으로 복사한 뒤 `assembleRelease` 로 APK를 만듭니다. 서명은 `android/app/umap-sideload.keystore` 이고 SHA-1은 `00:57:37:35:22:70:B8:4C:7F:B6:01:61:29:BD:A9:A3:CD:09:35:0C` 입니다. 결과 파일은 GitHub Release `v1.33.0`에 올립니다. 앱 `versionName`은 `1.33.0`, `versionCode`는 37입니다. Play 스토어 트랙은 없습니다.
 
 1.16.0까지 그 빌드는 러너마다 새로 만든 디버그 키로 서명했습니다. 패키지가 `kr.co.umap.tracker`여도 인증서가 다르면 안드로이드는 덮어쓰기를 거절해서, 지우고 다시 깔아야 했습니다. 1.17.0부터 debug와 release는 저장소의 `android/app/umap-sideload.keystore`(별칭 `umap-sideload`)로 서명합니다. 비밀번호는 `android/app/build.gradle`에 있습니다. 인증서 SHA-256은 `4A:15:08:0F:72:C3:87:D1:E8:50:A8:DE:5A:89:34:9A:B4:1A:48:0D:C5:97:71:AB:22:9C:85:44:C8:61:7A:6C`입니다. 이 키는 가족 폰에 직접 설치하는 사이드로드 전용이고, Play 앱 서명 키가 아닙니다.
 
 업데이트는 새 APK를 받아 기존 앱 위에 설치합니다. 지우지 않으면 이 폰의 데이터가 남습니다. 예전 디버그 키로 깔린 1.16.0 이하는 서명이 달라 한 번은 지운 뒤 1.17.0 이상을 설치해야 합니다. 그 다음 빌드부터는 지우지 않고 이어서 업데이트됩니다.
 
-## Google 로그인
+## 계정 로그인
 
-가족 지도의 이름은 계속 이 기기의 표시 이름입니다. Google 로그인 또는 복구 코드는 다시 설치한 뒤 같은 구성원 id와 가족 방, 최근 30일 기록을 불러옵니다. 버튼만 누르고 통과하지 않습니다. Worker가 ID 토큰을 Google JWKS로 확인하고 `aud`는 웹 클라이언트 ID입니다. 클라이언트 ID가 없으면 버튼을 누르지 않고 설정 순서를 한국어로 보여줍니다.
+가족 지도의 이름은 계속 이 기기의 표시 이름입니다. 카카오·네이버 또는 복구 코드는 다시 설치한 뒤 같은 구성원 id와 가족 방, 최근 30일 기록을 불러옵니다. 여러 로그인을 한 계정에 연결할 수 있습니다. 버튼만 누르고 통과하지 않습니다. 해당 키가 없으면 그 버튼은 비활성으로 두고 한국어 설정 안내만 보여줍니다. Google 로그인은 쓰지 않습니다. 예전 계정 레코드에 google 필드가 있어도 Worker는 무시하고 깨지지 않습니다.
 
-1. [Google Cloud Console](https://console.cloud.google.com/apis/credentials) → 사용자 인증 정보 → OAuth 클라이언트 ID 만들기 → 애플리케이션 유형 **웹 애플리케이션**. 승인된 자바스크립트 원본은 `https://localhost`, `http://localhost:5173`, `https://jadegun1124.github.io`입니다.
-2. 같은 화면에서 OAuth 클라이언트 ID 만들기 → 애플리케이션 유형 **Android**. 패키지 이름 `kr.co.umap.tracker`. SHA-1은 `android/app/umap-sideload.keystore`(별칭 `umap-sideload`)의 `00:57:37:35:22:70:B8:4C:7F:B6:01:61:29:BD:A9:A3:CD:09:35:0C`입니다. SHA-256은 위 사이드로드 인증서와 같습니다.
-3. 웹 클라이언트 ID를 `VITE_GOOGLE_WEB_CLIENT_ID`에 넣습니다. 이 값은 공개 클라이언트 ID이고 시크릿이 아닙니다. 저장소에 커밋하지 않습니다. Pages와 APK 빌드는 Actions secret `VITE_GOOGLE_WEB_CLIENT_ID`를 읽습니다.
-4. Worker는 같은 웹 클라이언트 ID를 `npx wrangler secret put GOOGLE_WEB_CLIENT_ID`로 넣습니다. `aud`가 이 값과 같아야 토큰이 통과합니다.
+### 카카오 로그인
 
-Google subject는 구성원 ID가 되지 않습니다. 같은 계정 또는 복구 코드로 다시 들어오면 Worker에 저장된 `local-` ID와 방 키를 다시 씁니다.
+무료 카카오 로그인만 씁니다. Worker는 액세스 토큰을 `https://kapi.kakao.com/v1/user/access_token_info`와 `https://kapi.kakao.com/v2/user/me`로 확인하고, 카카오 사용자 id로 같은 계정을 찾습니다.
+
+1. [Kakao Developers](https://developers.kakao.com/) → 내 애플리케이션 추가 → **카카오 로그인** 활성화.
+2. 네이티브 앱 키 `b42233e0170711205fa75bbca06e98e9` 는 공개 값이라 앱에 들어 있습니다. 환경 변수 `VITE_KAKAO_NATIVE_APP_KEY` 또는 `KAKAO_NATIVE_APP_KEY`가 있으면 그 값이 우선입니다. 웹 로그인은 **JavaScript 키** `VITE_KAKAO_JAVASCRIPT_KEY`가 있을 때만 열립니다. 그 키는 아직 앱에 없습니다.
+3. 플랫폼 → Android. 패키지 이름 `kr.co.umap.tracker`. 키 해시 `AFc3NSJwuEx/tgFhKb2po80JNQw=` (사이드로드 SHA-1 `00:57:37:35:22:70:B8:4C:7F:B6:01:61:29:BD:A9:A3:CD:09:35:0C`의 Base64).
+4. 플랫폼 → Web. 사이트 도메인 `jadegun1124.github.io`. Redirect URI 스킴은 `kakao{네이티브앱키}://oauth` 입니다. 카카오 계정으로 로그인, 닉네임만 받으면 됩니다.
+
+### 네이버 로그인 (네아로)
+
+무료 네아로만 씁니다. 앱은 Client ID와 인가 코드만 보내고, Client Secret은 Worker에만 둡니다. Worker는 `https://nid.naver.com/oauth2.0/token`으로 코드를 바꾼 뒤 `https://openapi.naver.com/v1/nid/me`로 확인하고, 네이버 id로 같은 계정을 찾습니다.
+
+1. [Naver Developers](https://developers.naver.com/apps/#/register) → 애플리케이션 등록 → 사용 API **네아로(네이버 로그인)**.
+2. 로그인 오픈 API 서비스 환경 **Android**. 패키지 이름 `kr.co.umap.tracker`.
+3. 다운로드 URL `https://github.com/jadegun1124/umap/releases/download/v1.33.0/kinnex-v1.33.0.apk`.
+4. Callback URL은 `kinnex://naver` 와 `https://jadegun1124.github.io/kinnex/` 와 `http://localhost:5173/` 입니다.
+5. Client ID `dQCiRLIzbNkDG6ULiroD` 는 공개 값이라 앱과 Worker `NAVER_CLIENT_ID`에 들어 있습니다. `VITE_NAVER_CLIENT_ID`가 있으면 그 값이 우선입니다.
+6. Client Secret은 `npx wrangler secret put NAVER_CLIENT_SECRET`으로만 Worker에 넣습니다. 앱, 저장소, APK에 넣지 않습니다. 비밀이 없으면 Worker는 네이버 로그인을 거절하고 `NAVER_CLIENT_SECRET`이 없다고 알립니다.
+
+카카오 사용자 id와 네이버 id는 구성원 ID가 되지 않습니다. 같은 계정 또는 복구 코드로 다시 들어오면 Worker에 저장된 `local-` ID와 방 키를 다시 씁니다.
 
 ## 데이터
 
@@ -158,7 +173,7 @@ npx wrangler@4 deploy
 
 개인 대화는 `POST /v1/rooms/:code/chat` 과 `GET /v1/rooms/:code/chat?me=&with=` 입니다. `me`만 있으면 그 이름이 참여한 대화만 돌아옵니다. 방 조회와 `GET /family`에는 글을 넣지 않습니다. 이 경로가 있는 Worker를 다시 올려야 다른 폰과 글이 오갑니다. 예전 Worker면 글은 이 기기에만 남고, 화면에 그 사실을 알립니다.
 
-`sync/wrangler.toml`이 Durable Object `FamilyRoom`과 `FamilyAccount`를 만듭니다. 계정은 Google 주제 또는 복구 코드 해시로 구성원 id, 방 키, 최근 30일 여정·방문을 보관합니다. 무료 한도에서 관리자 화면 하나가 켜져 있으면 조회가 하루 약 3만 번을 넘습니다. 한도에 닿으면 `src/services/familySync.ts`의 폴링 간격을 늘립니다. Worker Google 확인은 `npx wrangler secret put GOOGLE_WEB_CLIENT_ID` 로 웹 클라이언트 ID를 넣습니다.
+`sync/wrangler.toml`이 Durable Object `FamilyRoom`과 `FamilyAccount`를 만듭니다. 계정은 카카오 사용자 id, 네이버 id, 또는 복구 코드 해시로 구성원 id, 방 키, 최근 30일 여정·방문을 보관합니다. 무료 한도에서 관리자 화면 하나가 켜져 있으면 조회가 하루 약 3만 번을 넘습니다. 한도에 닿으면 `src/services/familySync.ts`의 폴링 간격을 늘립니다. Worker의 공개 변수는 `NAVER_CLIENT_ID` 입니다. 비밀은 `npx wrangler secret put NAVER_CLIENT_SECRET` 만 해당합니다.
 
 ### 두 기기로 확인
 

@@ -2,10 +2,11 @@
 // same so the family room does not mint a second card.
 
 import { formatRecoveryCode, normalizeRecoveryCode } from '../../sync/account.mjs';
-import { clearGoogleAccount } from './googleAuth.mjs';
 
 export const ACCOUNT_KEY_STORAGE = 'umap_account_key_v1';
 export const RECOVERY_CODE_STORAGE = 'umap_recovery_code_v1';
+export const ACCOUNT_LINKS_STORAGE = 'umap_account_links_v1';
+const LEFTOVER_GOOGLE_ACCOUNT_KEY = 'umap_google_account_v1';
 
 const MEMBER_ID = /^local-[a-z0-9]{3,64}$/;
 const KEY_PART = /^[A-Za-z0-9_-]{16,64}$/;
@@ -33,10 +34,33 @@ export function writeStoredRecoveryCode(storage, code) {
   storage.setItem(RECOVERY_CODE_STORAGE, normalized);
 }
 
+export function readStoredAccountLinks(storage) {
+  const empty = { kakao: false, naver: false };
+  if (!storage) return empty;
+  try {
+    const parsed = JSON.parse(storage.getItem(ACCOUNT_LINKS_STORAGE) || '');
+    return {
+      kakao: parsed?.kakao === true,
+      naver: parsed?.naver === true,
+    };
+  } catch {
+    return empty;
+  }
+}
+
+function writeStoredAccountLinks(storage, links) {
+  if (!storage) return;
+  storage.setItem(ACCOUNT_LINKS_STORAGE, JSON.stringify({
+    kakao: links.kakao === true,
+    naver: links.naver === true,
+  }));
+}
+
 export function clearStoredAccount(storage) {
   if (!storage) return;
   storage.removeItem(ACCOUNT_KEY_STORAGE);
   storage.removeItem(RECOVERY_CODE_STORAGE);
+  storage.removeItem(ACCOUNT_LINKS_STORAGE);
 }
 
 let accountBackupEpoch = 0;
@@ -59,13 +83,28 @@ export function persistAccountSecretsIfCurrent(storage, account, epoch) {
 export function logoutLocalAccount(storage) {
   invalidateAccountBackup();
   clearStoredAccount(storage);
-  clearGoogleAccount(storage);
+  if (storage) storage.removeItem(LEFTOVER_GOOGLE_ACCOUNT_KEY);
 }
 
 export function rememberAccountSecrets(storage, account) {
   if (!account) return;
   if (account.accountKey) writeStoredAccountKey(storage, account.accountKey);
   if (account.recoveryCode) writeStoredRecoveryCode(storage, account.recoveryCode);
+  if (account.kakaoLinked === true || account.naverLinked === true) {
+    const current = readStoredAccountLinks(storage);
+    writeStoredAccountLinks(storage, {
+      kakao: current.kakao || account.kakaoLinked === true,
+      naver: current.naver || account.naverLinked === true,
+    });
+  }
+}
+
+export const ACCOUNT_LINKED_OTHER_MESSAGE = '이 로그인은 다른 사람에 이미 연결되어 있습니다. 이 폰의 지도를 바꾸지 않았습니다.';
+
+export function linkedAccountWouldSwitch(currentMemberId, account) {
+  const current = typeof currentMemberId === 'string' ? currentMemberId : '';
+  const next = account && typeof account.memberId === 'string' ? account.memberId : '';
+  return Boolean(current && next && current !== next);
 }
 
 function selfJourneys(journeys, memberId) {

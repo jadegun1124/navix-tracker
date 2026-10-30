@@ -37,6 +37,8 @@ export interface AccountSnapshot {
   recoveryCode?: string;
   accountKey?: string;
   googleLinked?: boolean;
+  kakaoLinked?: boolean;
+  naverLinked?: boolean;
 }
 
 function timeoutSignal(ms: number): AbortSignal {
@@ -94,13 +96,44 @@ export async function recoverFamilyAccount(code: string) {
   return readAccountBody(response);
 }
 
-export async function linkGoogleAccount(idToken: string, snapshot?: AccountSnapshot | null) {
-  const accountKey = readStoredAccountKey(typeof localStorage === 'undefined' ? null : localStorage);
-  const response = await request('/v1/account/google', {
+export async function linkKakaoAccount(
+  accessToken: string,
+  snapshot?: AccountSnapshot | null,
+  mode: 'login' | 'link' = 'login',
+) {
+  const accountKey = mode === 'link'
+    ? readStoredAccountKey(typeof localStorage === 'undefined' ? null : localStorage)
+    : '';
+  const response = await request('/v1/account/kakao', {
     method: 'POST',
     headers: accountHeaders(accountKey),
     body: JSON.stringify({
-      idToken,
+      accessToken,
+      mode,
+      ...(snapshot ? { snapshot } : {}),
+      ...(accountKey ? { accountKey } : {}),
+    }),
+  });
+  return readAccountBody(response);
+}
+
+export async function linkNaverAccount(
+  payload: { accessToken?: string; code?: string; state?: string; redirectUri?: string },
+  snapshot?: AccountSnapshot | null,
+  mode: 'login' | 'link' = 'login',
+) {
+  const accountKey = mode === 'link'
+    ? readStoredAccountKey(typeof localStorage === 'undefined' ? null : localStorage)
+    : '';
+  const response = await request('/v1/account/naver', {
+    method: 'POST',
+    headers: accountHeaders(accountKey),
+    body: JSON.stringify({
+      mode,
+      ...(payload.accessToken ? { accessToken: payload.accessToken } : {}),
+      ...(payload.code ? { code: payload.code } : {}),
+      ...(payload.state ? { state: payload.state } : {}),
+      ...(payload.redirectUri ? { redirectUri: payload.redirectUri } : {}),
       ...(snapshot ? { snapshot } : {}),
       ...(accountKey ? { accountKey } : {}),
     }),

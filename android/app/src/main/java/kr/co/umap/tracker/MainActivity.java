@@ -54,6 +54,12 @@ public class MainActivity extends BridgeActivity {
     }
 
     @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) UmapAuthPlugin.onMainWindowFocused();
+    }
+
+    @Override
     public void onPause() {
         resumed = false;
         super.onPause();
