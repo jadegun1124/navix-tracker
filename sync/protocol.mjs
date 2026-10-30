@@ -944,19 +944,13 @@ export function roomHasOtherMembers(room, memberId) {
   const places = room?.places && typeof room.places === 'object' ? Object.values(room.places) : [];
   for (const place of places) {
     if (!place || typeof place !== 'object') continue;
-    if (place.memberId !== id) return true;
+    if (typeof place.memberId === 'string' && place.memberId && place.memberId !== id) return true;
   }
   for (const bucket of ['profiles', 'owners', 'trails']) {
     const map = room?.[bucket];
     if (!map || typeof map !== 'object') continue;
     for (const key of Object.keys(map)) {
-      if (key !== id) return true;
-    }
-  }
-  const threads = room?.threads;
-  if (threads && typeof threads === 'object') {
-    for (const list of Object.values(threads)) {
-      if (Array.isArray(list) && list.length > 0) return true;
+      if (key && key !== id) return true;
     }
   }
   return false;

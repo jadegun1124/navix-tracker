@@ -3,6 +3,7 @@ import {
   RECOVERY_CODE_STORAGE,
   applyAccountSnapshot,
   currentAccountBackupEpoch,
+  interpretAccountDelete,
   invalidateAccountBackup,
   persistAccountSecretsIfCurrent,
   readStoredAccountKey,
@@ -103,12 +104,8 @@ export async function deleteFamilyAccount(accountKey = readStoredAccountKey(type
       method: 'DELETE',
       headers: accountHeaders(accountKey),
     });
-    if (response.status === 404) return { ok: true };
     const body = await response.json().catch(() => null) as { ok?: boolean; message?: string } | null;
-    if (!response.ok || !body || body.ok !== true) {
-      return { ok: false, message: body && typeof body.message === 'string' ? body.message : '계정을 지우지 못했습니다. 다시 시도해 주세요.' };
-    }
-    return { ok: true };
+    return interpretAccountDelete(response.status, body);
   } catch {
     return { ok: false, message: '계정을 지우지 못했습니다. 위치 서버에 다시 연결해 주세요.' };
   }

@@ -15,6 +15,7 @@ import {
   ACCOUNT_LINKS_STORAGE,
   RECOVERY_CODE_STORAGE,
   accountNeedsDisplayName,
+  interpretAccountDelete,
   applyAccountSnapshot,
   clearDeviceAccount,
   currentAccountBackupEpoch,
@@ -552,11 +553,13 @@ test('delete account removes the book, journeys, provider indexes, and room memb
   const guestToken = await memberRoomToken({ code: '10002', syncToken: guestSync, memberId: 'local-restore1' });
   await rooms.write(ownToken, {
     ...emptyRoom(),
-    places: {
-      self: { memberId: 'local-restore1', name: '엄마', sharing: true, audience: 'family', lat: 37.5, lng: 127, at: 1 },
-    },
     profiles: { 'local-restore1': { memberId: 'local-restore1', name: '엄마', at: 1 } },
     trails: { 'local-restore1': { memberId: 'local-restore1', journeys: [{ id: 'j-1' }] } },
+    places: {
+      self: { memberId: 'local-restore1', name: '엄마', sharing: true, audience: 'family', lat: 37.5, lng: 127, at: 1 },
+      legacy: { name: '옛이름', sharing: false, audience: 'family', lat: 37.5, lng: 127, at: 1 },
+    },
+    threads: { pair: [{ id: 'chat1', from: '엄마', to: '아빠', text: '안녕', at: 1 }] },
   });
   await rooms.write(guestToken, {
     ...emptyRoom(),
@@ -628,6 +631,9 @@ test('withdrawal clears this device storage', () => {
   assert.equal(storage.getItem('umap_family_v1'), null);
   assert.equal(storage.getItem('umap_dm_v1:1:a'), null);
   assert.equal(storage.getItem('other-app'), 'keep');
+  assert.deepEqual(interpretAccountDelete(200, { ok: true }), { ok: true });
+  assert.equal(interpretAccountDelete(404, { error: 'account' }).ok, false);
+  assert.match(interpretAccountDelete(404, { message: '저장된 계정을 찾지 못했습니다.' }).message, /다시 들어온 뒤 탈퇴/);
 });
 
 test('naver callback redirects code and state and rejects bad params', async () => {

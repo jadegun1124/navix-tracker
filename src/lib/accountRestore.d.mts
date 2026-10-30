@@ -44,6 +44,10 @@ export function clearDeviceAccount(
   localStorage: { length: number; key: (index: number) => string | null; removeItem: (key: string) => void } | null,
   sessionStorage: { length: number; key: (index: number) => string | null; removeItem: (key: string) => void } | null,
 ): void;
+export function interpretAccountDelete(
+  status: number,
+  body: { ok?: boolean; message?: string } | null | undefined,
+): { ok: boolean; message?: string };
 export function accountNeedsDisplayName(account: {
   created?: boolean;
   nameChosen?: boolean;
