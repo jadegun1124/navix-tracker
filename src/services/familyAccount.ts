@@ -108,8 +108,11 @@ export async function backupFamilyAccount(snapshot: AccountSnapshot, accountKey 
   return readAccountBody(response);
 }
 
+export type DisclosureCategory = 'name' | 'kakao' | 'naver' | 'family' | 'device' | 'account' | 'location' | 'history' | 'place' | 'other';
+
 export interface DisclosureRecord {
-  category: 'location' | 'history' | 'place';
+  categories: DisclosureCategory[];
+  detail?: string;
   rangeStart: number;
   rangeEnd: number;
   recipient: string;
@@ -122,13 +125,22 @@ function cleanDisclosure(value: unknown): DisclosureRecord | null {
   if (!value || typeof value !== 'object') return null;
   const row = value as Record<string, unknown>;
   if ('lat' in row || 'lng' in row || 'latitude' in row || 'longitude' in row) return null;
-  if (row.category !== 'location' && row.category !== 'history' && row.category !== 'place') return null;
+  if ('kakaoId' in row || 'naverId' in row || 'recoveryCode' in row || 'accountKey' in row) return null;
+  if (!Array.isArray(row.categories) || !row.categories.length) return null;
+  const categories: DisclosureCategory[] = [];
+  for (const item of row.categories) {
+    if (item !== 'name' && item !== 'kakao' && item !== 'naver' && item !== 'family' && item !== 'device' && item !== 'account' && item !== 'location' && item !== 'history' && item !== 'place' && item !== 'other') return null;
+    if (!categories.includes(item)) categories.push(item);
+  }
   if (typeof row.rangeStart !== 'number' || typeof row.rangeEnd !== 'number' || typeof row.at !== 'number') return null;
   if (!Number.isInteger(row.rangeStart) || !Number.isInteger(row.rangeEnd) || !Number.isInteger(row.at)) return null;
   if (typeof row.recipient !== 'string' || typeof row.purpose !== 'string' || typeof row.actor !== 'string') return null;
   if (!row.recipient || !row.purpose || !row.actor) return null;
+  const detail = typeof row.detail === 'string' && row.detail ? row.detail : '';
+  if (categories.includes('other') && !detail) return null;
   return {
-    category: row.category,
+    categories,
+    ...(detail ? { detail } : {}),
     rangeStart: row.rangeStart,
     rangeEnd: row.rangeEnd,
     recipient: row.recipient,

@@ -1,10 +1,13 @@
 // Third-party disclosure ledger. Family-room sync is not a disclosure.
-// The only way to hand an account's location, history, or place material to
-// someone outside that family is releaseToThirdParty. It appends one
-// hash-chained entry, then returns the checked payload. A failed check
-// writes nothing and returns no payload.
+// The only way to hand an account's personal data, location, history, or
+// place material to someone outside that family is releaseToThirdParty.
+// It appends one hash-chained entry, then returns the checked payload.
+// A failed check writes nothing and returns no payload.
 //
-// Entries store metadata only. Coordinates are rejected and never logged.
+// Each entry lists the exact categories in the payload. Display name,
+// Kakao id, Naver id, family membership, device info, and account or
+// recovery metadata are categories, not stored values. Coordinates are
+// rejected and never logged.
 // The chain lives at disclosure:${memberId}, outside acct:, so account
 // erasure does not delete it.
 //
@@ -17,7 +20,47 @@
 // notice, so withdrawal keeps only entries still inside that window.
 
 const MEMBER_ID = /^local-[a-z0-9]{3,64}$/;
-const CATEGORIES = new Set(['location', 'history', 'place']);
+export const DISCLOSURE_CATEGORIES = Object.freeze([
+  'name', 'kakao', 'naver', 'family', 'device', 'account', 'location', 'history', 'place', 'other',
+]);
+const CATEGORIES = new Set(DISCLOSURE_CATEGORIES);
+const OPAQUE = new Set(['location', 'history', 'place']);
+const STRUCTURAL = new Set(['profile', 'snapshot', 'data', 'items', 'sealed', 'seal', 'envelope', 'record']);
+const KEY_CATEGORY = {
+  name: 'name',
+  displayname: 'name',
+  nickname: 'name',
+  kakaoid: 'kakao',
+  kakaouserid: 'kakao',
+  naverid: 'naver',
+  naveruserid: 'naver',
+  guardians: 'family',
+  members: 'family',
+  room: 'family',
+  invitecode: 'family',
+  memberid: 'family',
+  membership: 'family',
+  device: 'device',
+  deviceid: 'device',
+  useragent: 'device',
+  installid: 'device',
+  platform: 'device',
+  recoverycode: 'account',
+  recoveryhash: 'account',
+  accountkey: 'account',
+  sessionhash: 'account',
+  profilekey: 'account',
+  vault: 'account',
+  journeys: 'history',
+  visits: 'history',
+  tracks: 'history',
+  history: 'history',
+  sealedhistory: 'history',
+  placename: 'place',
+  address: 'place',
+  placelabel: 'place',
+  location: 'location',
+};
 const EARLIEST_AT = Date.UTC(2024, 0, 1);
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MAX_RANGE_MS = 366 * DAY_MS;
@@ -86,9 +129,10 @@ function containsCoordinates(value, depth = 0) {
 
 function canonicalBody(entry) {
   return JSON.stringify({
-    v: 1,
+    v: 2,
     memberId: entry.memberId,
-    category: entry.category,
+    categories: entry.categories,
+    detail: entry.detail,
     rangeStart: entry.rangeStart,
     rangeEnd: entry.rangeEnd,
     recipient: entry.recipient,
@@ -106,9 +150,11 @@ async function hashEntry(entry) {
 
 function copyEntry(entry) {
   if (!entry || typeof entry !== 'object') return null;
+  const categories = Array.isArray(entry.categories) ? entry.categories.filter((item) => typeof item === 'string') : [];
   return {
     memberId: entry.memberId,
-    category: entry.category,
+    categories,
+    detail: typeof entry.detail === 'string' ? entry.detail : '',
     rangeStart: entry.rangeStart,
     rangeEnd: entry.rangeEnd,
     recipient: entry.recipient,
@@ -200,12 +246,81 @@ export async function purgeExpiredDisclosures(store, memberId, now = Date.now())
   return { kept: kept.length };
 }
 
+function normalizeCategories(value) {
+  if (!Array.isArray(value) || !value.length || value.length > DISCLOSURE_CATEGORIES.length) return null;
+  const seen = new Set();
+  for (const item of value) {
+    if (typeof item !== 'string' || !CATEGORIES.has(item) || seen.has(item)) return null;
+    seen.add(item);
+  }
+  return DISCLOSURE_CATEGORIES.filter((item) => seen.has(item));
+}
+
+function isSealShape(value) {
+  return !!value && typeof value === 'object' && !Array.isArray(value)
+    && value.v === 1 && value.alg === 'A256GCM'
+    && typeof value.kid === 'string' && typeof value.iv === 'string' && typeof value.ct === 'string';
+}
+
+function inspectPayload(value, state, depth = 0, parentKey = '') {
+  if (depth > 8 || value == null) return;
+  if (isSealShape(value)) {
+    const mapped = KEY_CATEGORY[parentKey.toLowerCase()];
+    if (OPAQUE.has(mapped)) state.detected.add(mapped);
+    else state.unlabeledSeal = true;
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) inspectPayload(item, state, depth + 1, parentKey);
+    return;
+  }
+  if (typeof value !== 'object') return;
+  for (const [key, child] of Object.entries(value)) {
+    const mapped = KEY_CATEGORY[key.toLowerCase()];
+    if (mapped) state.detected.add(mapped);
+    else if (!STRUCTURAL.has(key) && !isSealShape(child)) state.unknown.push(key);
+    inspectPayload(child, state, depth + 1, key);
+  }
+}
+
+function categoriesMatch(declared, payload) {
+  const state = { detected: new Set(), unknown: [], unlabeledSeal: false };
+  inspectPayload(payload, state);
+  if (state.unknown.length > 0) {
+    if (!declared.includes('other')) return false;
+  } else if (declared.includes('other')) return false;
+  for (const category of state.detected) {
+    if (!declared.includes(category)) return false;
+  }
+  for (const category of declared) {
+    if (category === 'other') continue;
+    if (state.detected.has(category)) continue;
+    if (state.unlabeledSeal && OPAQUE.has(category)) continue;
+    return false;
+  }
+  if (state.unlabeledSeal && !declared.some((category) => OPAQUE.has(category))) return false;
+  return true;
+}
+
+function cleanDetail(categories, value) {
+  if (!categories.includes('other')) return value == null || value === '' ? '' : null;
+  const detail = cleanText(value, 40);
+  if (!detail) return null;
+  const compact = detail.replace(/-/g, '');
+  if (/^[A-Z0-9]{12}$/.test(compact) || /^[A-Za-z0-9_-]{16,}$/.test(detail)) return null;
+  if (containsCoordinates(detail)) return null;
+  return detail;
+}
+
 function publicEntry(entry) {
-  if (!entry || !CATEGORIES.has(entry.category)) return null;
+  if (!entry || !Array.isArray(entry.categories) || !entry.categories.length) return null;
+  if (entry.categories.some((item) => !CATEGORIES.has(item))) return null;
   if (!Number.isInteger(entry.rangeStart) || !Number.isInteger(entry.rangeEnd) || !Number.isInteger(entry.at)) return null;
   if (typeof entry.recipient !== 'string' || typeof entry.purpose !== 'string' || typeof entry.actor !== 'string') return null;
+  if (entry.categories.includes('other') && (typeof entry.detail !== 'string' || !entry.detail)) return null;
   return {
-    category: entry.category,
+    categories: entry.categories,
+    ...(entry.detail ? { detail: entry.detail } : {}),
     rangeStart: entry.rangeStart,
     rangeEnd: entry.rangeEnd,
     recipient: entry.recipient,
@@ -243,7 +358,10 @@ export async function releaseToThirdParty(store, input = {}, now = Date.now()) {
   const memberId = typeof input.memberId === 'string' ? input.memberId : '';
   if (!MEMBER_ID.test(memberId)) return { error: 'member' };
   if (input.audience !== DISCLOSURE_AUDIENCE) return { error: 'audience' };
-  if (!CATEGORIES.has(input.category)) return { error: 'category' };
+  const categories = normalizeCategories(input.categories);
+  if (!categories) return { error: 'category' };
+  const detail = cleanDetail(categories, input.detail);
+  if (detail == null) return { error: 'category' };
   const recipient = cleanText(input.recipient, 80);
   if (!recipient || familyRecipient(recipient)) return { error: 'recipient' };
   const purpose = cleanText(input.purpose, 200);
@@ -257,6 +375,7 @@ export async function releaseToThirdParty(store, input = {}, now = Date.now()) {
   if (input.rangeEnd > at + DAY_MS || input.rangeEnd - input.rangeStart > MAX_RANGE_MS) return { error: 'range' };
   const checked = approvedPayload(input.payload);
   if (checked.error) return checked;
+  if (!categoriesMatch(categories, checked.released)) return { error: 'category' };
 
   await purgeExpiredDisclosures(store, memberId, now);
   const chain = await readChain(store, memberId);
@@ -266,7 +385,8 @@ export async function releaseToThirdParty(store, input = {}, now = Date.now()) {
   const prevHash = entries.length ? entries[entries.length - 1].hash : (chain ? chain.anchor : '');
   const entry = {
     memberId,
-    category: input.category,
+    categories,
+    detail,
     rangeStart: input.rangeStart,
     rangeEnd: input.rangeEnd,
     recipient,

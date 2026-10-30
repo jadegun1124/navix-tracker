@@ -37,7 +37,7 @@ function requestFor(memberId, extra = {}) {
   return {
     memberId,
     audience: 'third-party',
-    category: 'location',
+    categories: ['location'],
     rangeStart: RANGE_START,
     rangeEnd: RANGE_END,
     recipient: '개인정보 열람',
@@ -110,7 +110,7 @@ test('release appends a hash chain and refuses coordinates or family audience', 
   assert.equal(JSON.stringify(first.entry).includes('"lat"'), false);
 
   const second = await discloseToThirdParty(accounts, requestFor(account.memberId, {
-    category: 'history',
+    categories: ['history'],
     at: AT + 60 * 60 * 1000,
     purpose: '자료 제출',
   }), AT + 60 * 60 * 1000);
@@ -166,7 +166,7 @@ test('normal API calls cannot delete entries, and another account cannot read th
   assert.equal(own.body.retentionMonths, 6);
   assert.equal(own.body.disclosures.length, 1);
   assert.equal(own.body.disclosures[0].actor, '운영자');
-  assert.equal(own.body.disclosures[0].category, 'location');
+  assert.deepEqual(own.body.disclosures[0].categories, ['location']);
   assert.equal(JSON.stringify(own.body).includes('"lat"'), false);
   assert.equal(JSON.stringify(own.body).includes('ciphertextvalue'), false);
 
@@ -184,7 +184,7 @@ test('withdrawal keeps unexpired disclosure metadata and drops it after six mont
   const first = await releaseToThirdParty(accounts, requestFor(owner.memberId), AT);
   const later = AT + 60 * 60 * 1000;
   const second = await releaseToThirdParty(accounts, requestFor(owner.memberId, {
-    category: 'place',
+    categories: ['place'],
     at: later,
     purpose: '자료 제출',
   }), later);
@@ -205,7 +205,7 @@ test('withdrawal keeps unexpired disclosure metadata and drops it after six mont
   const expiredAt = disclosureExpiresAt(AT);
   const listed = await listDisclosures(accounts, owner.memberId, expiredAt);
   assert.equal(listed.disclosures.length, 1);
-  assert.equal(listed.disclosures[0].category, 'place');
+  assert.deepEqual(listed.disclosures[0].categories, ['place']);
   assert.equal(listed.intact, true);
   const trimmed = await accounts.get(disclosureKey(owner.memberId));
   assert.equal(trimmed.entries.length, 1);
@@ -223,6 +223,59 @@ test('withdrawal keeps unexpired disclosure metadata and drops it after six mont
   assert.equal(await accounts.get(disclosureKey(owner.memberId)), undefined);
   const gone = await listDisclosures(accounts, owner.memberId, stillThere);
   assert.deepEqual(gone.disclosures, []);
+});
+
+test('a disclosure lists every personal-data category and stores none of the values', async () => {
+  const accounts = createMemoryAccountStore();
+  const account = await register(accounts);
+  const payload = {
+    profile: { name: '엄마' },
+    kakaoId: '123456789',
+    naverId: 'naver-user-88',
+    guardians: [{ memberId: 'local-otherphone' }],
+    deviceId: 'pixel-8',
+    profileKey: 'profilekeyAAAAAAAA',
+    photo: 'profile-photo',
+  };
+  const missing = await releaseToThirdParty(accounts, requestFor(account.memberId, {
+    categories: ['name'],
+    payload,
+  }), AT);
+  assert.equal(missing.error, 'category');
+  assert.equal(missing.released, undefined);
+  assert.equal(await accounts.get(disclosureKey(account.memberId)), undefined);
+
+  const unnamed = await releaseToThirdParty(accounts, requestFor(account.memberId, {
+    categories: ['name', 'kakao', 'naver', 'family', 'device', 'account'],
+    payload,
+  }), AT);
+  assert.equal(unnamed.error, 'category');
+
+  const released = await releaseToThirdParty(accounts, requestFor(account.memberId, {
+    categories: ['device', 'kakao', 'name', 'other', 'account', 'family', 'naver'],
+    detail: '프로필 사진',
+    payload,
+  }), AT);
+  assert.equal(released.ok, true);
+  assert.deepEqual(released.entry.categories, ['name', 'kakao', 'naver', 'family', 'device', 'account', 'other']);
+  assert.equal(released.entry.detail, '프로필 사진');
+  assert.equal(released.released.kakaoId, '123456789');
+  const stored = JSON.stringify(await accounts.get(disclosureKey(account.memberId)));
+  assert.equal(stored.includes('123456789'), false);
+  assert.equal(stored.includes('naver-user-88'), false);
+  assert.equal(stored.includes('pixel-8'), false);
+  assert.equal(stored.includes('profilekeyAAAAAAAA'), false);
+  assert.equal(stored.includes('엄마'), false);
+  assert.equal(stored.includes('프로필 사진'), true);
+
+  const secretDetail = await releaseToThirdParty(accounts, requestFor(account.memberId, {
+    categories: ['other'],
+    detail: 'profilekeyAAAAAAAA',
+    payload: { photo: 'x' },
+    at: AT + 1000,
+    purpose: '추가 열람',
+  }), AT + 1000);
+  assert.equal(secretDetail.error, 'category');
 });
 
 test('only releaseToThirdParty writes the disclosure chain', () => {

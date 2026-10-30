@@ -1474,7 +1474,7 @@ export function FamilyMapScreen() {
                 : confirm.kind === 'logout'
                   ? '이 폰의 로그인만 끝냅니다. 서버 백업은 남아 있고, 카카오·네이버 또는 복구 코드로 다시 불러올 수 있습니다.'
                   : confirm.kind === 'delete-account'
-                    ? '서버 계정, 위치 기록, 카카오·네이버 연결과 복구 코드를 영구히 삭제합니다. 제3자 제공 기록은 좌표 없이 6개월이 지난 뒤에 지웁니다. 이 작업은 되돌릴 수 없습니다.'
+                    ? '서버 계정, 위치 기록, 카카오·네이버 연결과 복구 코드를 영구히 삭제합니다. 제3자 제공 기록은 값과 좌표 없이 6개월이 지난 뒤에 지웁니다. 이 작업은 되돌릴 수 없습니다.'
                     : `${confirm.name} 님과의 초대와 위치 공유를 이 폰에서 지웁니다.`}
             confirmLabel={confirm.kind === 'remove'
               ? '지우기'
@@ -2493,11 +2493,24 @@ function AppVersionLine() {
   return <p className="mt-2 text-xs font-semibold text-slate-500">{currentAppVersionLabel()}</p>;
 }
 
-const DISCLOSURE_LABEL: Record<DisclosureRecord['category'], string> = {
+const DISCLOSURE_LABEL: Record<DisclosureRecord['categories'][number], string> = {
+  name: '표시 이름',
+  kakao: '카카오 계정',
+  naver: '네이버 계정',
+  family: '가족 구성',
+  device: '기기 정보',
+  account: '계정·복구 정보',
   location: '위치',
   history: '기록',
   place: '장소 이름',
+  other: '기타 개인정보',
 };
+
+function disclosureCategoryLine(row: DisclosureRecord): string {
+  return row.categories.map((category) => (
+    category === 'other' && row.detail ? `기타 개인정보(${row.detail})` : DISCLOSURE_LABEL[category]
+  )).join(', ');
+}
 
 function formatDisclosureWhen(ms: number): string {
   return new Intl.DateTimeFormat('ko-KR', {
@@ -2531,12 +2544,12 @@ function DisclosureLogPanel() {
     <section className="mt-4" aria-label="정보 제공 기록">
       <h3 className="text-sm font-black text-slate-800">정보 제공 기록</h3>
       <p className="mt-1 text-xs leading-5 text-slate-500">
-        제3자에게 위치나 기록을 넘긴 사실만 남깁니다. 좌표는 적지 않습니다. 제공한 날부터 6개월 뒤 지우고, 회원 탈퇴 후에도 그 기간이 끝날 때까지 남습니다.
+        제3자에게 넘긴 개인정보와 위치의 종류만 남깁니다. 표시 이름, 카카오·네이버 계정, 가족 구성, 기기, 계정·복구 정보, 위치, 기록, 장소 이름이 적힙니다. 그 값과 좌표는 적지 않습니다. 제공한 날부터 6개월 뒤 지우고, 회원 탈퇴 후에도 그 기간이 끝날 때까지 남습니다.
       </p>
       {rows === null && <p className="mt-3 text-xs leading-5 text-slate-500">불러오는 중</p>}
       {rows !== null && message && <p className="mt-3 text-xs leading-5 text-slate-500">{message}</p>}
       {rows !== null && !message && rows.length === 0 && (
-        <p className="mt-3 text-xs leading-5 text-slate-500">제3자에게 위치나 기록을 제공한 내역이 없습니다.</p>
+        <p className="mt-3 text-xs leading-5 text-slate-500">제3자에게 개인정보나 위치, 기록을 제공한 내역이 없습니다.</p>
       )}
       {rows !== null && !message && !intact && (
         <p className="mt-3 text-xs leading-5 text-amber-800">이 기록의 연결이 맞지 않습니다.</p>
@@ -2544,8 +2557,8 @@ function DisclosureLogPanel() {
       {rows !== null && !message && rows.length > 0 && (
         <ul className="mt-3 space-y-2">
           {rows.map((row, index) => (
-            <li key={`${row.at}-${row.category}-${index}`} className="rounded-2xl bg-slate-50 px-3 py-3 text-xs leading-5 text-slate-600">
-              <p className="font-bold text-slate-800">{DISCLOSURE_LABEL[row.category]} · {formatDisclosureWhen(row.rangeStart)} – {formatDisclosureWhen(row.rangeEnd)}</p>
+            <li key={`${row.at}-${row.categories.join('-')}-${index}`} className="rounded-2xl bg-slate-50 px-3 py-3 text-xs leading-5 text-slate-600">
+              <p className="font-bold text-slate-800">{disclosureCategoryLine(row)} · {formatDisclosureWhen(row.rangeStart)} – {formatDisclosureWhen(row.rangeEnd)}</p>
               <p>받는 곳 {row.recipient}</p>
               <p>이유 {row.purpose}</p>
               <p>처리 {row.actor} · {formatDisclosureWhen(row.at)}</p>
