@@ -3,8 +3,8 @@
 // On an APK, MainActivity.appVersion() reports the installed package so the
 // line matches the build on that phone.
 
-export const APP_VERSION_NAME = '1.36.1';
-export const APP_VERSION_CODE = 41;
+export const APP_VERSION_NAME = '1.36.2';
+export const APP_VERSION_CODE = 42;
 
 export function formatAppVersion(name = APP_VERSION_NAME, code = APP_VERSION_CODE) {
   const version = String(name ?? '').trim();

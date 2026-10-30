@@ -49,6 +49,13 @@ const STORAGE_KEY = 'umap_family_v1';
 const DEVICE_SEAL_PREFIX = 'umap-device-seal:';
 let pendingDeviceSeal = '';
 let restoringDeviceSeal = false;
+let sealEpoch = 0;
+
+function cancelDeviceSealRestore() {
+  sealEpoch += 1;
+  restoringDeviceSeal = false;
+  pendingDeviceSeal = '';
+}
 const SESSION_KEYS = [STORAGE_KEY, `${STORAGE_KEY}:admin`, `${STORAGE_KEY}:managed`] as const;
 
 function clearStoredSessions() {
@@ -1510,10 +1517,12 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
   }, [state.profile]);
 
   useEffect(() => {
+    const epoch = sealEpoch;
     const sealed = pendingDeviceSeal;
     if (!sealed) return;
     pendingDeviceSeal = '';
     void openDeviceText(sealed).then((plain) => {
+      if (epoch !== sealEpoch) return;
       if (!plain) {
         restoringDeviceSeal = false;
         return;
@@ -1531,12 +1540,14 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (restoringDeviceSeal) return;
+    const epoch = sealEpoch;
     const raw = JSON.stringify({ ...state, mode: null });
     if (!state.profile && sealedSession()) return;
     try {
       sessionStorage.setItem(STORAGE_KEY, raw);
       if (deviceSealAvailable()) {
         void sealDeviceText(raw).then((sealed) => {
+          if (epoch !== sealEpoch) return;
           if (typeof sealed === 'string' && sealed.startsWith(DEVICE_SEAL_PREFIX)) localStorage.setItem(STORAGE_KEY, sealed);
         });
       } else {
@@ -1604,11 +1615,14 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
     pushNotice: (title, body) => dispatch({ type: 'notice', notice: notice(title, body) }),
     logout: () => {
       cancelAccountBackup();
+      cancelDeviceSealRestore();
+      clearStoredSessions();
       logoutLocalAccount(typeof localStorage === 'undefined' ? null : localStorage);
       dispatch({ type: 'logout' });
     },
     withdraw: () => {
       cancelAccountBackup();
+      cancelDeviceSealRestore();
       clearDeviceAccount(
         typeof localStorage === 'undefined' ? null : localStorage,
         typeof sessionStorage === 'undefined' ? null : sessionStorage,
