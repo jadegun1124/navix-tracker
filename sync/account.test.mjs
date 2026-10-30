@@ -684,6 +684,104 @@ test('naver code exchange sends the registered callback as redirect_uri', async 
   assert.equal(lookalike.status, 401);
 });
 
+test('naver token HTTP 200 without access_token reports the error and never logs secrets', async () => {
+  const code = 'NaverAuthCodeValue123456789';
+  const state = 'NaverStateValue1234567890ab';
+  const secret = 'NaverClientSecretValue123456';
+  const logs = [];
+  const originalError = console.error;
+  const originalFetch = globalThis.fetch;
+  console.error = (...args) => {
+    logs.push(args.map((item) => String(item)).join(' '));
+  };
+  const accounts = createMemoryAccountStore();
+  let sent = '';
+  globalThis.fetch = async (url, init) => {
+    sent = String(init && init.body);
+    assert.equal(String(url), 'https://nid.naver.com/oauth2.0/token');
+    return new Response(JSON.stringify({
+      error: 'invalid_request',
+      error_description: `bad ${code} ${state} ${secret}`,
+    }), { status: 200 });
+  };
+  try {
+    const rejected = await accountCall(accounts, 'POST', '/v1/account/naver', {
+      body: { code, state, redirectUri: NAVER_APP_REDIRECT, snapshot: snapshot() },
+      extras: { naverClientId: 'naverclientid1', naverClientSecret: secret },
+    });
+    assert.equal(rejected.status, 401);
+    assert.equal(rejected.body.error, 'token');
+    assert.equal(rejected.body.reason, 'naver_token_invalid_request');
+    assert.match(rejected.body.message, /토큰이 거절/);
+    const form = new URLSearchParams(sent);
+    assert.equal(form.get('grant_type'), 'authorization_code');
+    assert.equal(form.get('client_id'), 'naverclientid1');
+    assert.equal(form.get('client_secret'), secret);
+    assert.equal(form.get('code'), code);
+    assert.equal(form.get('state'), state);
+    assert.equal(form.get('redirect_uri'), NAVER_APP_REDIRECT);
+    const log = logs.join('\n');
+    assert.match(log, /naver token failed/);
+    assert.match(log, /"status":200/);
+    assert.match(log, /invalid_request/);
+    assert.match(log, /"keys":\["error","error_description"\]/);
+    assert.match(log, /"redirectSent":true/);
+    assert.equal(log.includes(code), false);
+    assert.equal(log.includes(state), false);
+    assert.equal(log.includes(secret), false);
+  } finally {
+    console.error = originalError;
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('naver profile failure is naver_me and code is not double-encoded', async () => {
+  const code = 'a+b/c=';
+  const state = 's t';
+  const token = 'NaverAccessTokenValue1234567';
+  const logs = [];
+  const originalError = console.error;
+  const originalFetch = globalThis.fetch;
+  console.error = (...args) => {
+    logs.push(args.map((item) => String(item)).join(' '));
+  };
+  const accounts = createMemoryAccountStore();
+  let sent = '';
+  globalThis.fetch = async (url, init) => {
+    const href = String(url);
+    if (href.includes('/oauth2.0/token')) {
+      sent = String(init && init.body);
+      return new Response(JSON.stringify({ access_token: token, token_type: 'bearer' }), { status: 200 });
+    }
+    return new Response(JSON.stringify({
+      resultcode: '024',
+      message: `profile ${token}`,
+    }), { status: 200 });
+  };
+  try {
+    const rejected = await accountCall(accounts, 'POST', '/v1/account/naver', {
+      body: { code, state, redirectUri: NAVER_APP_REDIRECT },
+      extras: { naverClientId: 'naverclientid1', naverClientSecret: 'naversecret1' },
+    });
+    assert.equal(rejected.status, 401);
+    assert.equal(rejected.body.reason, 'naver_me');
+    const form = new URLSearchParams(sent);
+    assert.equal(form.get('code'), code);
+    assert.equal(form.get('state'), state);
+    assert.equal(sent.includes('%252B'), false);
+    assert.equal(sent.includes('%253D'), false);
+    const log = logs.join('\n');
+    assert.match(log, /naver me failed/);
+    assert.match(log, /"resultcode":"024"/);
+    assert.match(log, /profile \[redacted\]/);
+    assert.equal(log.includes(token), false);
+    assert.equal(log.includes('/nid/me'), false);
+  } finally {
+    console.error = originalError;
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('kakao verification reports the upstream code and never logs the token', async () => {
   const token = 'KakaoSecretTokenValue123456';
   const logs = [];
