@@ -126,6 +126,13 @@ export async function recordHandling(store, input = {}, now = Date.now()) {
   const actor = typeof input.actor === 'string' && input.actor.trim() ? input.actor.trim().slice(0, 80) : memberId;
   const at = Number.isInteger(input.at) ? input.at : now;
   await purgeHandling(store, accountId, now);
+  const existing = await readChain(store, accountId);
+  const previous = existing && !existing.broken ? existing.entries : [];
+  const signature = `${input.kind}\0${actor}\0${categories.join(',')}`;
+  const seoulDay = (stamp) => new Date(stamp + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const day = seoulDay(at);
+  const already = previous.some((item) => `${item.kind}\0${item.actor}\0${(item.categories || []).join(',')}` === signature && seoulDay(item.at) === day);
+  if (already) return { ok: true, skipped: true };
   const chain = await readChain(store, accountId);
   if (chain?.broken) return { error: 'chain' };
   const entries = chain ? chain.entries : [];

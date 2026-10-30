@@ -1060,7 +1060,7 @@ export function accountError(code) {
 export async function parseAccountOperation(request) {
   const url = new URL(request.url);
   const path = url.pathname.replace(/\/+$/, '') || '/';
-  if (!path.startsWith('/v1/account')) return null;
+  if (!path.startsWith('/v1/account') && !path.startsWith('/v1/invites')) return null;
 
   const accountKey = request.headers.get('x-umap-account-key') || '';
 

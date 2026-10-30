@@ -1207,6 +1207,8 @@ export async function handleSyncRequest(store, request, extras = {}) {
 
   const room = (await store.read(op.token)) || emptyRoom();
   if (op.kind === 'get') {
+    const auth = await authorizeReader(room, op.viewerId, op.profileKey);
+    if (auth.error) return auth.error;
     const view = viewRoom(room, op.since);
     await logLocationUse(extras.accounts, op.viewerId, view, extras.now || Date.now());
     return json(view);

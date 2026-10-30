@@ -48,6 +48,7 @@ type CanonicalTrail = {
 const STORAGE_KEY = 'umap_family_v1';
 const DEVICE_SEAL_PREFIX = 'umap-device-seal:';
 let pendingDeviceSeal = '';
+let restoringDeviceSeal = false;
 const SESSION_KEYS = [STORAGE_KEY, `${STORAGE_KEY}:admin`, `${STORAGE_KEY}:managed`] as const;
 
 function clearStoredSessions() {
@@ -555,7 +556,10 @@ function load(): Session {
     const merged = mergePeerSessions(storedSnapshots());
     if (!merged || !isSession(merged)) {
       const sealed = sealedSession();
-      if (sealed) pendingDeviceSeal = sealed;
+      if (sealed) {
+        pendingDeviceSeal = sealed;
+        restoringDeviceSeal = true;
+      }
       return { ...fresh(), pendingSyncToken };
     }
     const parsed = merged;
@@ -1510,18 +1514,25 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
     if (!sealed) return;
     pendingDeviceSeal = '';
     void openDeviceText(sealed).then((plain) => {
-      if (!plain) return;
+      if (!plain) {
+        restoringDeviceSeal = false;
+        return;
+      }
       try {
         sessionStorage.setItem(STORAGE_KEY, plain);
       } catch {
+        restoringDeviceSeal = false;
         return;
       }
+      restoringDeviceSeal = false;
       dispatch({ type: 'rehydrate' });
     });
   }, []);
 
   useEffect(() => {
+    if (restoringDeviceSeal) return;
     const raw = JSON.stringify({ ...state, mode: null });
+    if (!state.profile && sealedSession()) return;
     try {
       sessionStorage.setItem(STORAGE_KEY, raw);
       if (deviceSealAvailable()) {

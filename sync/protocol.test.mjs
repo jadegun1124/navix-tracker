@@ -833,7 +833,7 @@ test('member id keeps the fix across a rename and only the profile key can chang
   });
   assert.equal(renamed.status, 200);
 
-  const reader = await call(store, 'GET', `/v1/rooms/${code}`, { token, readKey });
+  const reader = await call(store, 'GET', `/v1/rooms/${code}`, { token, readKey, profileKey, member: memberId });
   assert.equal(reader.body.places.length, 1);
   assert.equal(reader.body.places[0].name, '민지');
   assert.equal(reader.body.places[0].memberId, memberId);
@@ -847,7 +847,7 @@ test('member id keeps the fix across a rename and only the profile key can chang
     body: { code, name: '민지', memberId, lat: 37.55, lng: 127.08, accuracyM: 6, at: at + 3000, sharing: true },
   });
   assert.equal(again.status, 200);
-  const moved = await call(store, 'GET', `/v1/rooms/${code}`, { token, readKey });
+  const moved = await call(store, 'GET', `/v1/rooms/${code}`, { token, readKey, profileKey, member: memberId });
   assert.equal(moved.body.places.length, 1);
   assert.equal(moved.body.places[0].lat, 37.55);
 
@@ -857,7 +857,7 @@ test('member id keeps the fix across a rename and only the profile key can chang
     body: { code, name: '도둑', memberId, lat: 1, lng: 1, accuracyM: 4, at: at + 4000, sharing: true },
   });
   assert.equal(stolen.status, 403);
-  const still = await call(store, 'GET', `/v1/rooms/${code}`, { token, readKey });
+  const still = await call(store, 'GET', `/v1/rooms/${code}`, { token, readKey, profileKey, member: memberId });
   assert.equal(still.body.places[0].name, '민지');
   assert.equal(still.body.places[0].lat, 37.55);
 
@@ -867,7 +867,7 @@ test('member id keeps the fix across a rename and only the profile key can chang
     body: { memberId, name: '민지', photo, at: at + 5000 },
   });
   assert.equal(published.status, 200);
-  const withPhoto = await call(store, 'GET', `/v1/rooms/${code}`, { token, readKey });
+  const withPhoto = await call(store, 'GET', `/v1/rooms/${code}`, { token, readKey, profileKey, member: memberId });
   assert.equal(withPhoto.body.profiles.length, 1);
   assert.equal(withPhoto.body.profiles[0].name, '민지');
   assert.equal(withPhoto.body.profiles[0].photo, photo);
@@ -886,7 +886,7 @@ test('member id keeps the fix across a rename and only the profile key can chang
     body: { memberId, name: '도둑', photo: null, at: at + 6000 },
   });
   assert.equal(hijack.status, 403);
-  const kept = await call(store, 'GET', `/v1/rooms/${code}`, { token, readKey });
+  const kept = await call(store, 'GET', `/v1/rooms/${code}`, { token, readKey, profileKey, member: memberId });
   assert.equal(kept.body.profiles[0].name, '민지');
   assert.equal(kept.body.profiles[0].photo, photo);
 
@@ -928,7 +928,7 @@ test('member id keeps the fix across a rename and only the profile key can chang
     body: { code, name: '아들', memberId: 'local-bbb999', lat: 36.1, lng: 127.4, accuracyM: 9, at: at + 8000, sharing: true },
   });
   assert.equal(sibling.status, 200);
-  const both = await call(store, 'GET', `/v1/rooms/${code}`, { token, readKey });
+  const both = await call(store, 'GET', `/v1/rooms/${code}`, { token, readKey, profileKey, member: memberId });
   assert.equal(both.body.places.length, 2);
   assert.equal(both.body.places.find((place) => place.memberId === memberId).lat, 37.55);
   assert.equal(both.body.places.find((place) => place.name === '아들').lat, 36.1);
@@ -1015,7 +1015,7 @@ test('a member trail replaces the room copy and a stop removes it', async () => 
     body: { ...trail, at: at - 1000, points: [{ lat: 37.1, lng: 127.1, at: at - 1000 }] },
   });
   assert.equal(older.status, 200);
-  const reader = await call(store, 'GET', `/v1/rooms/${code}`, { token, readKey });
+  const reader = await call(store, 'GET', `/v1/rooms/${code}`, { token, readKey, profileKey, member: memberId });
   assert.equal(reader.body.trails.length, 1);
   assert.equal(reader.body.trails[0].points.length, 2);
   assert.equal(reader.body.trails[0].points[1].lat, 37.66);
@@ -1028,7 +1028,7 @@ test('a member trail replaces the room copy and a stop removes it', async () => 
     body: { code, name: '민지', memberId, lat: null, lng: null, accuracyM: 0, at: at + 1000, sharing: false },
   });
   assert.equal(stopped.status, 200);
-  const after = await call(store, 'GET', `/v1/rooms/${code}`, { token, readKey });
+  const after = await call(store, 'GET', `/v1/rooms/${code}`, { token, readKey, profileKey, member: memberId });
   assert.equal(after.body.trails.length, 0);
 });
 

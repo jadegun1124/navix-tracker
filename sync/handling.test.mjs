@@ -97,6 +97,23 @@ test('collection is logged without coordinates and a removed member cannot read 
   assert.equal(blocked.status, 403);
 });
 
+test('invite HTTP routes mint and redeem once', async () => {
+  const accounts = createMemoryAccountStore();
+  const now = Date.UTC(2026, 4, 2, 1, 0, 0);
+  const token = await syncTokenFor('writeKeyAAAAAAAAAA', 'readKeyAAAAAAAAAAA');
+  const minted = await accountCall(accounts, 'POST', '/v1/invites', {
+    body: { code: '48291', syncToken: token, memberId: 'local-handle1' },
+    now,
+  });
+  assert.equal(minted.status, 200);
+  assert.equal(typeof minted.body.ticket, 'string');
+  const redeemed = await accountCall(accounts, 'POST', `/v1/invites/${minted.body.ticket}/redeem`, { now });
+  assert.equal(redeemed.status, 200);
+  assert.equal(redeemed.body.syncToken, token);
+  const again = await accountCall(accounts, 'POST', `/v1/invites/${minted.body.ticket}/redeem`, { now });
+  assert.equal(again.status, 404);
+});
+
 test('an invite ticket works once and then expires', async () => {
   const accounts = createMemoryAccountStore();
   const now = Date.UTC(2026, 4, 2, 1, 0, 0);
@@ -139,5 +156,15 @@ test('handling routes cannot be deleted', async () => {
   const listed = await accountCall(accounts, 'GET', '/v1/account/handling', { accountKey: created.body.account.accountKey });
   assert.equal(listed.status, 200);
   assert.equal(listed.body.events.length, 1);
+  const again = await recordHandling(accounts, {
+    kind: 'collect',
+    memberId: 'local-handle2',
+    actor: 'local-handle2',
+    categories: ['location'],
+    at: Date.UTC(2026, 4, 2, 2, 0, 0),
+  }, Date.UTC(2026, 4, 2, 2, 0, 0));
+  assert.equal(again.skipped, true);
+  const recordId = await accounts.get('member:local-handle2');
+  assert.equal((await accounts.get(handlingKey(recordId))).entries.length, 1);
   assert.equal(JSON.stringify(listed.body).includes('"lat"'), false);
 });
