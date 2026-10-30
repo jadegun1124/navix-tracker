@@ -10,7 +10,7 @@ import { familyKeyRecord } from '../../lib/familyVault.mjs';
 import { familyEndpointAvailable, familySyncUrl, publishProfileRemote, publishTrailRemote, splitSyncToken, startManagedFamilySync, syncFamilyKeys, syncTokenFor } from '../../services/familySync';
 import { startLocationWatch } from '../../services/locationWatch';
 import { cleanPlace } from '../../lib/memberPlace.mjs';
-import { cachedAddress, geocodeWasSettled, placeGridKey, presentPlace, reverseGeocodeCached } from '../../services/placeGeocode';
+import { cachedAddress, placeGridKey, presentPlace, reverseGeocodeCached } from '../../services/placeGeocode';
 import { openAlwaysLocation, readNativeBattery, umapLocation, umapLocationNative, type KeepAliveTarget } from '../../services/umapLocation';
 import { useFamily } from './session';
 
@@ -532,8 +532,8 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
       familyRef.current.setVisitLabel(next.memberId, next.id, cached);
       return;
     }
-    void reverseGeocodeCached(next.lat, next.lng).then((label) => {
-      if (!cancel && label) familyRef.current.setVisitLabel(next.memberId, next.id, label);
+    void reverseGeocodeCached(next.lat, next.lng).then((found) => {
+      if (!cancel && found.label) familyRef.current.setVisitLabel(next.memberId, next.id, found.label);
     });
     return () => {
       cancel = true;
@@ -565,8 +565,8 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
       familyRef.current.setJourneyLabel(next.memberId, next.id, next.which, cached, next.lat, next.lng);
       return;
     }
-    void reverseGeocodeCached(next.lat, next.lng).then((label) => {
-      if (!cancel && label) familyRef.current.setJourneyLabel(next.memberId, next.id, next.which, label, next.lat, next.lng);
+    void reverseGeocodeCached(next.lat, next.lng).then((found) => {
+      if (!cancel && found.label) familyRef.current.setJourneyLabel(next.memberId, next.id, next.which, found.label, next.lat, next.lng);
     });
     return () => {
       cancel = true;
@@ -616,7 +616,7 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
         else step();
         return;
       }
-      const apply = (label: string | null, settled = geocodeWasSettled()) => {
+      const apply = (label: string | null, settled: boolean) => {
         if (cancel) return;
         const short = label ? presentPlace(label) : '';
         if (!short) {
@@ -632,7 +632,7 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
         apply(cached, true);
         return;
       }
-      void reverseGeocodeCached(here.lat, here.lng).then(apply);
+      void reverseGeocodeCached(here.lat, here.lng).then((found) => apply(found.label, found.settled));
     };
     step();
     return () => {

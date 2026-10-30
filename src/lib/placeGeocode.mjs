@@ -703,25 +703,22 @@ async function fetchOverpass(fetchImpl, lat, lng) {
   throw new Error('overpass');
 }
 
-let lastGeocodeSettled = true;
-
-export function geocodeWasSettled() {
-  return lastGeocodeSettled;
+function settledLabel(label, residentialKnown, settled = true) {
+  const text = label ? presentPlace(label) : '';
+  const keep = settled && !(text && POI_NAME.test(text) && !residentialKnown);
+  return { label: text || null, settled: keep };
 }
 
-export async function reverseGeocode(lat, lng, options = {}) {
+async function lookupPlace(lat, lng, options = {}) {
   const fetchImpl = options.fetch || globalThis.fetch;
-  if (typeof fetchImpl !== 'function') return null;
+  if (typeof fetchImpl !== 'function') return { label: null, settled: false };
   const key = options.key !== undefined ? String(options.key || '') : readVworldKey();
   const kakaoKey = options.kakaoKey !== undefined ? String(options.kakaoKey || '') : readKakaoKey();
   const point = { lat: Number(lat), lng: Number(lng) };
   const candidates = Array.isArray(options.candidates) ? [...options.candidates] : [];
   let coarse = '';
   let residentialKnown = false;
-  const finish = (label, settled = true) => {
-    lastGeocodeSettled = settled && !(label && POI_NAME.test(label) && !residentialKnown);
-    return label ? presentPlace(label) : null;
-  };
+  const finish = (label, settled = true) => settledLabel(label, residentialKnown, settled);
   if (key) {
     try {
       const fromVworld = await fetchVworld(fetchImpl, lat, lng, key);
@@ -775,20 +772,25 @@ export async function reverseGeocode(lat, lng, options = {}) {
   return coarse ? finish(coarse) : finish('', false);
 }
 
+export async function reverseGeocode(lat, lng, options = {}) {
+  const found = await lookupPlace(lat, lng, options);
+  return found.label;
+}
+
 export async function reverseGeocodeCached(lat, lng, options = {}) {
   const key = placeGridKey(lat, lng);
   const cached = readCache()[key];
   if (cached) {
     const label = presentPlace(cached);
-    if (label) return label;
+    if (label) return { label, settled: true };
   }
-  const label = await reverseGeocode(lat, lng, options);
-  if (!label || label === '근처') return null;
-  if (!geocodeWasSettled()) return label;
+  const found = await lookupPlace(lat, lng, options);
+  if (!found.label || found.label === '근처') return { label: null, settled: false };
+  if (!found.settled) return found;
   const cache = readCache();
-  cache[key] = label;
+  cache[key] = found.label;
   writeCache(cache);
-  return label;
+  return found;
 }
 
 export const NOMINATIM_USER_AGENT = NOMINATIM_UA;

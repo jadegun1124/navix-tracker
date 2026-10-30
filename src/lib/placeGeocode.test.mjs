@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { memberPlaceLabel } from './memberPlace.mjs';
-import { choosePlaceLabel, formatPrecisePlace, NOMINATIM_USER_AGENT, nominatimAddress, placeGridKey, presentPlace, reverseGeocode, shortenAddress } from './placeGeocode.mjs';
+import { choosePlaceLabel, formatPrecisePlace, NOMINATIM_USER_AGENT, nominatimAddress, placeGridKey, presentPlace, reverseGeocode, reverseGeocodeCached, shortenAddress } from './placeGeocode.mjs';
 import { labelCoordinate, stayLabelPoint } from './tracking.mjs';
 
 const SUTAEK = {
@@ -342,6 +342,30 @@ test('a fix inside 하계1차청구아파트 near 노원소방서 keeps the comp
   const label = await reverseGeocode(inside.lat, inside.lng, { fetch: fetchImpl, key: '', pace: false });
   assert.equal(label, '하계1차청구아파트 103동');
   assert.equal(String(label).includes('소방서'), false);
+
+  const slow = async (url) => {
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    return fetchImpl(url);
+  };
+  const poiOnly = async (url) => {
+    if (String(url).includes('nominatim')) {
+      return jsonResponse({
+        display_name: '노원소방서',
+        address: { amenity: '노원소방서' },
+        namedetails: { name: '노원소방서' },
+        geojson: station.geometry,
+      });
+    }
+    throw new Error('overpass down');
+  };
+  const [apartment, poi] = await Promise.all([
+    reverseGeocodeCached(inside.lat, inside.lng, { fetch: slow, key: '', pace: false }),
+    reverseGeocodeCached(fire.lat, fire.lng, { fetch: poiOnly, key: '', pace: false }),
+  ]);
+  assert.equal(apartment.label, '하계1차청구아파트 103동');
+  assert.equal(apartment.settled, true);
+  assert.equal(poi.label, '노원소방서');
+  assert.equal(poi.settled, false);
 });
 
 test('family card status starts with the neighborhood, never 근처', () => {
