@@ -163,7 +163,15 @@ public class LocationKeepService {
             return false;
         }
         lastError = null;
-        prefs(context).edit().putBoolean("registered", true).commit();
+        String sealKids = sealKidFingerprint(config);
+        if (!sealKids.equals(prefs(context).getString("sealKids", ""))) {
+            synchronized (LOCK) {
+                lastPublishedAt = 0L;
+            }
+            prefs(context).edit().putBoolean("registered", true).putString("sealKids", sealKids).commit();
+        } else {
+            prefs(context).edit().putBoolean("registered", true).commit();
+        }
         synchronized (LOCK) {
             if (!anySharing(config)) {
                 removeUpdates(context);
@@ -222,21 +230,11 @@ public class LocationKeepService {
                 disarm(context);
                 return;
             }
-            Location previous;
-            long previousAt;
             Location publishFix;
             synchronized (LOCK) {
-                previous = lastPublished == null ? null : new Location(lastPublished);
-                previousAt = lastPublishedAt;
                 publishFix = handleFix(context, location);
             }
-            if (publishFix != null && !publish(context, publishFix)) {
-                synchronized (LOCK) {
-                    lastPublished = previous;
-                    lastPublishedAt = previousAt;
-                    rememberFilter(context);
-                }
-            }
+            if (publishFix != null) publish(context, publishFix);
         } finally {
                 if (pending != null) pending.finish();
             }
@@ -614,7 +612,6 @@ public class LocationKeepService {
         boolean charging = chargingNow(context);
         if (!prefs(context).getBoolean("registered", false)) return false;
         boolean changed = false;
-        boolean held = false;
         for (JSONObject target : targets(current)) {
             boolean sharing = target.optBoolean("sharing", false);
             if (sharing && location == null) continue;
@@ -639,10 +636,7 @@ public class LocationKeepService {
                     secret.put("lng", location.getLongitude());
                     secret.put("accuracyM", Math.round(Math.max(0f, location.getAccuracy())));
                     JSONObject envelope = sealInfo == null ? null : sealCoordinates(sealInfo.optString("key"), sealInfo.optString("kid"), secret.toString());
-                    if (envelope == null) {
-                        held = true;
-                        continue;
-                    }
+                    if (envelope == null) continue;
                     body.put("lat", JSONObject.NULL);
                     body.put("lng", JSONObject.NULL);
                     body.put("accuracyM", 0);
@@ -659,7 +653,26 @@ public class LocationKeepService {
             }
         }
         if (changed) prefs(context).edit().putString("config", current.toString()).apply();
-        return !held;
+        return true;
+    }
+
+    private static String sealKidFingerprint(JSONObject config) {
+        JSONObject seals = config == null ? null : config.optJSONObject("seals");
+        if (seals == null) return "";
+        List<String> parts = new ArrayList<>();
+        java.util.Iterator<String> keys = seals.keys();
+        while (keys.hasNext()) {
+            String code = keys.next();
+            JSONObject info = seals.optJSONObject(code);
+            parts.add(code + "=" + (info == null ? "" : info.optString("kid", "")));
+        }
+        java.util.Collections.sort(parts);
+        StringBuilder joined = new StringBuilder();
+        for (String part : parts) {
+            if (joined.length() > 0) joined.append(',');
+            joined.append(part);
+        }
+        return joined.toString();
     }
 
     /** Same envelope as src/lib/familySeal.mjs sealJson. Without a family key the fix is not uploaded. */

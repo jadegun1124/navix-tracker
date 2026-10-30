@@ -60,7 +60,10 @@ export function familyKeyRecord(storage, code) {
 export function rememberFamilyKey(storage, code, kid, key) {
   if (!storage || !code || !kid || !(key instanceof Uint8Array)) return;
   const all = readJson(storage, FAMILY_KEY_STORAGE) || {};
-  all[code] = { kid, key: bytesToBase64Url(key) };
+  const encoded = bytesToBase64Url(key);
+  const current = all[code];
+  if (current && current.kid === kid && current.key === encoded) return;
+  all[code] = { kid, key: encoded };
   storage.setItem(FAMILY_KEY_STORAGE, JSON.stringify(all));
   if (typeof window !== 'undefined') window.dispatchEvent(new Event('umap-family-keys'));
 }
