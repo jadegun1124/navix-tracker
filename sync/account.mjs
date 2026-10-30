@@ -641,30 +641,64 @@ export function kakaoFailureResponse(failure) {
   }, 401);
 }
 
+function naverText(value, max = 80, hidden = []) {
+  let text = maskKakaoMsg(typeof value === 'string' ? value : '');
+  for (const secret of hidden) {
+    if (typeof secret === 'string' && secret.length >= 4) text = text.split(secret).join('[redacted]');
+  }
+  return text.slice(0, max);
+}
+
+function logNaverFailure(step, detail) {
+  console.error(JSON.stringify({ message: `naver ${step} failed`, ...detail }));
+}
+
 async function defaultFetchNaverUser(accessToken) {
   const response = await fetch('https://openapi.naver.com/v1/nid/me', {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
+  const body = await response.json().catch(() => null);
+  if (!response.ok || !body || body.resultcode !== '00') {
+    logNaverFailure('me', {
+      status: response.status,
+      resultcode: naverText(body && body.resultcode, 8, [accessToken]),
+      naverMsg: naverText(body && body.message, 80, [accessToken]),
+    });
+  }
   if (!response.ok) return null;
-  return response.json();
+  return body;
 }
 
 async function defaultExchangeNaverCode({ code, state, clientId, clientSecret, redirectUri }) {
-  const body = new URLSearchParams({
-    grant_type: 'authorization_code',
-    client_id: clientId,
-    client_secret: clientSecret,
-    code,
-    state,
-    redirect_uri: redirectUri,
-  });
+  // 명세 3.2와 예시 6.1.2에는 redirect_uri가 없고, 같은 문서의 언어별 샘플은 넣는다.
+  // 빼면 지금 거절 원인이 달라지므로 인가 때와 같은 값을 폼에 한 번만 넣고, 실패 로그에는 포함 여부만 남긴다.
+  const body = new URLSearchParams();
+  body.set('grant_type', 'authorization_code');
+  body.set('client_id', clientId);
+  body.set('client_secret', clientSecret);
+  body.set('code', code);
+  body.set('state', state);
+  if (redirectUri) body.set('redirect_uri', redirectUri);
   const response = await fetch('https://nid.naver.com/oauth2.0/token', {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded;charset=utf-8' },
     body,
   });
-  if (!response.ok) return null;
-  return response.json();
+  // Naver answers token errors with HTTP 200 and {error, error_description}.
+  const issued = await response.json().catch(() => null);
+  const access = issued && typeof issued.access_token === 'string' ? issued.access_token.trim() : '';
+  if (!response.ok || !issued || !access) {
+    const hidden = [code, state, clientSecret, access];
+    logNaverFailure('token', {
+      status: response.status,
+      naverError: naverText(issued && issued.error, 40, hidden),
+      naverDesc: naverText(issued && issued.error_description, 80, hidden),
+      keys: issued && typeof issued === 'object' ? Object.keys(issued).slice(0, 8) : [],
+      redirectSent: Boolean(redirectUri),
+    });
+    return { error: (issued && issued.error) || `http_${response.status}` };
+  }
+  return issued;
 }
 
 export async function verifyKakaoAccessToken(accessToken, options = {}) {
@@ -755,7 +789,10 @@ export async function exchangeNaverAuthCode({ code, state, redirectUri, clientId
     clientSecret: secret,
   }).catch(() => null);
   const access = bearerToken(issued && issued.access_token);
-  if (!access) return { error: 'token' };
+  if (!access) {
+    const why = issued && typeof issued.error === 'string' ? issued.error : 'no_access_token';
+    return { error: 'token', reason: `naver_token_${naverText(why, 40, [authCode, csrf, secret])}` };
+  }
   return { accessToken: access };
 }
 
@@ -844,7 +881,7 @@ export async function linkNaverAccount(store, { accessToken, code, state, redire
   }
   if (!token) return { error: 'token' };
   const verified = await verifyNaverAccessToken(token, options);
-  if (!verified.ok) return { error: 'token' };
+  if (!verified.ok) return { error: 'token', reason: 'naver_me' };
   return attachLinkedProvider(store, {
     existing: await findByNaver(store, verified.id),
     currentKey: accountKey,
@@ -1096,6 +1133,9 @@ export async function handleAccountOperation(store, op, options = {}) {
   }
   if (op.kind === 'account-naver') {
     const result = await linkNaverAccount(store, op, options);
+    if (result.error === 'token' && result.reason) {
+      return json({ error: 'token', reason: result.reason, message: ACCOUNT_VERIFY_MESSAGE }, 401);
+    }
     if (result.error) return accountError(result.error);
     return json({
       ok: true,
