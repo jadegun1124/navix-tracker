@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { hasLocation, haversineMeters } from '../../lib/geo';
 import { isSelfEchoPlace } from '../../lib/peerFamily.mjs';
 import { placePriorName } from '../../lib/placeAlias.mjs';
-import { buildDayRecord, liveMotionLabel } from '../../lib/tracking.mjs';
+import { buildDayRecord, labelCoordinate, liveMotionLabel } from '../../lib/tracking.mjs';
 import type { AcceptedFix } from '../../lib/tracking.mjs';
 import { readSharedPlaces, publishSharedPlace, subscribeSharedPlaces, type SharedPlace } from '../../services/familyShare';
 import { familyEndpointAvailable, familySyncUrl, publishProfileRemote, publishTrailRemote, splitSyncToken, startManagedFamilySync, syncTokenFor } from '../../services/familySync';
@@ -581,7 +581,11 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
         }, 60_000);
         return;
       }
-      const here = { lat: pending.lat, lng: pending.lng };
+      const here = labelCoordinate(
+        current.tracks[pending.id],
+        { lat: pending.lat, lng: pending.lng, accuracyM: pending.accuracyM },
+        pending.moving,
+      ) || { lat: pending.lat, lng: pending.lng };
       const key = placeGridKey(here.lat, here.lng);
       const id = pending.id;
       if (home && id === 'self' && haversineMeters(here, home) <= home.radiusM) {

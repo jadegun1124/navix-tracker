@@ -838,6 +838,28 @@ function stayCentroid(cluster) {
   };
 }
 
+/**
+ * Place-name coordinate. A stay uses the latest fix accurate enough for the
+ * trail, not the average of the cluster and not a later indoor hop.
+ * While moving, the current pin is the coordinate.
+ */
+export function labelCoordinate(points, fallback, moving) {
+  const lat = Number(fallback?.lat);
+  const lng = Number(fallback?.lng);
+  const pin = Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : null;
+  if (moving === true) return pin;
+  const source = Array.isArray(points) ? points : [];
+  for (let index = source.length - 1; index >= 0; index -= 1) {
+    const point = source[index];
+    if (!point || !Number.isFinite(point.lat) || !Number.isFinite(point.lng)) continue;
+    if (point.stayEnd === true) break;
+    if (point.staying !== true && index === source.length - 1) break;
+    const accuracy = positiveMeters(point.accuracyM);
+    if (accuracy > 0 && accuracy <= TRAIL_POOR_ACCURACY_M) return { lat: point.lat, lng: point.lng };
+  }
+  return pin;
+}
+
 /** GPS jitter snaps to the stay-cluster centroid so a pin does not jump to the next POI. */
 export function stayLabelPoint(points, fallback, moving) {
   const lat = Number(fallback?.lat);

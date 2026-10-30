@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { memberPlaceLabel } from './memberPlace.mjs';
 import { choosePlaceLabel, formatPrecisePlace, NOMINATIM_USER_AGENT, nominatimAddress, placeGridKey, presentPlace, reverseGeocode, shortenAddress } from './placeGeocode.mjs';
-import { stayLabelPoint } from './tracking.mjs';
+import { labelCoordinate, stayLabelPoint } from './tracking.mjs';
 
 const SUTAEK = {
   display_name: '수택동, 구리시, 경기도, 11932, 대한민국',
@@ -236,6 +236,9 @@ test('an apartment polygon beats the fire station next door', async () => {
   assert.ok(Math.abs(snapped.lat - 37.63625) < 0.002);
   const snappedLabel = choosePlaceLabel([station, apartment], snapped);
   assert.equal(snappedLabel, '하계1차청구아파트 104동');
+  const accurate = jitter.map((point, index) => ({ ...point, accuracyM: index === jitter.length - 1 ? 55 : 12, staying: true }));
+  const namedAt = labelCoordinate(accurate, { ...fire, accuracyM: 55 }, false);
+  assert.equal(choosePlaceLabel([station, apartment], namedAt), '하계1차청구아파트 104동');
 });
 
 test('family card status starts with the neighborhood, never 근처', () => {
