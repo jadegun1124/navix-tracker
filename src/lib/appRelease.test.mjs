@@ -107,5 +107,7 @@ test('package.json, Gradle, and the release workflow stay on 1.34.0 / 38', () =>
   assert.match(extraction, /<cloud-backup>/);
   assert.match(extraction, /<device-transfer>/);
   assert.match(extraction, /exclude domain="device_file"/);
+  assert.match(extraction, /exclude domain="external"/);
+  assert.doesNotMatch(extraction, /device_external/);
   assert.doesNotMatch(extraction, /<include /);
 });
