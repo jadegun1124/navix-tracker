@@ -1,9 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Bell, BatteryCharging, ChevronLeft, Footprints, MapPin, Shield } from 'lucide-react';
-import { deviceProfileKey, localProfile } from '../../lib/localProfile.mjs';
+import { localProfile } from '../../lib/localProfile.mjs';
+import { accountNeedsDisplayName, clearStoredAccount, readStoredAccountKey, snapshotFromSession } from '../../lib/accountRestore.mjs';
 import { KAKAO_SETUP_MESSAGE } from '../../lib/kakaoAuth.mjs';
 import { NAVER_SETUP_MESSAGE } from '../../lib/naverAuth.mjs';
-import { persistAccountResult, recoverFamilyAccount, type AccountSnapshot } from '../../services/familyAccount';
+import { backupFamilyAccount, persistAccountResult, recoverFamilyAccount, type AccountSnapshot } from '../../services/familyAccount';
 import { configuredKakaoLoginKey, signInWithKakao } from '../../services/kakaoSignIn';
 import { configuredNaverClientId, signInWithNaver } from '../../services/naverSignIn';
 import { KEEP_PERMISSION_ASKED_KEY, markSessionFlag } from '../../lib/systemSettings.mjs';
@@ -81,52 +82,143 @@ function Splash({ onDone }: { onDone: () => void }) {
 
 function Login({ onSubmit }: { onSubmit: (profile: Profile) => void }) {
   const family = useFamily();
+  const [step, setStep] = useState<'choose' | 'name'>('choose');
+  const [pending, setPending] = useState<AccountSnapshot | null>(null);
   const [name, setName] = useState('');
   const [recovery, setRecovery] = useState('');
   const [recoverOpen, setRecoverOpen] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [detail, setDetail] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const trimmed = name.trim();
   const kakaoKey = configuredKakaoLoginKey();
   const naverId = configuredNaverClientId();
 
-  const loginSnapshot = (): AccountSnapshot | null => {
-    const typed = localProfile(trimmed);
-    if (!typed || !family.state.inviteCode || !family.state.syncWriteKey || !family.state.syncReadKey) return null;
-    return {
-      memberId: typed.id,
-      profileKey: deviceProfileKey(family.state.profile?.profileKey),
-      profile: { name: typed.name },
-      room: {
-        code: family.state.inviteCode,
-        writeKey: family.state.syncWriteKey,
-        readKey: family.state.syncReadKey,
-      },
-    };
+  const openName = (account: AccountSnapshot | null) => {
+    setPending(account);
+    const existing = account?.profile?.name?.trim() || '';
+    setName(existing === '가족' ? '' : existing);
+    setStep('name');
+    setMessage(null);
+            setDetail(null);
+    setBusy(false);
+  };
+
+  const providerCall = () => {
+    const key = readStoredAccountKey(typeof localStorage === 'undefined' ? null : localStorage);
+    const mode = family.state.profile || key ? 'link' as const : 'login' as const;
+    const snapshot = mode === 'link' ? snapshotFromSession(family.state) : null;
+    return { snapshot, mode };
+  };
+
+  const finishAccount = (account: AccountSnapshot) => {
+    if (accountNeedsDisplayName(account)) {
+      openName(account);
+      return;
+    }
+    family.restoreAccount(account);
   };
 
   const finishProvider = (
-    result: { ok: boolean; profile?: { id: string; name: string; profileKey?: string; photo?: string }; snapshot?: AccountSnapshot; message?: string },
+    result: { ok: boolean; snapshot?: AccountSnapshot; message?: string; detail?: string },
     fallback: string,
   ) => {
     setBusy(false);
-    if (!result.ok || !result.profile) {
+    if (!result.ok || !result.snapshot) {
       setMessage(result.message || fallback);
+      setDetail(result.detail || null);
       return;
     }
-    if (result.snapshot) {
-      family.restoreAccount(result.snapshot);
-      return;
-    }
-    onSubmit(result.profile);
+    setDetail(null);
+    finishAccount(result.snapshot);
   };
+
+  if (step === 'name') {
+    const trimmed = name.trim();
+    return (
+      <div className="flex h-full flex-col px-6 pb-10 pt-8">
+        <button
+          type="button"
+          onClick={() => {
+            setStep('choose');
+            setMessage(null);
+            setDetail(null);
+          }}
+          className="self-start p-2 text-slate-500"
+          aria-label="이전"
+        >
+          <ChevronLeft className="h-5 w-5" />
+        </button>
+        <h1 className="mt-4 text-[28px] font-black leading-tight">가족 지도에 보일 이름</h1>
+        <p className="mt-3 text-sm leading-6 text-slate-600">
+          이 이름으로 가족에게 보입니다. 전화번호는 쓰지 않습니다.
+        </p>
+        <form
+          className="mt-8"
+          onSubmit={(event) => {
+            event.preventDefault();
+            const profile = localProfile(trimmed);
+            if (!profile) {
+              setMessage('전화번호는 이름으로 쓰지 않습니다. 가족에게 보일 이름을 적어 주세요.');
+              return;
+            }
+            if (!pending) {
+              onSubmit(profile);
+              return;
+            }
+            setBusy(true);
+            const next: AccountSnapshot = {
+              ...pending,
+              profile: { ...pending.profile, name: profile.name },
+              nameChosen: true,
+            };
+            void backupFamilyAccount(next).then(async (saved) => {
+              if (saved.ok && saved.account) await persistAccountResult(saved);
+              family.restoreAccount({
+                ...next,
+                ...(saved.account || {}),
+                profile: { name: profile.name, photo: saved.account?.profile?.photo ?? pending.profile?.photo ?? null },
+              });
+            }).catch(() => {
+              family.restoreAccount(next);
+            });
+          }}
+        >
+          <label className="block text-xs font-bold text-slate-400" htmlFor="local-name">
+            표시 이름
+          </label>
+          <input
+            id="local-name"
+            value={name}
+            onChange={(event) => {
+              setName(event.target.value);
+              setMessage(null);
+            setDetail(null);
+            }}
+            placeholder="이름"
+            maxLength={20}
+            autoComplete="nickname"
+            className="mt-1 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 outline-none focus:border-[#0084FF]"
+          />
+          <button
+            type="submit"
+            disabled={busy || trimmed.length < 1}
+            className="mt-4 w-full rounded-full bg-[#0084FF] py-3.5 text-sm font-bold text-white disabled:opacity-40"
+          >
+            다음
+          </button>
+        </form>
+        {message && <p className="mt-3 whitespace-pre-line text-sm leading-6 text-slate-600">{message}</p>}
+        {detail && <p className="mt-1 text-xs leading-5 text-slate-400">{detail}</p>}
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-full flex-col px-6 pb-10 pt-16">
       <img src={iconSrc} alt="" className="h-16 w-16 rounded-2xl shadow-md" />
-      <h1 className="mt-6 text-[28px] font-black leading-tight">이 폰에서 쓸 이름</h1>
+      <h1 className="mt-6 text-[28px] font-black leading-tight">로그인</h1>
       <p className="mt-3 text-sm leading-6 text-slate-600">
-        가족 지도에 보이는 이름입니다. 카카오·네이버 또는 복구 코드로 같은 사람과 가족 방으로 돌아갑니다. 전화번호는 쓰지 않습니다.
+        카카오, 네이버, 복구 코드로 같은 사람과 가족, 기록을 불러옵니다. 처음이면 새로 시작합니다. 전화번호는 쓰지 않습니다.
       </p>
       <button
         type="button"
@@ -138,7 +230,9 @@ function Login({ onSubmit }: { onSubmit: (profile: Profile) => void }) {
           }
           setBusy(true);
           setMessage(null);
-          void signInWithKakao(loginSnapshot()).then((result) => {
+            setDetail(null);
+          const call = providerCall();
+          void signInWithKakao(call.snapshot, { mode: call.mode, persist: true }).then((result) => {
             finishProvider(result, '카카오 로그인을 마치지 못했습니다. 이 상태로 시작하지 않습니다.');
           });
         }}
@@ -157,7 +251,9 @@ function Login({ onSubmit }: { onSubmit: (profile: Profile) => void }) {
           }
           setBusy(true);
           setMessage(null);
-          void signInWithNaver(loginSnapshot()).then((result) => {
+            setDetail(null);
+          const call = providerCall();
+          void signInWithNaver(call.snapshot, { mode: call.mode, persist: true }).then((result) => {
             finishProvider(result, '네이버 로그인을 마치지 못했습니다. 이 상태로 시작하지 않습니다.');
           });
         }}
@@ -170,12 +266,13 @@ function Login({ onSubmit }: { onSubmit: (profile: Profile) => void }) {
         type="button"
         disabled={busy}
         onClick={() => {
-          setRecoverOpen(true);
+          setRecoverOpen((open) => !open);
           setMessage(null);
+            setDetail(null);
         }}
         className="mt-3 w-full rounded-full bg-slate-100 py-3 text-sm font-bold text-slate-700 disabled:opacity-40"
       >
-        복구 코드로 복원
+        복구 코드로 불러오기
       </button>
       {recoverOpen && (
         <form
@@ -184,6 +281,7 @@ function Login({ onSubmit }: { onSubmit: (profile: Profile) => void }) {
             event.preventDefault();
             setBusy(true);
             setMessage(null);
+            setDetail(null);
             void recoverFamilyAccount(recovery).then((result) => {
               setBusy(false);
               if (!result.ok || !result.account) {
@@ -191,7 +289,7 @@ function Login({ onSubmit }: { onSubmit: (profile: Profile) => void }) {
                 return;
               }
               void persistAccountResult(result);
-              family.restoreAccount(result.account);
+              finishAccount(result.account);
             }).catch(() => {
               setBusy(false);
               setMessage('복구 코드를 확인하지 못했습니다. 위치 서버에 다시 연결해 주세요.');
@@ -214,42 +312,24 @@ function Login({ onSubmit }: { onSubmit: (profile: Profile) => void }) {
           </button>
         </form>
       )}
-      {message && <p className="mt-3 whitespace-pre-line text-sm leading-6 text-slate-600">{message}</p>}
-      <form
-        className="mt-8"
-        onSubmit={(event) => {
-          event.preventDefault();
-          const profile = localProfile(trimmed);
-          if (!profile) {
-            setMessage('전화번호는 이름으로 쓰지 않습니다. 가족에게 보일 이름을 적어 주세요.');
-            return;
-          }
-          onSubmit(profile);
+      <button
+        type="button"
+        disabled={busy}
+        onClick={() => {
+          clearStoredAccount(typeof localStorage === 'undefined' ? null : localStorage);
+          setPending(null);
+          setName('');
+          setRecoverOpen(false);
+          setStep('name');
+          setMessage(null);
+            setDetail(null);
         }}
+        className="mt-3 w-full rounded-full py-3 text-sm font-bold text-slate-500 disabled:opacity-40"
       >
-        <label className="block text-xs font-bold text-slate-400" htmlFor="local-name">
-          표시 이름
-        </label>
-        <input
-          id="local-name"
-          value={name}
-          onChange={(event) => {
-            setName(event.target.value);
-            setMessage(null);
-          }}
-          placeholder="이름"
-          maxLength={20}
-          autoComplete="nickname"
-          className="mt-1 w-full rounded-2xl border border-slate-200 bg-white px-3 py-3 outline-none focus:border-[#0084FF]"
-        />
-        <button
-          type="submit"
-          disabled={trimmed.length < 1}
-          className="mt-4 w-full rounded-full bg-[#0084FF] py-3.5 text-sm font-bold text-white disabled:opacity-40"
-        >
-          이름으로 시작
-        </button>
-      </form>
+        새로 시작
+      </button>
+      {message && <p className="mt-3 whitespace-pre-line text-sm leading-6 text-slate-600">{message}</p>}
+      {detail && <p className="mt-1 text-xs leading-5 text-slate-400">{detail}</p>}
     </div>
   );
 }

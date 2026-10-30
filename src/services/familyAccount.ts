@@ -3,6 +3,8 @@ import {
   RECOVERY_CODE_STORAGE,
   applyAccountSnapshot,
   currentAccountBackupEpoch,
+  interpretAccountDelete,
+  invalidateAccountBackup,
   persistAccountSecretsIfCurrent,
   readStoredAccountKey,
   readStoredRecoveryCode,
@@ -39,6 +41,8 @@ export interface AccountSnapshot {
   googleLinked?: boolean;
   kakaoLinked?: boolean;
   naverLinked?: boolean;
+  nameChosen?: boolean;
+  created?: boolean;
 }
 
 function timeoutSignal(ms: number): AbortSignal {
@@ -60,12 +64,18 @@ function accountHeaders(accountKey?: string): Headers {
   return headers;
 }
 
-async function readAccountBody(response: Response): Promise<{ ok: boolean; account?: AccountSnapshot; restored?: boolean; message?: string }> {
-  const body = await response.json().catch(() => null) as { ok?: boolean; account?: AccountSnapshot; restored?: boolean; message?: string } | null;
+async function readAccountBody(response: Response): Promise<{ ok: boolean; account?: AccountSnapshot; restored?: boolean; created?: boolean; message?: string; detail?: string }> {
+  const body = await response.json().catch(() => null) as { ok?: boolean; account?: AccountSnapshot; restored?: boolean; message?: string; reason?: string; error?: string } | null;
   if (!response.ok || !body || body.ok !== true || !body.account) {
-    return { ok: false, message: body && typeof body.message === 'string' ? body.message : '계정을 불러오지 못했습니다.' };
+    const detail = body && typeof body.reason === 'string' ? body.reason : (body && body.error === 'upstream' ? 'upstream' : undefined);
+    return { ok: false, message: body && typeof body.message === 'string' ? body.message : '계정을 불러오지 못했습니다.', detail };
   }
-  return { ok: true, account: body.account, restored: body.restored === true };
+  return {
+    ok: true,
+    account: body.account,
+    restored: body.restored === true,
+    created: body.account.created === true,
+  };
 }
 
 export async function registerFamilyAccount(snapshot: AccountSnapshot) {
@@ -85,6 +95,20 @@ export async function backupFamilyAccount(snapshot: AccountSnapshot, accountKey 
     body: JSON.stringify(snapshot),
   });
   return readAccountBody(response);
+}
+
+export async function deleteFamilyAccount(accountKey = readStoredAccountKey(typeof localStorage === 'undefined' ? null : localStorage)) {
+  if (!accountKey) return { ok: false, message: '저장된 계정을 찾지 못했습니다.' };
+  try {
+    const response = await request('/v1/account', {
+      method: 'DELETE',
+      headers: accountHeaders(accountKey),
+    });
+    const body = await response.json().catch(() => null) as { ok?: boolean; message?: string } | null;
+    return interpretAccountDelete(response.status, body);
+  } catch {
+    return { ok: false, message: '계정을 지우지 못했습니다. 위치 서버에 다시 연결해 주세요.' };
+  }
 }
 
 export async function recoverFamilyAccount(code: string) {
@@ -152,7 +176,7 @@ let backupInflight = false;
 export function cancelAccountBackup() {
   if (typeof window !== 'undefined') window.clearTimeout(backupTimer);
   backupTimer = 0;
-  backupInflight = false;
+  invalidateAccountBackup();
 }
 
 export function scheduleAccountBackup(state: unknown) {

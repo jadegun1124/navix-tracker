@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useReducer } from 'react';
 import { hasLocation, haversineMeters } from '../../lib/geo';
-import { applyAccountSnapshot, logoutLocalAccount } from '../../lib/accountRestore.mjs';
+import { applyAccountSnapshot, clearDeviceAccount, logoutLocalAccount } from '../../lib/accountRestore.mjs';
 import { cancelAccountBackup, scheduleAccountBackup } from '../../services/familyAccount';
 import { deviceProfileKey, localProfile } from '../../lib/localProfile.mjs';
 import { carryPlace, cleanPlace } from '../../lib/memberPlace.mjs';
@@ -1379,6 +1379,7 @@ interface FamilyApi {
   setMotionAlertPhase: (phase: Session['motionAlertPhase']) => void;
   pushNotice: (title: string, body: string) => void;
   logout: () => void;
+  withdraw: () => void;
   clearFamilyRoom: (serverNote?: string | null) => void;
   revisitPermissions: () => void;
 }
@@ -1458,6 +1459,14 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
     logout: () => {
       cancelAccountBackup();
       logoutLocalAccount(typeof localStorage === 'undefined' ? null : localStorage);
+      dispatch({ type: 'logout' });
+    },
+    withdraw: () => {
+      cancelAccountBackup();
+      clearDeviceAccount(
+        typeof localStorage === 'undefined' ? null : localStorage,
+        typeof sessionStorage === 'undefined' ? null : sessionStorage,
+      );
       dispatch({ type: 'logout' });
     },
     clearFamilyRoom: (serverNote) => dispatch({ type: 'clear-family-room', serverNote: serverNote ?? null }),

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { ACCOUNT_LINKED_OTHER_MESSAGE, linkedAccountWouldSwitch } from './accountRestore.mjs';
 import { KAKAO_SETUP_MESSAGE, PUBLIC_KAKAO_NATIVE_APP_KEY, kakaoJavascriptKey, kakaoNativeAppKey, kakaoNativeAppKeyOrPublic } from './kakaoAuth.mjs';
-import { NAVER_REDIRECT, NAVER_SETUP_MESSAGE, PUBLIC_NAVER_CLIENT_ID, allowedNaverRedirect, naverClientId, naverClientIdOrPublic } from './naverAuth.mjs';
+import { NAVER_APP_REDIRECT, NAVER_REDIRECT, NAVER_SETUP_MESSAGE, PUBLIC_NAVER_CLIENT_ID, allowedNaverRedirect, naverClientId, naverClientIdOrPublic } from './naverAuth.mjs';
 
 test('missing Kakao and Naver keys keep those buttons closed', () => {
   assert.equal(kakaoNativeAppKey(''), '');
@@ -29,6 +29,12 @@ test('missing Kakao and Naver keys keep those buttons closed', () => {
   assert.equal(allowedNaverRedirect('https://jadegun1124.github.io/kinnex/'), 'https://jadegun1124.github.io/kinnex/');
   assert.equal(allowedNaverRedirect('http://localhost:5173/'), 'http://localhost:5173/');
   assert.equal(allowedNaverRedirect('https://evil.example/callback'), '');
+  assert.equal(NAVER_APP_REDIRECT, 'https://umap-family-sync.umap-jadegun.workers.dev/v1/naver/callback');
+  assert.equal(allowedNaverRedirect(NAVER_APP_REDIRECT), NAVER_APP_REDIRECT);
+  assert.equal(allowedNaverRedirect(`${NAVER_APP_REDIRECT}/`), '');
+  assert.equal(allowedNaverRedirect(`${NAVER_APP_REDIRECT}?code=1`), '');
+  assert.equal(allowedNaverRedirect('https://umap-family-sync.umap-jadegun.workers.dev.evil/v1/naver/callback'), '');
+  assert.equal(allowedNaverRedirect('https://evil.example/v1/naver/callback'), '');
   assert.match(NAVER_SETUP_MESSAGE, /VITE_NAVER_CLIENT_ID/);
   assert.match(NAVER_SETUP_MESSAGE, /NAVER_CLIENT_SECRET/);
 

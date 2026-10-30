@@ -10,7 +10,7 @@ export const KAKAO_SETUP_MESSAGE = [
   '3. 앱은 VITE_KAKAO_NATIVE_APP_KEY와 KAKAO_NATIVE_APP_KEY, 웹은 VITE_KAKAO_JAVASCRIPT_KEY를 넣고 다시 빌드합니다.',
 ].join('\n');
 
-export const KAKAO_VERIFY_MESSAGE = '카카오 계정 확인에 실패했습니다. 다시 로그인해 주세요.';
+export const KAKAO_VERIFY_MESSAGE = '카카오 로그인 토큰이 거절되었습니다. 다시 로그인해 주세요.';
 export const KAKAO_CANCEL_MESSAGE = '카카오 로그인을 취소했습니다.';
 
 function kakaoAppKey(value) {

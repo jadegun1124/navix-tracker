@@ -1,7 +1,8 @@
 import { Capacitor, registerPlugin } from '@capacitor/core';
-import { NAVER_CANCEL_MESSAGE, NAVER_REDIRECT, NAVER_SETUP_MESSAGE, NAVER_VERIFY_MESSAGE, naverClientIdOrPublic, naverRedirectUri } from '../lib/naverAuth.mjs';
+import { NAVER_APP_REDIRECT, NAVER_CANCEL_MESSAGE, NAVER_SETUP_MESSAGE, NAVER_VERIFY_MESSAGE, naverClientIdOrPublic, naverRedirectUri } from '../lib/naverAuth.mjs';
 import { localProfile } from '../lib/localProfile.mjs';
 import { restoredProfile } from '../lib/accountRestore.mjs';
+import { ACCOUNT_UNLINKED_MESSAGE } from '../lib/accountRestore.mjs';
 import { familySyncUrl } from './familySync';
 import { linkNaverAccount, persistAccountResult, type AccountSnapshot } from './familyAccount';
 
@@ -22,6 +23,7 @@ export interface ProviderSignInResult {
   profile?: { id: string; name: string; profileKey?: string; photo?: string };
   snapshot?: AccountSnapshot;
   restored?: boolean;
+  created?: boolean;
   message?: string;
 }
 
@@ -95,7 +97,7 @@ export async function signInWithNaver(
   let code = '';
   let state = '';
   let accessToken = '';
-  let redirectUri = NAVER_REDIRECT;
+  let redirectUri = NAVER_APP_REDIRECT;
   if (Capacitor.isNativePlatform()) {
     const result = await nativeAuth.signInNaver({ clientId, redirectUri }).catch(() => ({ ok: false as const, error: 'failed' }));
     if (!result.ok) {
@@ -122,8 +124,11 @@ export async function signInWithNaver(
     message: NAVER_VERIFY_MESSAGE,
   }));
   if (!linked.ok || !linked.account) return { ok: false, message: linked.message || NAVER_VERIFY_MESSAGE };
+  if (options.mode === 'link' && linked.account.naverLinked !== true) {
+    return { ok: false, message: ACCOUNT_UNLINKED_MESSAGE };
+  }
   if (options.persist !== false) await persistAccountResult(linked);
   const profile = profileFromAccount(linked.account);
   if (!profile) return { ok: false, message: NAVER_VERIFY_MESSAGE };
-  return { ok: true, profile, snapshot: linked.account, restored: linked.restored === true };
+  return { ok: true, profile, snapshot: linked.account, restored: linked.restored === true, created: linked.created === true };
 }

@@ -1,6 +1,6 @@
 import { PUBLIC_NAVER_CLIENT_ID } from '../src/lib/naverAuth.mjs';
 import { createMemoryAccountStore, handleAccountOperation } from './account.mjs';
-import { applyAlert, applyDirectMessage, applySubscription, alertPushPayload, chatPushPayload, commitPlace, commitProfile, commitTrail, emptyRoom, parseOperation, pushesForAlert, pushesForChat, removeSubscriptions, viewDirectMessages, viewFamilyPlaces, viewMyThreads, viewRoom, withCors } from './protocol.mjs';
+import { applyAlert, applyDirectMessage, applySubscription, alertPushPayload, chatPushPayload, commitPlace, commitProfile, commitTrail, emptyRoom, memberRoomToken, parseOperation, planForgetMember, pushesForAlert, pushesForChat, removeSubscriptions, viewDirectMessages, viewFamilyPlaces, viewMyThreads, viewRoom, withCors } from './protocol.mjs';
 import { createVapidKeys, sendWebPush } from './webpush.mjs';
 
 // One Durable Object per family room. The id is a hash of the invite code,
@@ -102,8 +102,44 @@ export class FamilyRoom {
       await this.ctx.storage.delete('room');
       return Response.json({ ok: true });
     }
+    if (op.kind === 'forget-member') {
+      const memberId = typeof op.memberId === 'string' ? op.memberId : '';
+      if (!memberId) return Response.json({ error: 'member' }, { status: 400 });
+      const plan = planForgetMember(room, memberId, op.deleteIfAlone === true);
+      if (plan.deleted) {
+        await this.ctx.storage.delete('room');
+        return Response.json({ ok: true, deleted: true });
+      }
+      await this.ctx.storage.put('room', plan.room);
+      return Response.json({ ok: true, deleted: false });
+    }
     return Response.json({ error: 'method' }, { status: 405 });
   }
+}
+
+async function forgetMemberDurable(env, target) {
+  if (!env?.FAMILY_ROOM) return;
+  const token = await memberRoomToken(target);
+  if (!token) return;
+  const stub = env.FAMILY_ROOM.get(env.FAMILY_ROOM.idFromName(token));
+  await stub.fetch('https://room.internal/op', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      kind: 'forget-member',
+      memberId: target.memberId,
+      deleteIfAlone: target.deleteIfAlone === true,
+    }),
+  });
+}
+
+function accountRuntimeOptions(env) {
+  return {
+    naverClientId: env.NAVER_CLIENT_ID || PUBLIC_NAVER_CLIENT_ID,
+    naverClientSecret: env.NAVER_CLIENT_SECRET || '',
+    kakaoAdminKey: env.KAKAO_ADMIN_KEY || '',
+    forgetMember: env.FAMILY_ROOM ? (target) => forgetMemberDurable(env, target) : undefined,
+  };
 }
 
 function durableAccountStore(storage) {
@@ -121,15 +157,18 @@ function durableAccountStore(storage) {
 }
 
 export class FamilyAccount {
-  constructor(ctx) {
+  constructor(ctx, env) {
     this.ctx = ctx;
+    this.env = env || {};
   }
 
   async fetch(request) {
     const body = await request.json();
+    const env = this.env || {};
     return handleAccountOperation(durableAccountStore(this.ctx.storage), body.op, {
-      naverClientId: body.naverClientId || PUBLIC_NAVER_CLIENT_ID,
-      naverClientSecret: body.naverClientSecret || '',
+      ...accountRuntimeOptions(env),
+      naverClientId: body.naverClientId || env.NAVER_CLIENT_ID || PUBLIC_NAVER_CLIENT_ID,
+      naverClientSecret: body.naverClientSecret || env.NAVER_CLIENT_SECRET || '',
       now: body.now,
     });
   }
@@ -192,10 +231,7 @@ export default {
         ? env.FAMILY_ACCOUNT.get(env.FAMILY_ACCOUNT.idFromName('umap-account-book'))
         : null;
       if (!accounts) {
-        return withCors(await handleAccountOperation(createMemoryAccountStore(), op, {
-          naverClientId: env.NAVER_CLIENT_ID || PUBLIC_NAVER_CLIENT_ID,
-          naverClientSecret: env.NAVER_CLIENT_SECRET || '',
-        }));
+        return withCors(await handleAccountOperation(createMemoryAccountStore(), op, accountRuntimeOptions(env)));
       }
       const response = await accounts.fetch('https://account.internal/op', {
         method: 'POST',

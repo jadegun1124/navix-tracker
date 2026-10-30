@@ -10,9 +10,10 @@ export const NAVER_SETUP_MESSAGE = [
   '3. VITE_NAVER_CLIENT_ID에 Client ID를 넣고, Worker에는 NAVER_CLIENT_SECRET을 넣습니다.',
 ].join('\n');
 
-export const NAVER_VERIFY_MESSAGE = '네이버 계정 확인에 실패했습니다. 다시 로그인해 주세요.';
+export const NAVER_VERIFY_MESSAGE = '네이버 로그인 토큰이 거절되었습니다. 다시 로그인해 주세요.';
 export const NAVER_CANCEL_MESSAGE = '네이버 로그인을 취소했습니다.';
 export const NAVER_REDIRECT = 'kinnex://naver';
+export const NAVER_APP_REDIRECT = 'https://umap-family-sync.umap-jadegun.workers.dev/v1/naver/callback';
 
 export function naverClientId(value) {
   const id = typeof value === 'string' ? value.trim() : '';
@@ -38,6 +39,7 @@ export function naverRedirectUri() {
 export function allowedNaverRedirect(value) {
   const uri = typeof value === 'string' ? value.trim() : '';
   if (!uri || uri.length > 200) return '';
+  if (uri === NAVER_APP_REDIRECT) return uri;
   if (uri === NAVER_REDIRECT) return uri;
   let parsed;
   try {

@@ -158,7 +158,9 @@ public class UmapAuthPlugin extends Plugin {
         if (error != null) {
             boolean canceled = error instanceof ClientError
                 && ((ClientError) error).getReason() == ClientErrorCause.Cancelled;
-            call.resolve(failure(canceled ? "canceled" : "failed"));
+            JSObject payload = failure(canceled ? "canceled" : "failed");
+            payload.put("detail", kakaoErrorDetail(error));
+            call.resolve(payload);
             return;
         }
         if (token == null || token.getAccessToken() == null || token.getAccessToken().isEmpty()) {
@@ -185,6 +187,16 @@ public class UmapAuthPlugin extends Plugin {
         new java.security.SecureRandom().nextBytes(bytes);
         for (byte value : bytes) out.append(String.format("%02x", value));
         return out.toString();
+    }
+
+    private String kakaoErrorDetail(Throwable error) {
+        String type = error.getClass().getSimpleName();
+        String message = error.getMessage() == null ? "" : error.getMessage();
+        message = message.replaceAll("(?i)bearer\\s+\\S+", "");
+        message = message.replaceAll("[A-Za-z0-9_\\-]{24,}", "");
+        message = message.replaceAll("\\s+", " ").trim();
+        if (message.length() > 160) message = message.substring(0, 160);
+        return message.isEmpty() ? type : type + ": " + message;
     }
 
     private JSObject failure(String code) {

@@ -9,6 +9,7 @@ import type { HomeZone, Member, TrackPoint } from '../../types/family';
 
 export interface StreetMapHandle {
   panTo: (lat: number, lng: number) => void;
+  showMember: (lat: number, lng: number) => void;
   zoomBy: (delta: number) => void;
   fit: (points: { lat: number; lng: number }[]) => void;
   getCenter: () => { lat: number; lng: number };
@@ -47,8 +48,9 @@ export const StreetMap = forwardRef<StreetMapHandle, {
   /** Family overview never paints a dashed hole. Records may still show one. */
   solidOnly?: boolean;
   onSelect: (id: string) => void;
+  onClear?: () => void;
   onMove?: (center: { lat: number; lng: number }) => void;
-}>(function StreetMap({ center, zoom, members, home, trails, trailColor, selectedId, solidOnly = false, onSelect, onMove }, ref) {
+}>(function StreetMap({ center, zoom, members, home, trails, trailColor, selectedId, solidOnly = false, onSelect, onClear, onMove }, ref) {
   const nodeRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
   const layersRef = useRef<L.LayerGroup | null>(null);
@@ -60,15 +62,22 @@ export const StreetMap = forwardRef<StreetMapHandle, {
   const key = vworldApiKey();
   const initialRef = useRef({ center, zoom });
   const onSelectRef = useRef(onSelect);
+  const onClearRef = useRef(onClear);
   const onMoveRef = useRef(onMove);
   useEffect(() => {
     onSelectRef.current = onSelect;
+    onClearRef.current = onClear;
     onMoveRef.current = onMove;
   });
 
   useImperativeHandle(ref, () => ({
     panTo(lat, lng) {
       mapRef.current?.panTo([lat, lng], { animate: true });
+    },
+    showMember(lat, lng) {
+      const map = mapRef.current;
+      if (!map) return;
+      map.setView([lat, lng], Math.min(19, Math.max(map.getZoom(), 17)), { animate: true });
     },
     zoomBy(delta) {
       const map = mapRef.current;
@@ -160,6 +169,7 @@ export const StreetMap = forwardRef<StreetMapHandle, {
       moveTick = window.setTimeout(emitMove, 80);
     });
     map.on('moveend', emitMove);
+    map.on('click', () => onClearRef.current?.());
     setReady(true);
     const resize = () => map.invalidateSize();
     resize();
@@ -173,6 +183,7 @@ export const StreetMap = forwardRef<StreetMapHandle, {
       setReady(false);
       map.off('move');
       map.off('moveend');
+      map.off('click');
       playbackRef.current = null;
       map.remove();
       mapRef.current = null;
@@ -263,7 +274,10 @@ export const StreetMap = forwardRef<StreetMapHandle, {
           iconAnchor: [0, 0],
         }),
       });
-      marker.on('click', () => onSelectRef.current(member.id));
+      marker.on('click', (event) => {
+        L.DomEvent.stopPropagation(event);
+        onSelectRef.current(member.id);
+      });
       marker.addTo(group);
     }
   }, [home, members, ready, selectedId]);

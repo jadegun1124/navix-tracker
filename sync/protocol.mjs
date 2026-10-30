@@ -787,6 +787,11 @@ export async function parseOperation(request) {
     return { kind: 'health' };
   }
 
+  if (request.method === 'GET' && url.pathname.replace(/\/+$/, '') === '/v1/naver/callback') {
+    const { naverCallbackResponse } = await import('./account.mjs');
+    return naverCallbackResponse(url);
+  }
+
   const { parseAccountOperation } = await import('./account.mjs');
   const accountOp = await parseAccountOperation(request);
   if (accountOp) return accountOp;
@@ -934,6 +939,80 @@ export function alertPushPayload(alert) {
   };
 }
 
+export function roomHasOtherMembers(room, memberId) {
+  const id = typeof memberId === 'string' ? memberId : '';
+  const places = room?.places && typeof room.places === 'object' ? Object.values(room.places) : [];
+  for (const place of places) {
+    if (!place || typeof place !== 'object') continue;
+    if (typeof place.memberId === 'string' && place.memberId && place.memberId !== id) return true;
+  }
+  for (const bucket of ['profiles', 'owners', 'trails']) {
+    const map = room?.[bucket];
+    if (!map || typeof map !== 'object') continue;
+    for (const key of Object.keys(map)) {
+      if (key && key !== id) return true;
+    }
+  }
+  return false;
+}
+
+export function stripMember(room, memberId) {
+  const id = typeof memberId === 'string' ? memberId : '';
+  const source = room && typeof room === 'object' ? room : emptyRoom();
+  const places = {};
+  for (const [key, place] of Object.entries(source.places || {})) {
+    if (place && place.memberId === id) continue;
+    places[key] = place;
+  }
+  const drop = (map) => {
+    const next = { ...(map && typeof map === 'object' ? map : {}) };
+    if (id) delete next[id];
+    return next;
+  };
+  return {
+    ...source,
+    places,
+    profiles: drop(source.profiles),
+    owners: drop(source.owners),
+    trails: drop(source.trails),
+  };
+}
+
+export function planForgetMember(room, memberId, deleteIfAlone) {
+  const current = room && typeof room === 'object' ? room : emptyRoom();
+  if (deleteIfAlone && !roomHasOtherMembers(current, memberId)) {
+    return { deleted: true, room: emptyRoom() };
+  }
+  return { deleted: false, room: stripMember(current, memberId) };
+}
+
+export async function memberRoomToken(target) {
+  if (!target || typeof target !== 'object') return '';
+  const code = typeof target.code === 'string' ? target.code.replace(/\D/g, '').slice(0, 6) : '';
+  if (!CODE_PART.test(code)) return '';
+  const parts = splitSyncToken(target.syncToken);
+  const writeKey = parts?.writeKey || target.writeKey;
+  if (!isKeyPart(writeKey)) return '';
+  const readKeyHash = parts?.readKeyHash || (isKeyPart(target.readKey) ? await sha256Base64Url(target.readKey) : '');
+  if (!readKeyHash) return '';
+  return roomToken(code, writeKey, readKeyHash);
+}
+
+export async function forgetMemberInStore(store, target) {
+  const token = await memberRoomToken(target);
+  const memberId = typeof target?.memberId === 'string' ? target.memberId : '';
+  if (!token || !memberId || !store) return { ok: false };
+  const room = (await store.read(token)) || emptyRoom();
+  const plan = planForgetMember(room, memberId, target.deleteIfAlone === true);
+  if (plan.deleted) {
+    if (typeof store.delete === 'function') await store.delete(token);
+    else await store.write(token, emptyRoom());
+    return { ok: true, deleted: true };
+  }
+  await store.write(token, plan.room);
+  return { ok: true, deleted: false };
+}
+
 export async function handleSyncRequest(store, request, extras = {}) {
   if (request.method === 'OPTIONS') return new Response(null, { status: 204 });
   const op = await parseOperation(request);
@@ -943,12 +1022,20 @@ export async function handleSyncRequest(store, request, extras = {}) {
   if (typeof op.kind === 'string' && op.kind.startsWith('account-')) {
     const { createMemoryAccountStore, handleAccountOperation } = await import('./account.mjs');
     const accounts = extras.accounts || extras.accountStore || createMemoryAccountStore();
+    const forgetMember = typeof extras.forgetMember === 'function'
+      ? extras.forgetMember
+      : (target) => forgetMemberInStore(store, target);
     return handleAccountOperation(accounts, op, {
       fetchKakaoUser: extras.fetchKakaoUser,
       fetchNaverUser: extras.fetchNaverUser,
       exchangeNaverCode: extras.exchangeNaverCode,
       naverClientId: extras.naverClientId || '',
       naverClientSecret: extras.naverClientSecret || '',
+      naverAccessToken: extras.naverAccessToken || '',
+      kakaoAdminKey: extras.kakaoAdminKey || '',
+      unlinkKakao: extras.unlinkKakao,
+      revokeNaver: extras.revokeNaver,
+      forgetMember,
       now: extras.now,
     });
   }
