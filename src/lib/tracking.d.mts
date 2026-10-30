@@ -95,6 +95,11 @@ export function shouldKeepTrailPoint(last: TrailSample | null | undefined, point
 export function collapseStayTrail(points: TrailSample[] | null | undefined): TrailSample[];
 export function collapseIndoorStayDisplay(points: TrailSample[] | null | undefined): TrailSample[];
 
+export function labelCoordinate(
+  points: Array<{ lat: number; lng: number; at?: number; staying?: boolean; stayEnd?: boolean; accuracyM?: number }> | null | undefined,
+  fallback: { lat?: number | null; lng?: number | null; accuracyM?: number | null } | null | undefined,
+  moving?: boolean | null,
+): { lat: number; lng: number } | null;
 export function stayLabelPoint(
   points: Array<{ lat: number; lng: number; at?: number; staying?: boolean; stayEnd?: boolean }> | null | undefined,
   fallback: { lat?: number | null; lng?: number | null } | null | undefined,

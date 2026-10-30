@@ -852,7 +852,7 @@ export function labelCoordinate(points, fallback, moving) {
   for (let index = source.length - 1; index >= 0; index -= 1) {
     const point = source[index];
     if (!point || !Number.isFinite(point.lat) || !Number.isFinite(point.lng)) continue;
-    if (point.stayEnd === true) break;
+    if (point.stayEnd === true) return { lat: point.lat, lng: point.lng };
     if (point.staying !== true && index === source.length - 1) break;
     const accuracy = positiveMeters(point.accuracyM);
     if (accuracy > 0 && accuracy <= TRAIL_POOR_ACCURACY_M) return { lat: point.lat, lng: point.lng };

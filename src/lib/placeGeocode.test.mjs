@@ -239,6 +239,11 @@ test('an apartment polygon beats the fire station next door', async () => {
   const accurate = jitter.map((point, index) => ({ ...point, accuracyM: index === jitter.length - 1 ? 55 : 12, staying: true }));
   const namedAt = labelCoordinate(accurate, { ...fire, accuracyM: 55 }, false);
   assert.equal(choosePlaceLabel([station, apartment], namedAt), '하계1차청구아파트 104동');
+  const closed = [
+    { lat: 37.6365, lng: 127.0680, at: 1, staying: true, accuracyM: 12, stayEnd: true },
+    { lat: fire.lat, lng: fire.lng, at: 2, staying: true, accuracyM: 55 },
+  ];
+  assert.equal(labelCoordinate(closed, { ...fire, accuracyM: 55 }, false).lat, 37.6365);
 });
 
 test('family card status starts with the neighborhood, never 근처', () => {
