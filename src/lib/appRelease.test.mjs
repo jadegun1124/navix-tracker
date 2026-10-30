@@ -82,6 +82,10 @@ test('package.json, Gradle, and the release workflow stay on 1.36.0 / 40', () =>
 
   const screen = text('../components/family/FamilyMapScreen.tsx');
   assert.equal((screen.match(/<AppVersionLine \/>/g) || []).length, 2);
+  assert.equal((screen.match(/<DisclosureLogPanel \/>/g) || []).length, 2);
+  assert.match(screen, /정보 제공 기록/);
+  assert.match(screen, /제3자에게 위치나 기록을 제공한 내역이 없습니다/);
+  assert.match(screen, /6개월이 지난 뒤에 지웁니다/);
   assert.match(screen, /계정 연결/);
   assert.match(screen, /카카오 연결/);
   assert.match(screen, /네이버 연결/);

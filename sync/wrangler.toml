@@ -23,6 +23,11 @@ new_sqlite_classes = ["FamilyAccount"]
 [vars]
 NAVER_CLIENT_ID = "dQCiRLIzbNkDG6ULiroD"
 
+# Daily sweep drops disclosure rows whose six-month window has ended.
+# 16:00 UTC is 01:00 in Korea. Account requests also run the same sweep.
+[triggers]
+crons = ["0 16 * * *"]
+
 [observability]
 enabled = true
 

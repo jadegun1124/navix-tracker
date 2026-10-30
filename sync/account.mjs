@@ -4,6 +4,7 @@
 // are never the family member id.
 import { isSeal, isVault } from '../src/lib/familySeal.mjs';
 import { NAVER_REDIRECT, allowedNaverRedirect } from '../src/lib/naverAuth.mjs';
+import { listDisclosures, purgeExpiredDisclosureIndex, purgeExpiredDisclosures } from './disclosure.mjs';
 
 const MEMBER_ID = /^local-[a-z0-9]{3,64}$/;
 const KEY_PART = /^[A-Za-z0-9_-]{16,64}$/;
@@ -921,6 +922,8 @@ export async function linkNaverAccount(store, { accessToken, code, state, redire
 }
 
 async function eraseRecord(store, record) {
+  // disclosure:${memberId} is not an account key. Withdrawal leaves it until
+  // purgeExpiredDisclosures drops entries older than six months.
   const keys = accountKeys(record);
   const indexes = [keys.member, keys.session, keys.recovery, keys.google, keys.kakao, keys.naver].filter(Boolean);
   for (const key of indexes) {
@@ -1033,6 +1036,7 @@ export async function deleteAccount(store, accountKey, options = {}) {
   if (!record) return { error: 'account' };
   await leaveFamilyRooms(record, options.forgetMember);
   await bestEffortProviderUnlink(record, options);
+  await purgeExpiredDisclosures(store, record.memberId, options.now || Date.now());
   await eraseRecord(store, record);
   return { ok: true };
 }
@@ -1057,6 +1061,11 @@ export async function parseAccountOperation(request) {
   if (!path.startsWith('/v1/account')) return null;
 
   const accountKey = request.headers.get('x-umap-account-key') || '';
+
+  if (path === '/v1/account/disclosures') {
+    if (request.method === 'GET') return { kind: 'account-disclosures', accountKey };
+    return json({ error: 'method' }, 405);
+  }
 
   if (request.method === 'GET' && path === '/v1/account') {
     return { kind: 'account-get', accountKey };
@@ -1132,6 +1141,8 @@ export async function parseAccountOperation(request) {
 }
 
 export async function handleAccountOperation(store, op, options = {}) {
+  await purgeExpiredDisclosureIndex(store, options.now || Date.now());
+  if (op.kind === 'account-disclosure-purge') return json({ ok: true });
   if (op.kind === 'account-get') {
     const result = await readAccount(store, op.accountKey);
     if (result.error) return accountError(result.error);
@@ -1182,6 +1193,18 @@ export async function handleAccountOperation(store, op, options = {}) {
     const result = await deleteAccount(store, op.accountKey, options);
     if (result.error) return accountError(result.error);
     return json({ ok: true });
+  }
+  if (op.kind === 'account-disclosures') {
+    const record = await findBySession(store, op.accountKey);
+    if (!record) return accountError('account');
+    const listed = await listDisclosures(store, record.memberId, options.now || Date.now());
+    if (listed.error) return accountError(listed.error);
+    return json({
+      ok: true,
+      retentionMonths: 6,
+      intact: listed.intact === true,
+      disclosures: listed.disclosures,
+    });
   }
   return json({ error: 'method' }, 405);
 }

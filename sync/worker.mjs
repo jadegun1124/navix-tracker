@@ -217,7 +217,20 @@ async function deliverAlert(env, stub, data) {
   }).catch(() => undefined);
 }
 
+async function purgeDisclosureLedger(env) {
+  if (!env?.FAMILY_ACCOUNT) return;
+  const accounts = env.FAMILY_ACCOUNT.get(env.FAMILY_ACCOUNT.idFromName('umap-account-book'));
+  await accounts.fetch('https://account.internal/op', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ op: { kind: 'account-disclosure-purge' } }),
+  });
+}
+
 export default {
+  async scheduled(_event, env, ctx) {
+    ctx.waitUntil(purgeDisclosureLedger(env).catch(() => undefined));
+  },
   async fetch(request, env) {
     if (request.method === 'OPTIONS') return withCors(new Response(null, { status: 204 }));
     const op = await parseOperation(request);

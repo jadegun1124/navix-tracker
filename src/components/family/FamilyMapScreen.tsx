@@ -5,7 +5,7 @@ import { looksLikePhone, localProfile } from '../../lib/localProfile.mjs';
 import { KAKAO_SETUP_MESSAGE } from '../../lib/kakaoAuth.mjs';
 import { NAVER_SETUP_MESSAGE } from '../../lib/naverAuth.mjs';
 import { ACCOUNT_LINKED_OTHER_MESSAGE, ACCOUNT_UNLINKED_MESSAGE, linkedAccountWouldSwitch, readStoredAccountKey, readStoredAccountLinks, readStoredRecoveryCode, rememberAccountSecrets, snapshotFromSession } from '../../lib/accountRestore.mjs';
-import { backupFamilyAccount, cancelAccountBackup, deleteFamilyAccount, persistAccountResult, type AccountSnapshot } from '../../services/familyAccount';
+import { backupFamilyAccount, cancelAccountBackup, deleteFamilyAccount, loadOwnDisclosures, persistAccountResult, type AccountSnapshot, type DisclosureRecord } from '../../services/familyAccount';
 import { buildInviteLink, formatClock, hasLocation, haversineMeters, shouldAlertLeave } from '../../lib/geo';
 import { ALWAYS_GUIDE_DISMISSED_KEY, CHAT_NOTIFY_ASKED_KEY, KEEP_PERMISSION_ASKED_KEY, KEEP_START_ASKED_KEY, keepEntryPrompt, markSessionFlag, readSessionFlag } from '../../lib/systemSettings.mjs';
 import { familyMapShowsTrail, mainOverviewTrails, recordsDayTrails } from '../../lib/mapTrail.mjs';
@@ -1320,6 +1320,7 @@ export function FamilyMapScreen() {
             <p className="text-sm leading-6 text-slate-500">위치는 초대를 수락하고 공유를 허용한 뒤에만 나갑니다. 위치 유지를 켠 뒤에는 이 화면에서 끄지 않습니다.</p>
             <AppVersionLine />
             <RecoveryCodePanel />
+            <DisclosureLogPanel />
             <button
               type="button"
               onClick={openLocationSettings}
@@ -1379,6 +1380,7 @@ export function FamilyMapScreen() {
             <p className="text-sm leading-6 text-slate-500">가족은 같은 방에서 위치를 나눕니다. 위치 유지를 켠 뒤에는 이 화면에서 끄지 않습니다.</p>
             <AppVersionLine />
             <RecoveryCodePanel />
+            <DisclosureLogPanel />
             <div className="mt-3">
               <AlwaysAllowNotice
                 locationMode={state.permissions.locationMode}
@@ -1472,7 +1474,7 @@ export function FamilyMapScreen() {
                 : confirm.kind === 'logout'
                   ? '이 폰의 로그인만 끝냅니다. 서버 백업은 남아 있고, 카카오·네이버 또는 복구 코드로 다시 불러올 수 있습니다.'
                   : confirm.kind === 'delete-account'
-                    ? '서버 계정, 모든 기록, 카카오·네이버 연결과 복구 코드를 영구히 삭제합니다. 이 작업은 되돌릴 수 없습니다.'
+                    ? '서버 계정, 위치 기록, 카카오·네이버 연결과 복구 코드를 영구히 삭제합니다. 제3자 제공 기록은 좌표 없이 6개월이 지난 뒤에 지웁니다. 이 작업은 되돌릴 수 없습니다.'
                     : `${confirm.name} 님과의 초대와 위치 공유를 이 폰에서 지웁니다.`}
             confirmLabel={confirm.kind === 'remove'
               ? '지우기'
@@ -2489,6 +2491,70 @@ function RoundButton({ children, onClick, label }: { children: React.ReactNode; 
 
 function AppVersionLine() {
   return <p className="mt-2 text-xs font-semibold text-slate-500">{currentAppVersionLabel()}</p>;
+}
+
+const DISCLOSURE_LABEL: Record<DisclosureRecord['category'], string> = {
+  location: '위치',
+  history: '기록',
+  place: '장소 이름',
+};
+
+function formatDisclosureWhen(ms: number): string {
+  return new Intl.DateTimeFormat('ko-KR', {
+    timeZone: 'Asia/Seoul',
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).format(ms);
+}
+
+function DisclosureLogPanel() {
+  const [rows, setRows] = useState<DisclosureRecord[] | null>(null);
+  const [intact, setIntact] = useState(true);
+  const [message, setMessage] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    void loadOwnDisclosures().then((result) => {
+      if (!live) return;
+      setRows(result.disclosures);
+      setIntact(result.intact);
+      setMessage(result.ok ? null : (result.message || '제공 기록을 불러오지 못했습니다.'));
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
+  return (
+    <section className="mt-4" aria-label="정보 제공 기록">
+      <h3 className="text-sm font-black text-slate-800">정보 제공 기록</h3>
+      <p className="mt-1 text-xs leading-5 text-slate-500">
+        제3자에게 위치나 기록을 넘긴 사실만 남깁니다. 좌표는 적지 않습니다. 제공한 날부터 6개월 뒤 지우고, 회원 탈퇴 후에도 그 기간이 끝날 때까지 남습니다.
+      </p>
+      {rows === null && <p className="mt-3 text-xs leading-5 text-slate-500">불러오는 중</p>}
+      {rows !== null && message && <p className="mt-3 text-xs leading-5 text-slate-500">{message}</p>}
+      {rows !== null && !message && rows.length === 0 && (
+        <p className="mt-3 text-xs leading-5 text-slate-500">제3자에게 위치나 기록을 제공한 내역이 없습니다.</p>
+      )}
+      {rows !== null && !message && !intact && (
+        <p className="mt-3 text-xs leading-5 text-amber-800">이 기록의 연결이 맞지 않습니다.</p>
+      )}
+      {rows !== null && !message && rows.length > 0 && (
+        <ul className="mt-3 space-y-2">
+          {rows.map((row, index) => (
+            <li key={`${row.at}-${row.category}-${index}`} className="rounded-2xl bg-slate-50 px-3 py-3 text-xs leading-5 text-slate-600">
+              <p className="font-bold text-slate-800">{DISCLOSURE_LABEL[row.category]} · {formatDisclosureWhen(row.rangeStart)} – {formatDisclosureWhen(row.rangeEnd)}</p>
+              <p>받는 곳 {row.recipient}</p>
+              <p>이유 {row.purpose}</p>
+              <p>처리 {row.actor} · {formatDisclosureWhen(row.at)}</p>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
 }
 
 function RecoveryCodePanel() {

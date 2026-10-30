@@ -108,6 +108,64 @@ export async function backupFamilyAccount(snapshot: AccountSnapshot, accountKey 
   return readAccountBody(response);
 }
 
+export interface DisclosureRecord {
+  category: 'location' | 'history' | 'place';
+  rangeStart: number;
+  rangeEnd: number;
+  recipient: string;
+  purpose: string;
+  at: number;
+  actor: string;
+}
+
+function cleanDisclosure(value: unknown): DisclosureRecord | null {
+  if (!value || typeof value !== 'object') return null;
+  const row = value as Record<string, unknown>;
+  if ('lat' in row || 'lng' in row || 'latitude' in row || 'longitude' in row) return null;
+  if (row.category !== 'location' && row.category !== 'history' && row.category !== 'place') return null;
+  if (typeof row.rangeStart !== 'number' || typeof row.rangeEnd !== 'number' || typeof row.at !== 'number') return null;
+  if (!Number.isInteger(row.rangeStart) || !Number.isInteger(row.rangeEnd) || !Number.isInteger(row.at)) return null;
+  if (typeof row.recipient !== 'string' || typeof row.purpose !== 'string' || typeof row.actor !== 'string') return null;
+  if (!row.recipient || !row.purpose || !row.actor) return null;
+  return {
+    category: row.category,
+    rangeStart: row.rangeStart,
+    rangeEnd: row.rangeEnd,
+    recipient: row.recipient,
+    purpose: row.purpose,
+    at: row.at,
+    actor: row.actor,
+  };
+}
+
+export async function loadOwnDisclosures(accountKey = readStoredAccountKey(typeof localStorage === 'undefined' ? null : localStorage)): Promise<{
+  ok: boolean;
+  intact: boolean;
+  disclosures: DisclosureRecord[];
+  message?: string;
+}> {
+  if (!accountKey || !familySyncUrl()) {
+    return { ok: false, intact: true, disclosures: [], message: '위치 서버에 연결되지 않아 제공 기록을 확인하지 못했습니다.' };
+  }
+  try {
+    const response = await request('/v1/account/disclosures', {
+      method: 'GET',
+      headers: accountHeaders(accountKey),
+    });
+    const body = await response.json().catch(() => null) as { ok?: boolean; intact?: boolean; disclosures?: unknown } | null;
+    if (!response.ok || !body || body.ok !== true || !Array.isArray(body.disclosures)) {
+      return { ok: false, intact: true, disclosures: [], message: '제공 기록을 불러오지 못했습니다.' };
+    }
+    return {
+      ok: true,
+      intact: body.intact !== false,
+      disclosures: body.disclosures.map(cleanDisclosure).filter((row): row is DisclosureRecord => row !== null),
+    };
+  } catch {
+    return { ok: false, intact: true, disclosures: [], message: '제공 기록을 불러오지 못했습니다.' };
+  }
+}
+
 export async function deleteFamilyAccount(accountKey = readStoredAccountKey(typeof localStorage === 'undefined' ? null : localStorage)) {
   if (!accountKey) return { ok: false, message: '저장된 계정을 찾지 못했습니다.' };
   try {
