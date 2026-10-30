@@ -1,10 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <full-backup-content>
-    <include domain="sharedpref" path="." />
-    <include domain="database" path="." />
-    <include domain="file" path="." />
-    <include domain="root" path="app_webview/" />
-    <include domain="root" path="app_webview/Default/" />
-    <include domain="root" path="app_webview/Default/Local Storage/" />
-    <include domain="root" path="app_webview/Local Storage/" />
+    <exclude domain="root" path="." />
+    <exclude domain="file" path="." />
+    <exclude domain="database" path="." />
+    <exclude domain="sharedpref" path="." />
+    <exclude domain="external" path="." />
 </full-backup-content>

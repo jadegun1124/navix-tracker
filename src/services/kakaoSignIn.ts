@@ -2,11 +2,12 @@ import { Capacitor, registerPlugin } from '@capacitor/core';
 import { KAKAO_CANCEL_MESSAGE, KAKAO_SETUP_MESSAGE, KAKAO_VERIFY_MESSAGE, kakaoJavascriptKey, kakaoNativeAppKeyOrPublic } from '../lib/kakaoAuth.mjs';
 import { localProfile } from '../lib/localProfile.mjs';
 import { restoredProfile } from '../lib/accountRestore.mjs';
+import { ACCOUNT_UNLINKED_MESSAGE } from '../lib/accountRestore.mjs';
 import { familySyncUrl } from './familySync';
 import { linkKakaoAccount, persistAccountResult, type AccountSnapshot } from './familyAccount';
 
 interface NativeKakaoSignIn {
-  signInKakao(options: { nativeAppKey: string }): Promise<{ ok: boolean; accessToken?: string; code?: string }>;
+  signInKakao(options: { nativeAppKey: string }): Promise<{ ok: boolean; accessToken?: string; code?: string; detail?: string }>;
 }
 
 const nativeAuth = registerPlugin<NativeKakaoSignIn>('UmapAuth');
@@ -16,7 +17,9 @@ export interface ProviderSignInResult {
   profile?: { id: string; name: string; profileKey?: string; photo?: string };
   snapshot?: AccountSnapshot;
   restored?: boolean;
+  created?: boolean;
   message?: string;
+  detail?: string;
 }
 
 export function configuredKakaoNativeAppKey() {
@@ -95,11 +98,11 @@ export async function signInWithKakao(
   if (!familySyncUrl()) return { ok: false, message: KAKAO_VERIFY_MESSAGE };
   let accessToken = '';
   if (Capacitor.isNativePlatform()) {
-    const result = await nativeAuth.signInKakao({ nativeAppKey: configuredKakaoNativeAppKey() }).catch(() => ({ ok: false as const, code: 'failed' }));
+    const result = await nativeAuth.signInKakao({ nativeAppKey: configuredKakaoNativeAppKey() }).catch(() => ({ ok: false as const, code: 'failed', detail: '' }));
     if (!result.ok || !result.accessToken) {
       if (result.code === 'missing-client') return { ok: false, message: KAKAO_SETUP_MESSAGE };
       if (result.code === 'canceled') return { ok: false, message: KAKAO_CANCEL_MESSAGE };
-      return { ok: false, message: KAKAO_VERIFY_MESSAGE };
+      return { ok: false, message: KAKAO_VERIFY_MESSAGE, detail: result.detail || undefined };
     }
     accessToken = result.accessToken;
   } else {
@@ -110,10 +113,13 @@ export async function signInWithKakao(
       return { ok: false, message: message === 'canceled' ? KAKAO_CANCEL_MESSAGE : KAKAO_VERIFY_MESSAGE };
     }
   }
-  const linked = await linkKakaoAccount(accessToken, snapshot, options.mode || 'login').catch(() => ({ ok: false as const, message: KAKAO_VERIFY_MESSAGE }));
-  if (!linked.ok || !linked.account) return { ok: false, message: linked.message || KAKAO_VERIFY_MESSAGE };
+  const linked = await linkKakaoAccount(accessToken, snapshot, options.mode || 'login').catch(() => ({ ok: false as const, message: KAKAO_VERIFY_MESSAGE, detail: undefined as string | undefined }));
+  if (!linked.ok || !linked.account) return { ok: false, message: linked.message || KAKAO_VERIFY_MESSAGE, detail: linked.detail };
+  if (options.mode === 'link' && linked.account.kakaoLinked !== true) {
+    return { ok: false, message: ACCOUNT_UNLINKED_MESSAGE };
+  }
   if (options.persist !== false) await persistAccountResult(linked);
   const profile = profileFromAccount(linked.account);
   if (!profile) return { ok: false, message: KAKAO_VERIFY_MESSAGE };
-  return { ok: true, profile, snapshot: linked.account, restored: linked.restored === true };
+  return { ok: true, profile, snapshot: linked.account, restored: linked.restored === true, created: linked.created === true };
 }

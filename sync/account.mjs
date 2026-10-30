@@ -2,7 +2,7 @@
 // look up the same member id, room keys, and a 30-day journey/visit backup.
 // An old googleSub field is kept on the record and ignored. Provider ids
 // are never the family member id.
-import { allowedNaverRedirect } from '../src/lib/naverAuth.mjs';
+import { NAVER_REDIRECT, allowedNaverRedirect } from '../src/lib/naverAuth.mjs';
 
 const MEMBER_ID = /^local-[a-z0-9]{3,64}$/;
 const KEY_PART = /^[A-Za-z0-9_-]{16,64}$/;
@@ -21,7 +21,9 @@ const EARLIEST_AT = Date.UTC(2024, 0, 1);
 export const ACCOUNT_SETUP_MESSAGE = '계정 확인을 마치지 못했습니다. 이 상태로 시작하지 않습니다.';
 export const NAVER_SECRET_MESSAGE = '네이버 로그인 확인에 필요한 서버 비밀 NAVER_CLIENT_SECRET이 없습니다. 이 상태로 로그인하지 않습니다.';
 export const ACCOUNT_LINK_CONFLICT_MESSAGE = '이 로그인은 다른 사람에 이미 연결되어 있습니다. 이 폰의 지도를 바꾸지 않았습니다.';
-export const ACCOUNT_VERIFY_MESSAGE = '계정 확인에 실패했습니다. 다시 로그인해 주세요.';
+export const ACCOUNT_VERIFY_MESSAGE = '로그인 토큰이 거절되었습니다. 다시 로그인해 주세요.';
+export const ACCOUNT_UNLINKED_MESSAGE = '이 로그인은 아직 이 계정에 연결되지 않았습니다.';
+export const ACCOUNT_LINK_SESSION_MESSAGE = '이 폰의 계정 정보를 찾지 못했습니다. 복구 코드로 먼저 들어온 뒤 연결해 주세요.';
 export const ACCOUNT_RECOVER_MESSAGE = '복구 코드를 확인하지 못했습니다. 코드를 다시 입력해 주세요.';
 export const ACCOUNT_MISSING_MESSAGE = '저장된 계정을 찾지 못했습니다.';
 
@@ -314,6 +316,7 @@ export function publicAccount(record, extras = {}) {
     googleLinked: typeof record.googleSub === 'string' && record.googleSub.length > 0,
     kakaoLinked: typeof record.kakaoId === 'string' && record.kakaoId.length > 0,
     naverLinked: typeof record.naverId === 'string' && record.naverId.length > 0,
+    nameChosen: record.nameChosen !== false,
     ...(extras.accountKey ? { accountKey: extras.accountKey } : {}),
     ...(extras.created ? { created: true } : {}),
   };
@@ -463,6 +466,7 @@ async function mintRecord(snapshot, now, providers = {}) {
     recoveryCode,
     recoveryHash: await recoveryHash(recoveryCode),
     sessionHash: await accountKeyHash(accountKey),
+    nameChosen: providers.nameChosen === false ? false : true,
     createdAt: now,
     updatedAt: now,
   };
@@ -480,6 +484,7 @@ function mergeSnapshot(record, snapshot, now) {
     home: snapshot.home,
     journeys: snapshot.journeys,
     visits: snapshot.visits,
+    nameChosen: true,
     updatedAt: now,
   };
 }
@@ -566,13 +571,74 @@ function naverClientSecret(value) {
   return secret;
 }
 
+function maskKakaoMsg(value) {
+  return String(value || '')
+    .replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, '[ip]')
+    .replace(/\b[0-9a-f]{0,4}(?::[0-9a-f]{0,4}){2,}\b/gi, '[ip]')
+    .replace(/bearer\s+\S+/gi, 'bearer [redacted]')
+    .replace(/[A-Za-z0-9_-]{24,}/g, '[redacted]');
+}
+
+function logKakaoFailure(failure) {
+  const kakaoMsg = maskKakaoMsg(failure?.kakaoMsg).slice(0, 80);
+  console.error(JSON.stringify({
+    message: 'kakao verify failed',
+    status: Number(failure?.status) || 0,
+    kakaoCode: failure?.kakaoCode ?? '',
+    kakaoMsg,
+  }));
+}
+
+async function kakaoHttpFailure(response) {
+  let body = {};
+  try {
+    body = await response.json();
+  } catch {
+    body = {};
+  }
+  const kakaoCode = body && (body.code ?? body.error_code ?? body.error);
+  const kakaoMsg = typeof body?.msg === 'string'
+    ? body.msg
+    : (typeof body?.error_description === 'string' ? body.error_description : '');
+  return {
+    ok: false,
+    status: response.status,
+    kakaoCode: kakaoCode ?? '',
+    kakaoMsg,
+  };
+}
+
 async function defaultFetchKakaoUser(accessToken) {
   const headers = { Authorization: `Bearer ${accessToken}` };
-  const info = await fetch('https://kapi.kakao.com/v1/user/access_token_info', { headers });
-  if (!info.ok) return null;
-  const me = await fetch('https://kapi.kakao.com/v2/user/me', { headers });
-  if (!me.ok) return null;
-  return me.json();
+  try {
+    const info = await fetch('https://kapi.kakao.com/v1/user/access_token_info', { headers });
+    if (!info.ok) return kakaoHttpFailure(info);
+    const me = await fetch('https://kapi.kakao.com/v2/user/me', { headers });
+    if (!me.ok) return kakaoHttpFailure(me);
+    return { ok: true, profile: await me.json() };
+  } catch {
+    return { ok: false, status: 0, network: true, kakaoCode: '', kakaoMsg: '' };
+  }
+}
+
+function kakaoReason(failure) {
+  const msg = String(failure?.kakaoMsg || '').toLowerCase();
+  if (msg.includes('ip mismatched') || msg.includes('ip mismatch')) return 'kakao_ip';
+  const code = failure?.kakaoCode == null || failure.kakaoCode === '' ? 'rejected' : String(failure.kakaoCode);
+  return `kakao_${code}`;
+}
+
+export function kakaoFailureResponse(failure) {
+  const problem = failure && typeof failure === 'object' ? failure : { ok: false, status: 0, network: true };
+  logKakaoFailure(problem);
+  if (problem.network === true || problem.status === 0 || Number(problem.status) >= 500) {
+    return json({ error: 'upstream' }, 502);
+  }
+  return json({
+    error: 'token',
+    reason: kakaoReason(problem),
+    message: ACCOUNT_VERIFY_MESSAGE,
+  }, 401);
 }
 
 async function defaultFetchNaverUser(accessToken) {
@@ -603,17 +669,60 @@ async function defaultExchangeNaverCode({ code, state, clientId, clientSecret, r
 
 export async function verifyKakaoAccessToken(accessToken, options = {}) {
   const token = bearerToken(accessToken);
-  if (!token) return { ok: false };
+  if (!token) return { ok: false, status: 401, kakaoCode: '', kakaoMsg: '' };
   const fetchUser = typeof options.fetchKakaoUser === 'function' ? options.fetchKakaoUser : defaultFetchKakaoUser;
-  const profile = await fetchUser(token).catch(() => null);
+  let fetched;
+  try {
+    fetched = await fetchUser(token);
+  } catch {
+    return { ok: false, status: 0, network: true, kakaoCode: '', kakaoMsg: '' };
+  }
+  if (!fetched) return { ok: false, status: 401, kakaoCode: '', kakaoMsg: '' };
+  if (fetched.ok === false || fetched.network === true) {
+    return {
+      ok: false,
+      status: fetched.network === true ? 0 : (Number(fetched.status) || 401),
+      network: fetched.network === true || fetched.status === 0,
+      kakaoCode: fetched.kakaoCode ?? '',
+      kakaoMsg: typeof fetched.kakaoMsg === 'string' ? fetched.kakaoMsg : '',
+    };
+  }
+  const profile = fetched.ok === true && fetched.profile ? fetched.profile : fetched;
   const id = kakaoUserId(profile && profile.id);
-  if (!id) return { ok: false };
+  if (!id) {
+    return {
+      ok: false,
+      status: Number(fetched.status) || 401,
+      kakaoCode: fetched.kakaoCode ?? '',
+      kakaoMsg: typeof fetched.kakaoMsg === 'string' ? fetched.kakaoMsg : '',
+    };
+  }
   const name = cleanName(
     profile?.kakao_account?.profile?.nickname
     || profile?.properties?.nickname
     || '',
   );
   return { ok: true, id, name };
+}
+
+export function naverCallbackResponse(url) {
+  const code = url.searchParams.get('code');
+  const state = url.searchParams.get('state');
+  const error = url.searchParams.get('error');
+  const oversized = (value, max) => typeof value === 'string' && value.length > max;
+  if (oversized(code, 256) || oversized(state, 128) || oversized(error, 80)) {
+    return json({ error: 'callback' }, 400);
+  }
+  const target = new URL(NAVER_REDIRECT);
+  if (error && error.trim()) {
+    target.searchParams.set('error', error.trim());
+    if (state && state.trim()) target.searchParams.set('state', state.trim());
+    return new Response(null, { status: 302, headers: { location: target.toString() } });
+  }
+  if (!code || !code.trim() || !state || !state.trim()) return json({ error: 'callback' }, 400);
+  target.searchParams.set('code', code.trim());
+  target.searchParams.set('state', state.trim());
+  return new Response(null, { status: 302, headers: { location: target.toString() } });
 }
 
 export async function verifyNaverAccessToken(accessToken, options = {}) {
@@ -663,11 +772,29 @@ async function attachLinkedProvider(store, {
   const linking = mode === 'link';
   const current = currentKey ? await findBySession(store, currentKey) : null;
   if (linking) {
-    if (!current) return { error: 'account' };
-    if (existing && current.id !== existing.id) return { error: 'member' };
-    const next = { ...current, [field]: providerId, updatedAt: now };
-    await writeRecord(store, next, current);
-    return { record: next, accountKey: currentKey, linked: true };
+    if (current) {
+      if (existing && current.id !== existing.id) return { error: 'member' };
+      const next = { ...current, [field]: providerId, updatedAt: now };
+      await writeRecord(store, next, current);
+      return { record: next, accountKey: currentKey, linked: true };
+    }
+    if (!snapshot) return { error: 'link-session' };
+    const found = await findByMember(store, snapshot.memberId);
+    if (found && sameProfileKey(found, snapshot)) {
+      if (existing && existing.id !== found.id) return { error: 'member' };
+      const accountKey = mintAccountKey();
+      const next = {
+        ...mergeSnapshot(found, snapshot, now),
+        [field]: providerId,
+        sessionHash: await accountKeyHash(accountKey),
+      };
+      await writeRecord(store, next, found);
+      return { record: next, accountKey, linked: true };
+    }
+    if (existing || found) return { error: 'member' };
+    const minted = await mintRecord(snapshot, now, { [field]: providerId, nameChosen: true });
+    await writeRecord(store, minted.record);
+    return { record: minted.record, accountKey: minted.accountKey, created: true, linked: true };
   }
   if (existing) {
     const nextKey = mintAccountKey();
@@ -681,14 +808,14 @@ async function attachLinkedProvider(store, {
     return { record: next, accountKey: currentKey, linked: true };
   }
   const seed = snapshot || snapshotFromDisplayName(displayName);
-  const minted = await mintRecord(seed, now, { [field]: providerId });
+  const minted = await mintRecord(seed, now, { [field]: providerId, nameChosen: Boolean(snapshot) });
   await writeRecord(store, minted.record);
   return { record: minted.record, accountKey: minted.accountKey, created: true };
 }
 
 export async function linkKakaoAccount(store, { accessToken, snapshot, accountKey, mode }, options = {}) {
   const verified = await verifyKakaoAccessToken(accessToken, options);
-  if (!verified.ok) return { error: 'token' };
+  if (!verified.ok) return { error: 'token', failure: verified };
   return attachLinkedProvider(store, {
     existing: await findByKakao(store, verified.id),
     currentKey: accountKey,
@@ -730,10 +857,129 @@ export async function linkNaverAccount(store, { accessToken, code, state, redire
   });
 }
 
+async function eraseRecord(store, record) {
+  const keys = accountKeys(record);
+  const indexes = [keys.member, keys.session, keys.recovery, keys.google, keys.kakao, keys.naver].filter(Boolean);
+  for (const key of indexes) {
+    const current = await store.get(key);
+    if (current === record.id) await store.delete(key);
+  }
+  await store.delete(keys.record);
+}
+
+function createdRoomTarget(record) {
+  const room = record?.room;
+  if (!room || typeof room !== 'object') return null;
+  const code = typeof room.code === 'string' ? room.code : '';
+  if (!/^\d{4,6}$/.test(code)) return null;
+  if (typeof room.writeKey !== 'string' || typeof room.readKey !== 'string') return null;
+  return {
+    code,
+    writeKey: room.writeKey,
+    readKey: room.readKey,
+    memberId: record.memberId,
+    deleteIfAlone: true,
+  };
+}
+
+function guardianTargets(record) {
+  const own = record?.room;
+  const targets = [];
+  for (const guardian of Array.isArray(record?.guardians) ? record.guardians : []) {
+    if (!guardian || typeof guardian !== 'object') continue;
+    const code = typeof guardian.code === 'string' ? guardian.code : '';
+    const syncToken = typeof guardian.syncToken === 'string' ? guardian.syncToken : '';
+    if (!/^\d{4,6}$/.test(code) || !syncToken) continue;
+    if (own && own.code === code && syncToken.startsWith(`${own.writeKey}.`)) continue;
+    targets.push({
+      code,
+      syncToken,
+      memberId: record.memberId,
+      deleteIfAlone: false,
+    });
+  }
+  return targets;
+}
+
+async function leaveFamilyRooms(record, forgetMember) {
+  if (typeof forgetMember !== 'function') return;
+  const targets = [];
+  const created = createdRoomTarget(record);
+  if (created) targets.push(created);
+  targets.push(...guardianTargets(record));
+  await Promise.all(targets.map((target) => Promise.resolve(forgetMember(target)).catch(() => undefined)));
+}
+
+function unlinkSignal() {
+  if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') return AbortSignal.timeout(4000);
+  return undefined;
+}
+
+async function unlinkKakao(kakaoId, options) {
+  if (!kakaoId) return;
+  if (typeof options.unlinkKakao === 'function') {
+    await options.unlinkKakao(kakaoId);
+    return;
+  }
+  const adminKey = typeof options.kakaoAdminKey === 'string' ? options.kakaoAdminKey.trim() : '';
+  if (!adminKey || /your-|placeholder|example/i.test(adminKey)) return;
+  await fetch('https://kapi.kakao.com/v1/user/unlink', {
+    method: 'POST',
+    headers: {
+      Authorization: `KakaoAK ${adminKey}`,
+      'content-type': 'application/x-www-form-urlencoded;charset=utf-8',
+    },
+    body: new URLSearchParams({ target_id_type: 'user_id', target_id: kakaoId }),
+    signal: unlinkSignal(),
+  });
+}
+
+async function revokeNaver(record, options) {
+  if (!record?.naverId) return;
+  if (typeof options.revokeNaver === 'function') {
+    await options.revokeNaver(record.naverId);
+    return;
+  }
+  const token = bearerToken(options.naverAccessToken);
+  const secret = naverClientSecret(options.naverClientSecret);
+  const id = naverClientId(options.naverClientId);
+  if (!token || !secret || !id) return;
+  await fetch('https://nid.naver.com/oauth2.0/token', {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded;charset=utf-8' },
+    body: new URLSearchParams({
+      grant_type: 'delete',
+      client_id: id,
+      client_secret: secret,
+      access_token: token,
+      service_provider: 'NAVER',
+    }),
+    signal: unlinkSignal(),
+  });
+}
+
+async function bestEffortProviderUnlink(record, options) {
+  await Promise.all([
+    unlinkKakao(record.kakaoId, options).catch(() => undefined),
+    revokeNaver(record, options).catch(() => undefined),
+  ]);
+}
+
+export async function deleteAccount(store, accountKey, options = {}) {
+  const record = await findBySession(store, accountKey);
+  if (!record) return { error: 'account' };
+  await leaveFamilyRooms(record, options.forgetMember);
+  await bestEffortProviderUnlink(record, options);
+  await eraseRecord(store, record);
+  return { ok: true };
+}
+
 export function accountError(code) {
   if (code === 'naver-secret') return json({ error: 'setup', message: NAVER_SECRET_MESSAGE }, 503);
   if (code === 'setup') return json({ error: 'setup', message: ACCOUNT_SETUP_MESSAGE }, 503);
   if (code === 'token') return json({ error: 'token', message: ACCOUNT_VERIFY_MESSAGE }, 401);
+  if (code === 'unlinked') return json({ error: 'unlinked', message: ACCOUNT_UNLINKED_MESSAGE }, 404);
+  if (code === 'link-session') return json({ error: 'link-session', message: ACCOUNT_LINK_SESSION_MESSAGE }, 404);
   if (code === 'recovery') return json({ error: 'recovery', message: ACCOUNT_RECOVER_MESSAGE }, 403);
   if (code === 'member') return json({ error: 'member', message: ACCOUNT_LINK_CONFLICT_MESSAGE }, 409);
   if (code === 'snapshot' || code === 'name' || code === 'room' || code === 'profile-key' || code === 'photo') {
@@ -815,6 +1061,10 @@ export async function parseAccountOperation(request) {
     return { kind: 'account-recover', code: typeof value.code === 'string' ? value.code : '' };
   }
 
+  if (request.method === 'DELETE' && path === '/v1/account') {
+    return { kind: 'account-delete', accountKey };
+  }
+
   return json({ error: 'method' }, 405);
 }
 
@@ -836,6 +1086,7 @@ export async function handleAccountOperation(store, op, options = {}) {
   }
   if (op.kind === 'account-kakao') {
     const result = await linkKakaoAccount(store, op, options);
+    if (result.failure) return kakaoFailureResponse(result.failure);
     if (result.error) return accountError(result.error);
     return json({
       ok: true,
@@ -860,6 +1111,11 @@ export async function handleAccountOperation(store, op, options = {}) {
       restored: true,
       account: publicAccount(result.record, { accountKey: result.accountKey }),
     });
+  }
+  if (op.kind === 'account-delete') {
+    const result = await deleteAccount(store, op.accountKey, options);
+    if (result.error) return accountError(result.error);
+    return json({ ok: true });
   }
   return json({ error: 'method' }, 405);
 }

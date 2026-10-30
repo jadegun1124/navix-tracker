@@ -8,12 +8,15 @@ import {
   publicAccount,
   sameMember,
 } from './account.mjs';
-import { createMemoryStore, handleSyncRequest, randomKey, syncTokenFor } from './protocol.mjs';
+import { NAVER_APP_REDIRECT } from '../src/lib/naverAuth.mjs';
+import { createMemoryStore, emptyRoom, handleSyncRequest, memberRoomToken, randomKey, syncTokenFor } from './protocol.mjs';
 import {
   ACCOUNT_KEY_STORAGE,
   ACCOUNT_LINKS_STORAGE,
   RECOVERY_CODE_STORAGE,
+  accountNeedsDisplayName,
   applyAccountSnapshot,
+  clearDeviceAccount,
   currentAccountBackupEpoch,
   logoutLocalAccount,
   persistAccountSecretsIfCurrent,
@@ -59,7 +62,7 @@ function snapshot(overrides = {}) {
   };
 }
 
-async function accountCall(accounts, method, path, { body, accountKey, extras } = {}) {
+async function accountCall(accounts, method, path, { body, accountKey, extras, rooms } = {}) {
   const headers = new Headers({ 'content-type': 'application/json' });
   if (accountKey) headers.set('x-umap-account-key', accountKey);
   const request = new Request(`http://sync.local${path}`, {
@@ -67,14 +70,18 @@ async function accountCall(accounts, method, path, { body, accountKey, extras } 
     headers,
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  const rooms = createMemoryStore();
-  const response = await handleSyncRequest(rooms, request, {
+  const roomStore = rooms || createMemoryStore();
+  const response = await handleSyncRequest(roomStore, request, {
     accounts,
     fetchKakaoUser: extras?.fetchKakaoUser,
     fetchNaverUser: extras?.fetchNaverUser,
     exchangeNaverCode: extras?.exchangeNaverCode,
     naverClientId: extras?.naverClientId,
     naverClientSecret: extras?.naverClientSecret,
+    naverAccessToken: extras?.naverAccessToken,
+    kakaoAdminKey: extras?.kakaoAdminKey,
+    unlinkKakao: extras?.unlinkKakao,
+    revokeNaver: extras?.revokeNaver,
     now: extras?.now,
   });
   const text = await response.text();
@@ -250,7 +257,7 @@ test('Kakao and Naver tokens restore the same book and can share one account', a
   const accounts = createMemoryAccountStore();
   const extras = {
     fetchKakaoUser: async (token) => {
-      if (token !== 'kakao-access-ok') throw new Error('kakao');
+      if (token !== 'kakao-access-ok') return { ok: false, status: 401, kakaoCode: -401, kakaoMsg: 'invalid token' };
       return { id: 123456789, kakao_account: { profile: { nickname: '엄마' } } };
     },
     fetchNaverUser: async (token) => {
@@ -390,18 +397,76 @@ test('linking someone else\'s Kakao does not rotate that session', async () => {
   assert.equal(still.sessionHash, before.sessionHash);
 });
 
-test('link mode does not mint an account when this phone has no session', async () => {
+test('link mode with a stale session keeps the same member when the snapshot matches', async () => {
+  const accounts = createMemoryAccountStore();
+  const extras = {
+    fetchKakaoUser: async () => ({ id: 123456789, kakao_account: { profile: { nickname: '엄마' } } }),
+    fetchNaverUser: async () => ({ resultcode: '00', response: { id: 'naver-user-88', nickname: '엄마' } }),
+  };
+  const created = await accountCall(accounts, 'POST', '/v1/account', { body: snapshot() });
+  assert.equal(created.status, 200);
+  const stale = 'staleKeyAAAAAAAAAAAA';
+  const linked = await accountCall(accounts, 'POST', '/v1/account/kakao', {
+    accountKey: stale,
+    body: { accessToken: 'kakao-access-ok', mode: 'link', accountKey: stale, snapshot: snapshot() },
+    extras,
+  });
+  assert.equal(linked.status, 200);
+  assert.equal(linked.body.account.memberId, 'local-restore1');
+  assert.equal(linked.body.account.kakaoLinked, true);
+  assert.equal(linked.body.account.nameChosen, true);
+  assert.notEqual(linked.body.account.accountKey, stale);
+  assert.notEqual(linked.body.account.accountKey, created.body.account.accountKey);
+  const again = await accountCall(accounts, 'GET', '/v1/account', { accountKey: linked.body.account.accountKey });
+  assert.equal(again.status, 200);
+  assert.equal(again.body.account.journeys[0].id, 'j-1');
+
+  const naver = await accountCall(accounts, 'POST', '/v1/account/naver', {
+    accountKey: stale,
+    body: { accessToken: 'naver-access-ok', mode: 'link', accountKey: stale, snapshot: snapshot() },
+    extras,
+  });
+  assert.equal(naver.status, 200);
+  assert.equal(naver.body.account.memberId, 'local-restore1');
+  assert.equal(naver.body.account.naverLinked, true);
+  assert.equal(naver.body.account.kakaoLinked, true);
+  assert.notEqual(naver.body.account.accountKey, stale);
+});
+
+test('link mode without a snapshot does not mint an account', async () => {
   const accounts = createMemoryAccountStore();
   const extras = {
     fetchKakaoUser: async () => ({ id: 555666777, kakao_account: { profile: { nickname: '엄마' } } }),
   };
   const missing = await accountCall(accounts, 'POST', '/v1/account/kakao', {
-    body: { accessToken: 'kakao-access-ok', mode: 'link', snapshot: snapshot() },
+    accountKey: 'staleKeyAAAAAAAAAAAA',
+    body: { accessToken: 'kakao-access-ok', mode: 'link', accountKey: 'staleKeyAAAAAAAAAAAA' },
     extras,
   });
   assert.equal(missing.status, 404);
+  assert.equal(missing.body.error, 'link-session');
+  assert.match(missing.body.message, /복구 코드로 먼저 들어온 뒤 연결해 주세요/);
   assert.equal(await accounts.get('kakao:555666777'), undefined);
   assert.equal(await accounts.get('member:local-restore1'), undefined);
+
+  const rejected = await accountCall(accounts, 'POST', '/v1/account/kakao', {
+    body: { accessToken: 'wrong-token', mode: 'link' },
+    extras: { fetchKakaoUser: async () => null },
+  });
+  assert.equal(rejected.status, 401);
+  assert.equal(rejected.body.error, 'token');
+  assert.match(rejected.body.message, /토큰이 거절/);
+  assert.doesNotMatch(rejected.body.message, /복구 코드/);
+
+  const created = await accountCall(accounts, 'POST', '/v1/account/kakao', {
+    body: { accessToken: 'kakao-access-ok', mode: 'link', snapshot: snapshot() },
+    extras,
+  });
+  assert.equal(created.status, 200);
+  assert.equal(created.body.account.created, true);
+  assert.equal(created.body.account.kakaoLinked, true);
+  assert.equal(created.body.account.memberId, 'local-restore1');
+  assert.equal(accountNeedsDisplayName(created.body.account), true);
 });
 
 test('logout wipes the stored account key so the next sign-in does not reuse the previous person', () => {
@@ -445,4 +510,229 @@ test('logout wipes the stored account key so the next sign-in does not reuse the
   assert.equal(fake.getItem(ACCOUNT_KEY_STORAGE), null);
   assert.equal(fake.getItem(RECOVERY_CODE_STORAGE), null);
   assert.notEqual(currentAccountBackupEpoch(), epoch);
+});
+
+test('a new provider account asks for a name and a restored one does not', () => {
+  assert.equal(accountNeedsDisplayName({ created: true, nameChosen: true, profile: { name: '엄마' } }), true);
+  assert.equal(accountNeedsDisplayName({ nameChosen: false, profile: { name: '가족' } }), true);
+  assert.equal(accountNeedsDisplayName({ nameChosen: true, profile: { name: '엄마' }, journeys: [{ id: 'j-1' }] }), false);
+  assert.equal(accountNeedsDisplayName({ profile: { name: '' } }), true);
+});
+
+test('delete account removes the book, journeys, provider indexes, and room membership', async () => {
+  const accounts = createMemoryAccountStore();
+  const rooms = createMemoryStore();
+  const deletedTokens = [];
+  const originalDelete = rooms.delete.bind(rooms);
+  rooms.delete = async (token) => {
+    deletedTokens.push(token);
+    await originalDelete(token);
+  };
+  const created = await accountCall(accounts, 'POST', '/v1/account', { body: snapshot(), rooms });
+  assert.equal(created.status, 200);
+  const key = created.body.account.accountKey;
+  const code = created.body.account.recoveryCode;
+  const recordId = await accounts.get('member:local-restore1');
+  const record = await accounts.get(`acct:${recordId}`);
+  record.googleSub = '1098234765';
+  record.kakaoId = '123456789';
+  record.naverId = 'naver-user-88';
+  const guestSync = await syncTokenFor('writeKeyBBBBBBBBBB', 'readKeyBBBBBBBBBBB');
+  record.guardians = [{ id: 'g-10002', label: '아빠', code: '10002', share: 'accepted', syncToken: guestSync }];
+  await accounts.put(`acct:${recordId}`, record);
+  await accounts.put('google:1098234765', recordId);
+  await accounts.put('kakao:123456789', recordId);
+  await accounts.put('naver:naver-user-88', recordId);
+
+  const ownToken = await memberRoomToken({
+    code: '48291',
+    writeKey: 'writeKeyAAAAAAAAAA',
+    readKey: 'readKeyAAAAAAAAAAA',
+  });
+  const guestToken = await memberRoomToken({ code: '10002', syncToken: guestSync, memberId: 'local-restore1' });
+  await rooms.write(ownToken, {
+    ...emptyRoom(),
+    places: {
+      self: { memberId: 'local-restore1', name: '엄마', sharing: true, audience: 'family', lat: 37.5, lng: 127, at: 1 },
+    },
+    profiles: { 'local-restore1': { memberId: 'local-restore1', name: '엄마', at: 1 } },
+    trails: { 'local-restore1': { memberId: 'local-restore1', journeys: [{ id: 'j-1' }] } },
+  });
+  await rooms.write(guestToken, {
+    ...emptyRoom(),
+    places: {
+      self: { memberId: 'local-restore1', name: '엄마', sharing: true, audience: 'family', lat: 37.5, lng: 127, at: 1 },
+      other: { memberId: 'local-otherphone', name: '아빠', sharing: true, audience: 'family', lat: 37.6, lng: 127.1, at: 2 },
+    },
+    profiles: {
+      'local-restore1': { memberId: 'local-restore1', name: '엄마', at: 1 },
+      'local-otherphone': { memberId: 'local-otherphone', name: '아빠', at: 2 },
+    },
+  });
+
+  let kakaoUnlinked = '';
+  let naverRevoked = '';
+  const removed = await accountCall(accounts, 'DELETE', '/v1/account', {
+    accountKey: key,
+    rooms,
+    extras: {
+      unlinkKakao: async (id) => {
+        kakaoUnlinked = id;
+        throw new Error('kakao down');
+      },
+      revokeNaver: async (id) => {
+        naverRevoked = id;
+      },
+    },
+  });
+  assert.equal(removed.status, 200);
+  assert.equal(removed.body.ok, true);
+  assert.equal(kakaoUnlinked, '123456789');
+  assert.equal(naverRevoked, 'naver-user-88');
+  assert.equal(await accounts.get(`acct:${recordId}`), undefined);
+  assert.equal(await accounts.get('member:local-restore1'), undefined);
+  assert.equal(await accounts.get(`session:${record.sessionHash}`), undefined);
+  assert.equal(await accounts.get(`recovery:${record.recoveryHash}`), undefined);
+  assert.equal(await accounts.get('google:1098234765'), undefined);
+  assert.equal(await accounts.get('kakao:123456789'), undefined);
+  assert.equal(await accounts.get('naver:naver-user-88'), undefined);
+  assert.equal(deletedTokens.includes(ownToken), true);
+  const guest = await rooms.read(guestToken);
+  assert.equal(guest.profiles['local-otherphone'].name, '아빠');
+  assert.equal(guest.profiles['local-restore1'], undefined);
+  assert.equal(guest.places.self, undefined);
+  assert.equal(deletedTokens.includes(guestToken), false);
+
+  const recover = await accountCall(accounts, 'POST', '/v1/account/recover', { body: { code }, rooms });
+  assert.equal(recover.status, 403);
+  const denied = await accountCall(accounts, 'DELETE', '/v1/account', { accountKey: 'missingKeyAAAAAAAAA', rooms });
+  assert.equal(denied.status, 404);
+  assert.match(denied.body.message, /저장된 계정/);
+});
+
+test('withdrawal clears this device storage', () => {
+  const map = new Map();
+  const storage = {
+    get length() { return map.size; },
+    key(index) { return [...map.keys()][index] ?? null; },
+    getItem(key) { return map.has(key) ? map.get(key) : null; },
+    setItem(key, value) { map.set(key, String(value)); },
+    removeItem(key) { map.delete(key); },
+  };
+  storage.setItem('umap_account_key_v1', 'accountKeyAAAAAAAAAA');
+  storage.setItem('umap_family_v1', '{}');
+  storage.setItem('umap_dm_v1:1:a', '[]');
+  storage.setItem('other-app', 'keep');
+  clearDeviceAccount(storage, storage);
+  assert.equal(storage.getItem('umap_account_key_v1'), null);
+  assert.equal(storage.getItem('umap_family_v1'), null);
+  assert.equal(storage.getItem('umap_dm_v1:1:a'), null);
+  assert.equal(storage.getItem('other-app'), 'keep');
+});
+
+test('naver callback redirects code and state and rejects bad params', async () => {
+  const rooms = createMemoryStore();
+  const accounts = createMemoryAccountStore();
+  const ok = await handleSyncRequest(rooms, new Request('http://sync.local/v1/naver/callback?code=naver-code-1&state=state-1'), { accounts });
+  assert.equal(ok.status, 302);
+  const location = new URL(ok.headers.get('location'));
+  assert.equal(location.protocol, 'kinnex:');
+  assert.equal(location.host, 'naver');
+  assert.equal(location.searchParams.get('code'), 'naver-code-1');
+  assert.equal(location.searchParams.get('state'), 'state-1');
+
+  const missing = await handleSyncRequest(rooms, new Request('http://sync.local/v1/naver/callback?state=state-1'), { accounts });
+  assert.equal(missing.status, 400);
+  const oversized = await handleSyncRequest(rooms, new Request(`http://sync.local/v1/naver/callback?code=${'a'.repeat(300)}&state=state-1`), { accounts });
+  assert.equal(oversized.status, 400);
+  const errored = await handleSyncRequest(rooms, new Request('http://sync.local/v1/naver/callback?error=access_denied&state=state-1'), { accounts });
+  assert.equal(errored.status, 302);
+  assert.equal(new URL(errored.headers.get('location')).searchParams.get('error'), 'access_denied');
+});
+
+test('naver code exchange sends the registered callback as redirect_uri', async () => {
+  const accounts = createMemoryAccountStore();
+  let seen = '';
+  const extras = {
+    exchangeNaverCode: async ({ redirectUri, code, state }) => {
+      seen = redirectUri;
+      assert.equal(code, 'naver-code-1');
+      assert.equal(state, 'state-1');
+      return { access_token: 'naver-access-ok' };
+    },
+    fetchNaverUser: async () => ({ resultcode: '00', response: { id: 'navercallback88', nickname: '엄마' } }),
+    naverClientId: 'naverclientid1',
+    naverClientSecret: 'naversecret1',
+  };
+  const created = await accountCall(accounts, 'POST', '/v1/account/naver', {
+    body: { code: 'naver-code-1', state: 'state-1', redirectUri: NAVER_APP_REDIRECT, snapshot: snapshot() },
+    extras,
+  });
+  assert.equal(seen, NAVER_APP_REDIRECT);
+  assert.equal(created.status, 200);
+  assert.equal(created.body.account.naverLinked, true);
+  const lookalike = await accountCall(accounts, 'POST', '/v1/account/naver', {
+    body: { code: 'naver-code-1', state: 'state-1', redirectUri: `${NAVER_APP_REDIRECT}/extra` },
+    extras,
+  });
+  assert.equal(lookalike.status, 401);
+});
+
+test('kakao verification reports the upstream code and never logs the token', async () => {
+  const token = 'KakaoSecretTokenValue123456';
+  const logs = [];
+  const originalError = console.error;
+  const originalFetch = globalThis.fetch;
+  console.error = (...args) => {
+    logs.push(args.map((item) => String(item)).join(' '));
+  };
+  const accounts = createMemoryAccountStore();
+  async function withFetch(fetchImpl, body = { accessToken: token }) {
+    logs.length = 0;
+    globalThis.fetch = fetchImpl;
+    return accountCall(accounts, 'POST', '/v1/account/kakao', { body });
+  }
+  try {
+    const rejected = await withFetch(async () => new Response(JSON.stringify({
+      code: -401,
+      msg: 'this access token does not exist',
+    }), { status: 401 }));
+    assert.equal(rejected.status, 401);
+    assert.equal(rejected.body.error, 'token');
+    assert.equal(rejected.body.reason, 'kakao_-401');
+    assert.match(logs.join('\n'), /kakao verify failed/);
+    assert.equal(logs.join('\n').includes(token), false);
+
+    const ip = await withFetch(async () => new Response(JSON.stringify({
+      code: -401,
+      msg: 'ip mismatched callerIp=203.0.113.8',
+    }), { status: 401 }));
+    assert.equal(ip.status, 401);
+    assert.equal(ip.body.reason, 'kakao_ip');
+    assert.match(logs.join('\n'), /\[ip\]/);
+    assert.equal(logs.join('\n').includes('203.0.113.8'), false);
+    assert.equal(logs.join('\n').includes(token), false);
+
+    const thrown = await withFetch(async () => {
+      throw new Error(`network ${token}`);
+    });
+    assert.equal(thrown.status, 502);
+    assert.equal(thrown.body.error, 'upstream');
+    assert.equal(logs.join('\n').includes(token), false);
+
+    const upstream = await withFetch(async () => new Response('unavailable', { status: 503 }));
+    assert.equal(upstream.status, 502);
+    assert.equal(upstream.body.error, 'upstream');
+
+    const ok = await withFetch(async (url) => {
+      if (String(url).includes('access_token_info')) return new Response('{}', { status: 200 });
+      return new Response(JSON.stringify({ id: 123456789, kakao_account: { profile: { nickname: '엄마' } } }), { status: 200 });
+    }, { accessToken: token, snapshot: snapshot({ memberId: 'local-kakao200', profileKey: 'profilekeyBBBBBBBB' }) });
+    assert.equal(ok.status, 200);
+    assert.equal(ok.body.account.kakaoLinked, true);
+    assert.equal(logs.join('\n').includes(token), false);
+  } finally {
+    console.error = originalError;
+    globalThis.fetch = originalFetch;
+  }
 });

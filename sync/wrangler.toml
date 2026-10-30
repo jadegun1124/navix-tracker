@@ -22,3 +22,12 @@ new_sqlite_classes = ["FamilyAccount"]
 # Public Naver client id. NAVER_CLIENT_SECRET is a Worker secret and is not in this file.
 [vars]
 NAVER_CLIENT_ID = "dQCiRLIzbNkDG6ULiroD"
+
+[observability]
+enabled = true
+
+[observability.logs]
+enabled = true
+
+[observability.traces]
+enabled = true

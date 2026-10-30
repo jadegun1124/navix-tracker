@@ -4,8 +4,8 @@ import { currentAppVersionLabel } from '../../lib/appRelease.mjs';
 import { looksLikePhone, localProfile } from '../../lib/localProfile.mjs';
 import { KAKAO_SETUP_MESSAGE } from '../../lib/kakaoAuth.mjs';
 import { NAVER_SETUP_MESSAGE } from '../../lib/naverAuth.mjs';
-import { ACCOUNT_LINKED_OTHER_MESSAGE, linkedAccountWouldSwitch, readStoredAccountLinks, readStoredRecoveryCode, rememberAccountSecrets, snapshotFromSession } from '../../lib/accountRestore.mjs';
-import type { AccountSnapshot } from '../../services/familyAccount';
+import { ACCOUNT_LINKED_OTHER_MESSAGE, ACCOUNT_UNLINKED_MESSAGE, linkedAccountWouldSwitch, readStoredAccountKey, readStoredAccountLinks, readStoredRecoveryCode, rememberAccountSecrets, snapshotFromSession } from '../../lib/accountRestore.mjs';
+import { backupFamilyAccount, cancelAccountBackup, deleteFamilyAccount, persistAccountResult, type AccountSnapshot } from '../../services/familyAccount';
 import { buildInviteLink, formatClock, hasLocation, haversineMeters, shouldAlertLeave } from '../../lib/geo';
 import { ALWAYS_GUIDE_DISMISSED_KEY, CHAT_NOTIFY_ASKED_KEY, KEEP_PERMISSION_ASKED_KEY, KEEP_START_ASKED_KEY, keepEntryPrompt, markSessionFlag, readSessionFlag } from '../../lib/systemSettings.mjs';
 import { familyMapShowsTrail, mainOverviewTrails, recordsDayTrails } from '../../lib/mapTrail.mjs';
@@ -20,6 +20,7 @@ import { sounds } from '../../utils/audio';
 import { DEFAULT_CENTER, type GuardianLink, type HomeZone, type Member, type Session } from '../../types/family';
 import { AlwaysAllowGuide, AlwaysAllowMapHint } from './AlwaysAllowGuide';
 import { AlwaysAllowSetup } from './AlwaysAllowSetup';
+import { memberFocusStep } from '../../lib/memberFocus.mjs';
 import { memberPlaceLabel } from '../../lib/memberPlace.mjs';
 import { memberIsStale, memberPresence, memberPresenceLabel } from '../../lib/memberPresence.mjs';
 import { mapMembers, rosterMembers } from '../../lib/peerFamily.mjs';
@@ -50,10 +51,11 @@ export function FamilyMapScreen() {
   const [placingHome, setPlacingHome] = useState(false);
   const mapRef = useRef<StreetMapHandle>(null);
   const [sheet, setSheet] = useState<'invite' | 'accept' | 'add' | 'today' | null>(state.pendingInvite ? 'accept' : null);
-  const [confirm, setConfirm] = useState<{ kind: 'remove' | 'leave' | 'delete-room'; id: string; name: string } | null>(null);
+  const [confirm, setConfirm] = useState<{ kind: 'remove' | 'leave' | 'delete-room' | 'logout' | 'delete-account'; id: string; name: string } | null>(null);
+  const [accountBusy, setAccountBusy] = useState(false);
   const [incoming, setIncoming] = useState<FamilyAlert | null>(null);
   const [sirenOn, setSirenOn] = useState(false);
-  const [selectedId, setSelectedId] = useState('self');
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const insideRef = useRef<Record<string, boolean>>({});
   const familyRef = useRef(family);
   useEffect(() => {
@@ -606,7 +608,7 @@ export function FamilyMapScreen() {
     setSelectedId(member.id);
     const points = overviewLinesFor(member, state.tracks, now, liveDay).flat();
     if (fitTrail && showTrail && points.length >= 2) mapRef.current?.fit(points);
-    else if (hasLocation(member)) mapRef.current?.panTo(member.lat, member.lng);
+    else if (hasLocation(member)) mapRef.current?.showMember(member.lat, member.lng);
   };
 
   const closeDetail = () => {
@@ -645,13 +647,29 @@ export function FamilyMapScreen() {
     if (hasLocation(member)) mapRef.current?.panTo(member.lat, member.lng);
   };
   const selectMember = (member: Member) => {
-    if (recordId === member.id) return;
-    if (selectedId === member.id && recordId == null) {
+    const step = memberFocusStep({
+      focusedId: recordId ?? selectedId,
+      recordsOpen: recordId != null,
+    }, member.id);
+    if (step.action === 'keep') return;
+    if (step.action === 'records') {
       openPerson(member);
       return;
     }
-    if (recordId) setRecordId(null);
+    if (recordId) {
+      setRecordId(null);
+      setDetailId(null);
+      setPlaying(false);
+    }
     focusMember(member, false);
+  };
+  const clearMemberFocus = () => {
+    if (!selectedId && !recordId) return;
+    setSelectedId(null);
+    if (!recordId) return;
+    setRecordId(null);
+    setDetailId(null);
+    setPlaying(false);
   };
   const applyLocationResult = (result: { location: string; note: string | null }) => {
     setSettingsNote(result.note);
@@ -768,6 +786,7 @@ export function FamilyMapScreen() {
               if (!member) return;
               selectMember(member);
             }}
+            onClear={clearMemberFocus}
             onMove={(next) => {
               if (!placingRef.current) return;
               setDraftHome((prev) => {
@@ -1358,12 +1377,22 @@ export function FamilyMapScreen() {
               <button
                 type="button"
                 onClick={() => {
-                  void umapLocation.stopAlertWatch();
-                  family.logout();
+                  setAdminSettings(false);
+                  setConfirm({ kind: 'logout', id: 'logout', name: '' });
                 }}
                 className="w-full rounded-full py-3 text-sm font-bold text-slate-500"
               >
                 로그아웃
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setAdminSettings(false);
+                  setConfirm({ kind: 'delete-account', id: 'account', name: '' });
+                }}
+                className="w-full rounded-full py-3 text-sm font-bold text-red-600"
+              >
+                회원 탈퇴
               </button>
               <button
                 type="button"
@@ -1380,18 +1409,79 @@ export function FamilyMapScreen() {
         )}
         {confirm && (
           <ConfirmSheet
-            title={confirm.kind === 'remove' ? '가족에서 지울까요?' : confirm.kind === 'delete-room' ? '가족 방을 지울까요?' : '연결을 끊을까요?'}
+            title={confirm.kind === 'remove'
+              ? '가족에서 지울까요?'
+              : confirm.kind === 'delete-room'
+                ? '가족 방을 지울까요?'
+                : confirm.kind === 'logout'
+                  ? '로그아웃할까요?'
+                  : confirm.kind === 'delete-account'
+                    ? '회원 탈퇴'
+                    : '연결을 끊을까요?'}
             body={confirm.kind === 'remove'
               ? `${confirm.name} 님을 이 기기의 목록과 지도에서 지웁니다. 같은 방이 다시 받아도 이 폰에는 돌아오지 않습니다. 상대 폰의 공유 허용은 그 폰에서 꺼야 합니다.`
               : confirm.kind === 'delete-room'
                 ? '이 폰의 가족 목록, 초대, 위치 공유를 지우고 그 방 동기화를 멈춥니다. 내가 만든 가족 방은 서버에서도 지웁니다. 초대로 들어간 방은 이 폰에서만 나가고, 상대의 방은 그대로 둡니다.'
-                : `${confirm.name} 님과의 초대와 위치 공유를 이 폰에서 지웁니다.`}
-            confirmLabel={confirm.kind === 'remove' ? '지우기' : confirm.kind === 'delete-room' ? '가족 방 지우기' : '연결 끊기'}
-            onClose={() => setConfirm(null)}
+                : confirm.kind === 'logout'
+                  ? '이 폰의 로그인만 끝냅니다. 서버 백업은 남아 있고, 카카오·네이버 또는 복구 코드로 다시 불러올 수 있습니다.'
+                  : confirm.kind === 'delete-account'
+                    ? '서버 계정, 모든 기록, 카카오·네이버 연결과 복구 코드를 영구히 삭제합니다. 이 작업은 되돌릴 수 없습니다.'
+                    : `${confirm.name} 님과의 초대와 위치 공유를 이 폰에서 지웁니다.`}
+            confirmLabel={confirm.kind === 'remove'
+              ? '지우기'
+              : confirm.kind === 'delete-room'
+                ? '가족 방 지우기'
+                : confirm.kind === 'logout'
+                  ? '로그아웃'
+                  : confirm.kind === 'delete-account'
+                    ? '탈퇴'
+                    : '연결 끊기'}
+            danger={confirm.kind === 'delete-account'}
+            busy={accountBusy}
+            onClose={() => {
+              if (accountBusy) return;
+              setConfirm(null);
+            }}
             onConfirm={() => {
-              if (confirm.kind === 'remove') family.removeMember(confirm.id);
-              else if (confirm.kind === 'delete-room') eraseFamilyRoom();
-              else family.leaveGuardian(confirm.id);
+              if (confirm.kind === 'remove') {
+                family.removeMember(confirm.id);
+                setConfirm(null);
+                return;
+              }
+              if (confirm.kind === 'delete-room') {
+                eraseFamilyRoom();
+                setConfirm(null);
+                return;
+              }
+              if (confirm.kind === 'logout') {
+                void umapLocation.stopAlertWatch();
+                family.logout();
+                setConfirm(null);
+                return;
+              }
+              if (confirm.kind === 'delete-account') {
+                if (accountBusy) return;
+                setAccountBusy(true);
+                cancelAccountBackup();
+                void deleteFamilyAccount().then(async (result) => {
+                  if (!result.ok) {
+                    setAccountBusy(false);
+                    setSettingsNote(result.message || '계정을 지우지 못했습니다. 다시 시도해 주세요.');
+                    setConfirm(null);
+                    setAdminSettings(true);
+                    return;
+                  }
+                  await umapLocation.stopAlertWatch().catch(() => undefined);
+                  await umapLocation.stop().catch(() => undefined);
+                  await abandonFamilySync();
+                  familyRef.current.withdraw();
+                  setAccountBusy(false);
+                  setConfirm(null);
+                  setAdminSettings(false);
+                });
+                return;
+              }
+              family.leaveGuardian(confirm.id);
               setConfirm(null);
             }}
           />
@@ -2241,20 +2331,29 @@ function ConfirmSheet({
   confirmLabel,
   onClose,
   onConfirm,
+  danger = false,
+  busy = false,
 }: {
   title: string;
   body: string;
   confirmLabel: string;
   onClose: () => void;
   onConfirm: () => void;
+  danger?: boolean;
+  busy?: boolean;
 }) {
   return (
     <Sheet title={title} onClose={onClose}>
       <p className="text-sm leading-6 text-slate-500">{body}</p>
-      <button type="button" onClick={onConfirm} className="mt-4 w-full rounded-full bg-[#ff8a34] py-3.5 font-bold text-white">
-        {confirmLabel}
+      <button
+        type="button"
+        disabled={busy}
+        onClick={onConfirm}
+        className={`mt-4 w-full rounded-full py-3.5 font-bold text-white disabled:opacity-40 ${danger ? 'bg-red-600' : 'bg-[#ff8a34]'}`}
+      >
+        {busy ? '처리 중…' : confirmLabel}
       </button>
-      <button type="button" onClick={onClose} className="mt-2 w-full py-2 text-sm font-bold text-slate-400">
+      <button type="button" disabled={busy} onClick={onClose} className="mt-2 w-full py-2 text-sm font-bold text-slate-400">
         취소
       </button>
     </Sheet>
@@ -2327,16 +2426,33 @@ function RecoveryCodePanel() {
   const family = useFamily();
   const [copied, setCopied] = useState(false);
   const [note, setNote] = useState<string | null>(null);
+  const [linkDetail, setLinkDetail] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [links, setLinks] = useState(() => readStoredAccountLinks(typeof localStorage === 'undefined' ? null : localStorage));
   const code = readStoredRecoveryCode(typeof localStorage === 'undefined' ? null : localStorage);
   const kakaoKey = configuredKakaoLoginKey();
   const naverId = configuredNaverClientId();
-  const snapshot = snapshotFromSession(family.state);
-  const linkOnly = { persist: false as const, mode: 'link' as const };
+
+  const prepareLinkSnapshot = async (): Promise<AccountSnapshot | null> => {
+    const snapshot = snapshotFromSession(family.state);
+    const key = readStoredAccountKey(typeof localStorage === 'undefined' ? null : localStorage);
+    if (snapshot && !key) {
+      const saved = await backupFamilyAccount(snapshot).catch(() => ({ ok: false as const }));
+      if (saved.ok && saved.account) {
+        await persistAccountResult(saved);
+        return {
+          ...snapshot,
+          ...saved.account,
+          profile: saved.account.profile || snapshot.profile,
+          room: saved.account.room || snapshot.room,
+        };
+      }
+    }
+    return snapshot;
+  };
 
   const linkProvider = (
-    start: () => Promise<{ ok: boolean; snapshot?: AccountSnapshot; message?: string }>,
+    start: (snapshot: AccountSnapshot | null) => Promise<{ ok: boolean; snapshot?: AccountSnapshot; message?: string; detail?: string }>,
     setup: string,
     configured: string,
     missing: string,
@@ -2347,10 +2463,12 @@ function RecoveryCodePanel() {
     }
     setBusy(true);
     setNote(null);
-    void start().then((result) => {
+    setLinkDetail(null);
+    void prepareLinkSnapshot().then((snapshot) => start(snapshot)).then((result) => {
       setBusy(false);
       if (!result.ok) {
         setNote(result.message || missing);
+        setLinkDetail(result.detail || null);
         return;
       }
       if (linkedAccountWouldSwitch(family.state.profile?.id, result.snapshot)) {
@@ -2360,6 +2478,9 @@ function RecoveryCodePanel() {
       if (result.snapshot) rememberAccountSecrets(localStorage, result.snapshot);
       setLinks(readStoredAccountLinks(localStorage));
       setNote('이 계정에 연결했습니다. 다시 설치한 뒤에도 같은 사람으로 돌아옵니다.');
+    }).catch(() => {
+      setBusy(false);
+      setNote(missing);
     });
   };
 
@@ -2376,7 +2497,7 @@ function RecoveryCodePanel() {
             <p className="text-xs font-bold text-slate-700">연결됨</p>
           </div>
           <p className="mt-1 font-mono text-base font-black tracking-[0.18em] text-slate-800">{code}</p>
-          <p className="mt-1 text-xs leading-5 text-slate-500">앱을 다시 설치한 뒤 「복구 코드로 복원」에 넣으면 같은 사람과 가족 방으로 돌아갑니다.</p>
+          <p className="mt-1 text-xs leading-5 text-slate-500">앱을 다시 설치한 뒤 「복구 코드로 불러오기」에 넣으면 같은 사람과 가족 방으로 돌아갑니다.</p>
           <button
             type="button"
             onClick={() => {
@@ -2403,7 +2524,7 @@ function RecoveryCodePanel() {
         <button
           type="button"
           disabled={busy || !kakaoKey}
-          onClick={() => linkProvider(() => signInWithKakao(snapshot, linkOnly), KAKAO_SETUP_MESSAGE, kakaoKey, '카카오 연결에 실패했습니다.')}
+          onClick={() => linkProvider((snapshot) => signInWithKakao(snapshot, { persist: true, mode: 'link' }), KAKAO_SETUP_MESSAGE, kakaoKey, ACCOUNT_UNLINKED_MESSAGE)}
           className="w-full rounded-full bg-[#FEE500] py-2.5 text-xs font-bold text-[#191919] disabled:opacity-40"
         >
           카카오 연결
@@ -2415,13 +2536,14 @@ function RecoveryCodePanel() {
         <button
           type="button"
           disabled={busy || !naverId}
-          onClick={() => linkProvider(() => signInWithNaver(snapshot, linkOnly), NAVER_SETUP_MESSAGE, naverId, '네이버 연결에 실패했습니다.')}
+          onClick={() => linkProvider((snapshot) => signInWithNaver(snapshot, { persist: true, mode: 'link' }), NAVER_SETUP_MESSAGE, naverId, ACCOUNT_UNLINKED_MESSAGE)}
           className="w-full rounded-full bg-[#03C75A] py-2.5 text-xs font-bold text-white disabled:opacity-40"
         >
           네이버 연결
         </button>
       </div>
       {note && <p className="mt-2 whitespace-pre-line text-xs leading-5 text-slate-600">{note}</p>}
+      {linkDetail && <p className="mt-1 text-xs leading-5 text-slate-400">{linkDetail}</p>}
     </section>
   );
 }

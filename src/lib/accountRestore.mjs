@@ -3,6 +3,13 @@
 
 import { formatRecoveryCode, normalizeRecoveryCode } from '../../sync/account.mjs';
 
+export {
+  ACCOUNT_LINK_CONFLICT_MESSAGE,
+  ACCOUNT_LINK_SESSION_MESSAGE,
+  ACCOUNT_UNLINKED_MESSAGE,
+  ACCOUNT_VERIFY_MESSAGE,
+} from '../../sync/account.mjs';
+
 export const ACCOUNT_KEY_STORAGE = 'umap_account_key_v1';
 export const RECOVERY_CODE_STORAGE = 'umap_recovery_code_v1';
 export const ACCOUNT_LINKS_STORAGE = 'umap_account_links_v1';
@@ -84,6 +91,33 @@ export function logoutLocalAccount(storage) {
   invalidateAccountBackup();
   clearStoredAccount(storage);
   if (storage) storage.removeItem(LEFTOVER_GOOGLE_ACCOUNT_KEY);
+}
+
+function storageKeys(storage) {
+  if (!storage || typeof storage.length !== 'number' || typeof storage.key !== 'function') return [];
+  const keys = [];
+  for (let index = 0; index < storage.length; index += 1) {
+    const key = storage.key(index);
+    if (key) keys.push(key);
+  }
+  return keys;
+}
+
+export function clearDeviceAccount(localStorage, sessionStorage) {
+  invalidateAccountBackup();
+  for (const storage of [localStorage, sessionStorage]) {
+    if (!storage) continue;
+    for (const key of storageKeys(storage)) {
+      if (key.startsWith('umap_')) storage.removeItem(key);
+    }
+  }
+}
+
+export function accountNeedsDisplayName(account) {
+  if (!account || typeof account !== 'object') return false;
+  if (account.created === true || account.nameChosen === false) return true;
+  const name = account.profile && typeof account.profile.name === 'string' ? account.profile.name.trim() : '';
+  return !name;
 }
 
 export function rememberAccountSecrets(storage, account) {
