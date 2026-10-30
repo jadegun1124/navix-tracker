@@ -5,7 +5,7 @@ import { looksLikePhone, localProfile } from '../../lib/localProfile.mjs';
 import { KAKAO_SETUP_MESSAGE } from '../../lib/kakaoAuth.mjs';
 import { NAVER_SETUP_MESSAGE } from '../../lib/naverAuth.mjs';
 import { ACCOUNT_LINKED_OTHER_MESSAGE, ACCOUNT_UNLINKED_MESSAGE, linkedAccountWouldSwitch, readStoredAccountKey, readStoredAccountLinks, readStoredRecoveryCode, rememberAccountSecrets, snapshotFromSession } from '../../lib/accountRestore.mjs';
-import { backupFamilyAccount, cancelAccountBackup, deleteFamilyAccount, loadOwnDisclosures, persistAccountResult, type AccountSnapshot, type DisclosureRecord } from '../../services/familyAccount';
+import { backupFamilyAccount, cancelAccountBackup, deleteFamilyAccount, loadOwnDisclosures, loadOwnHandling, mintFamilyInvite, persistAccountResult, redeemFamilyInvite, type AccountSnapshot, type DisclosureRecord, type HandlingEvent } from '../../services/familyAccount';
 import { buildInviteLink, formatClock, hasLocation, haversineMeters, shouldAlertLeave } from '../../lib/geo';
 import { ALWAYS_GUIDE_DISMISSED_KEY, CHAT_NOTIFY_ASKED_KEY, KEEP_PERMISSION_ASKED_KEY, KEEP_START_ASKED_KEY, keepEntryPrompt, markSessionFlag, readSessionFlag } from '../../lib/systemSettings.mjs';
 import { familyMapShowsTrail, mainOverviewTrails, recordsDayTrails } from '../../lib/mapTrail.mjs';
@@ -1227,7 +1227,7 @@ export function FamilyMapScreen() {
             onPrimary={() => {
               if (keepPrompt === 'start') {
                 markSessionFlag(KEEP_START_ASKED_KEY);
-                family.setKeepAlive(true);
+                if (family.state.locationConsent !== false) family.setKeepAlive(true);
                 setKeepPrompt('none');
                 return;
               }
@@ -1239,7 +1239,7 @@ export function FamilyMapScreen() {
                 family.finishPermissions({ ...state.permissions, notifications, completed: true });
                 if (state.permissions.locationMode === 'always') {
                   markSessionFlag(KEEP_START_ASKED_KEY);
-                  family.setKeepAlive(true);
+                  if (family.state.locationConsent !== false) family.setKeepAlive(true);
                   setKeepPrompt('none');
                   if (result.state !== 'granted') {
                     setSettingsNote('위치 유지를 켰습니다. 알림 목록에 Kinnex 카드는 나오지 않습니다. SOS 알림은 알림 권한이 필요합니다.');
@@ -1321,6 +1321,7 @@ export function FamilyMapScreen() {
             <AppVersionLine />
             <RecoveryCodePanel />
             <DisclosureLogPanel />
+            <LocationConsentRow />
             <button
               type="button"
               onClick={openLocationSettings}
@@ -1347,7 +1348,7 @@ export function FamilyMapScreen() {
                       const battery = await askBattery();
                       if (battery.note) setSettingsNote(battery.note);
                     }
-                    family.setKeepAlive(true);
+                    if (family.state.locationConsent !== false) family.setKeepAlive(true);
                   })();
                 }}
                 className="mt-2 w-full rounded-full bg-[#0084FF] py-3 text-sm font-black text-white"
@@ -1381,6 +1382,7 @@ export function FamilyMapScreen() {
             <AppVersionLine />
             <RecoveryCodePanel />
             <DisclosureLogPanel />
+            <LocationConsentRow />
             <div className="mt-3">
               <AlwaysAllowNotice
                 locationMode={state.permissions.locationMode}
@@ -1398,7 +1400,7 @@ export function FamilyMapScreen() {
                       const battery = await askBattery();
                       if (battery.note) setSettingsNote(battery.note);
                     }
-                    family.setKeepAlive(true);
+                    if (family.state.locationConsent !== false) family.setKeepAlive(true);
                   })();
                 }}
               />
@@ -2160,6 +2162,8 @@ function AdminInviteSheet({
   const [declinedShare, setDeclinedShare] = useState(false);
   const [copied, setCopied] = useState('');
   const [token, setToken] = useState('');
+  const [ticket, setTicket] = useState('');
+  const [ticketNote, setTicketNote] = useState('');
   const syncReady = familySyncConfigured();
 
   useEffect(() => {
@@ -2171,6 +2175,19 @@ function AdminInviteSheet({
       cancel = true;
     };
   }, [readKey, writeKey]);
+
+  useEffect(() => {
+    if (!token || !syncReady) return undefined;
+    let cancel = false;
+    void mintFamilyInvite(code, token, '').then((result) => {
+      if (cancel) return;
+      if (result.ok) setTicket(result.ticket);
+      else setTicketNote(result.message);
+    });
+    return () => {
+      cancel = true;
+    };
+  }, [code, syncReady, token]);
 
   const copy = async (value: string, label: string) => {
     try {
@@ -2230,8 +2247,9 @@ function AdminInviteSheet({
         {' '}전화번호로는 위치를 찾지 않습니다.
       </p>
       <p className="mt-4 text-center text-4xl font-black tracking-[0.25em] text-[#0084FF]">{code}</p>
-      {token && <InviteQrImage text={buildInviteLink(code, home, token, sentName, senderName)} />}
-      {token && <p className="mt-2 text-center text-[11px] leading-5 text-slate-400">QR은 초대 링크와 같습니다. 위치를 읽는 키는 들어 있지 않고, 전화번호도 없습니다.</p>}
+      {(ticket || !syncReady) && token && <InviteQrImage text={buildInviteLink(code, home, syncReady ? null : token, sentName, senderName, ticket || null)} />}
+      {token && <p className="mt-2 text-center text-[11px] leading-5 text-slate-400">초대 링크는 24시간 동안 한 번만 쓸 수 있습니다. 방 키와 전화번호는 들어 있지 않습니다.</p>}
+      {ticketNote && <p className="mt-2 text-center text-xs leading-5 text-amber-800">{ticketNote}</p>}
       <label className="mt-4 block text-xs font-bold text-slate-400" htmlFor="sync-token">
         동기화 키
       </label>
@@ -2241,7 +2259,7 @@ function AdminInviteSheet({
           <Copy className="mr-1 inline h-3.5 w-3.5" />
           코드 복사
         </button>
-        <button type="button" disabled={!token} onClick={() => copy(buildInviteLink(code, home, token, sentName, senderName), '링크를 복사했습니다')} className="rounded-full bg-slate-100 py-2 text-xs font-bold disabled:opacity-40">
+        <button type="button" disabled={syncReady ? !ticket : !token} onClick={() => copy(buildInviteLink(code, home, syncReady ? null : token, sentName, senderName, ticket || null), '링크를 복사했습니다')} className="rounded-full bg-slate-100 py-2 text-xs font-bold disabled:opacity-40">
           링크 복사
         </button>
       </div>
@@ -2266,21 +2284,22 @@ function AdminInviteSheet({
   );
 }
 
-function parseInviteDraft(value: string): { code: string; syncToken: string | null; rosterName: string | null; adminName: string | null } {
+function parseInviteDraft(value: string): { code: string; syncToken: string | null; ticket: string | null; rosterName: string | null; adminName: string | null } {
   const trimmed = value.trim();
   if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
     try {
       const url = new URL(trimmed);
       const code = (url.searchParams.get('invite') || '').replace(/\D/g, '').slice(0, 6);
       const syncToken = splitSyncToken(url.searchParams.get('sync')) ? url.searchParams.get('sync') : null;
+      const ticket = (url.searchParams.get('ticket') || '').trim() || null;
       const rosterName = (url.searchParams.get('who') || '').trim().slice(0, 80) || null;
       const adminName = (url.searchParams.get('from') || '').trim().slice(0, 20) || null;
-      return { code, syncToken, rosterName, adminName };
+      return { code, syncToken, ticket, rosterName, adminName };
     } catch {
       /* 링크가 아니면 코드로 봅니다. */
     }
   }
-  return { code: trimmed.replace(/\D/g, '').slice(0, 6), syncToken: null, rosterName: null, adminName: null };
+  return { code: trimmed.replace(/\D/g, '').slice(0, 6), syncToken: null, ticket: null, rosterName: null, adminName: null };
 }
 
 function ManagedInviteSheet({
@@ -2307,24 +2326,47 @@ function ManagedInviteSheet({
   const [label, setLabel] = useState('');
   const [step, setStep] = useState<'join' | 'share'>('join');
   const [joinedCode, setJoinedCode] = useState('');
+  const [inviteNote, setInviteNote] = useState('');
   const joined = guardians.find((link) => link.code === joinedCode);
+
+  const applyParsed = (parsed: ReturnType<typeof parseInviteDraft>) => {
+    if (parsed.code) setCode(parsed.code);
+    if (parsed.syncToken) setSyncToken(parsed.syncToken);
+    if (parsed.rosterName) setRosterName(parsed.rosterName);
+    if (parsed.adminName) setAdminName(parsed.adminName);
+    if (!parsed.ticket) return;
+    void redeemFamilyInvite(parsed.ticket).then((result) => {
+      if (!result.ok) {
+        setInviteNote(result.message);
+        return;
+      }
+      setCode(result.code);
+      setSyncToken(result.syncToken);
+      setInviteNote('');
+    });
+  };
+
+  const redeemedTicket = useRef('');
+  useEffect(() => {
+    const ticket = new URLSearchParams(window.location.search).get('ticket');
+    if (!ticket || redeemedTicket.current === ticket) return;
+    redeemedTicket.current = ticket;
+    applyParsed({ code: pending ?? '', syncToken: null, ticket, rosterName: null, adminName: null });
+  }, [pending]);
 
   return (
     <Sheet title={step === 'join' ? '1. 초대를 수락할까요?' : '2. 위치를 공유할까요?'} onClose={onClose}>
       {step === 'join' ? (
         <>
-          <p className="text-sm leading-6 text-slate-500">관리자에게 받은 코드를 입력하거나 초대 링크를 붙여 넣습니다. 수락만으로는 위치가 나가지 않습니다. 전화번호는 쓰지 않습니다.</p>
+          <p className="text-sm leading-6 text-slate-500">관리자에게 받은 코드를 입력하거나 초대 링크를 붙여 넣습니다. 링크는 한 번만 쓸 수 있습니다. 수락만으로는 위치가 나가지 않습니다. 전화번호는 쓰지 않습니다.</p>
+          {inviteNote && <p className="mt-2 text-xs leading-5 text-amber-800">{inviteNote}</p>}
           <input value={label} onChange={(event) => setLabel(event.target.value)} placeholder="가족 이름 (예: 엄마)" className="mt-4 w-full rounded-2xl border border-slate-200 px-3 py-3 outline-none focus:border-[#0084FF]" />
           <input
             value={code}
             onChange={(event) => {
               const next = event.target.value;
               if (next.trim().startsWith('http://') || next.trim().startsWith('https://')) {
-                const parsed = parseInviteDraft(next);
-                setCode(parsed.code);
-                if (parsed.syncToken) setSyncToken(parsed.syncToken);
-                if (parsed.rosterName) setRosterName(parsed.rosterName);
-                if (parsed.adminName) setAdminName(parsed.adminName);
+                applyParsed(parseInviteDraft(next));
                 return;
               }
               setCode(next.replace(/\D/g, '').slice(0, 6));
@@ -2335,11 +2377,7 @@ function ManagedInviteSheet({
           />
           <InviteQrScan
             onText={(value) => {
-              const parsed = parseInviteDraft(value);
-              if (parsed.code) setCode(parsed.code);
-              if (parsed.syncToken) setSyncToken(parsed.syncToken);
-              if (parsed.rosterName) setRosterName(parsed.rosterName);
-              if (parsed.adminName) setAdminName(parsed.adminName);
+              applyParsed(parseInviteDraft(value));
             }}
           />
           <label className="mt-3 block text-xs font-bold text-slate-400" htmlFor="managed-sync-token">
@@ -2489,6 +2527,26 @@ function RoundButton({ children, onClick, label }: { children: React.ReactNode; 
   );
 }
 
+function LocationConsentRow() {
+  const family = useFamily();
+  const withdrawn = family.state.locationConsent === false;
+  return (
+    <section className="mt-4" aria-label="개인위치정보 이용 동의">
+      <h3 className="text-sm font-black text-slate-800">개인위치정보 이용 동의</h3>
+      <p className="mt-1 text-xs leading-5 text-slate-500">
+        {withdrawn ? '동의를 철회해 이 폰의 위치 수집을 멈췄습니다.' : '가족 지도와 이동 기록에 이 폰의 위치를 씁니다.'}
+        {' '}
+        <a className="font-bold text-[#0084FF]" href="/location-terms.html">약관 보기</a>
+      </p>
+      {!withdrawn && (
+        <button type="button" onClick={() => family.withdrawLocationConsent()} className="mt-2 text-xs font-bold text-red-600">
+          동의 철회
+        </button>
+      )}
+    </section>
+  );
+}
+
 function AppVersionLine() {
   return <p className="mt-2 text-xs font-semibold text-slate-500">{currentAppVersionLabel()}</p>;
 }
@@ -2524,8 +2582,14 @@ function formatDisclosureWhen(ms: number): string {
   }).format(ms);
 }
 
+function handlingLine(event: HandlingEvent): string {
+  if (event.kind === 'collect') return event.categories.includes('history') ? '수집 · 이동 기록을 올렸습니다' : '수집 · 위치를 올렸습니다';
+  return `이용 · ${event.actor} 님이 위치를 확인했습니다`;
+}
+
 function DisclosureLogPanel() {
   const [rows, setRows] = useState<DisclosureRecord[] | null>(null);
+  const [events, setEvents] = useState<HandlingEvent[] | null>(null);
   const [intact, setIntact] = useState(true);
   const [message, setMessage] = useState<string | null>(null);
   useEffect(() => {
@@ -2536,20 +2600,36 @@ function DisclosureLogPanel() {
       setIntact(result.intact);
       setMessage(result.ok ? null : (result.message || '제공 기록을 불러오지 못했습니다.'));
     });
+    void loadOwnHandling().then((result) => {
+      if (!live) return;
+      setEvents(result.events);
+      if (!result.ok && result.message) setMessage(result.message);
+    });
     return () => {
       live = false;
     };
   }, []);
+  const empty = rows !== null && events !== null && rows.length === 0 && events.length === 0 && !message;
   return (
-    <section className="mt-4" aria-label="정보 제공 기록">
-      <h3 className="text-sm font-black text-slate-800">정보 제공 기록</h3>
+    <section className="mt-4" aria-label="위치정보 이용·제공 기록">
+      <h3 className="text-sm font-black text-slate-800">위치정보 이용·제공 기록</h3>
       <p className="mt-1 text-xs leading-5 text-slate-500">
-        제3자에게 넘긴 개인정보와 위치의 종류만 남깁니다. 표시 이름, 카카오·네이버 계정, 가족 구성, 기기, 계정·복구 정보, 위치, 기록, 장소 이름이 적힙니다. 그 값과 좌표는 적지 않습니다. 제공한 날부터 6개월 뒤 지우고, 회원 탈퇴 후에도 그 기간이 끝날 때까지 남습니다.
+        위치를 올리거나 가족이 확인한 사실, 제3자에게 넘긴 종류의 기록입니다. 표시 이름, 카카오·네이버 계정, 가족 구성, 기기, 계정·복구 정보, 위치, 기록, 장소 이름이 적힐 수 있습니다. 그 값과 좌표는 적지 않습니다. 올린 날부터 6개월 뒤 지우고, 회원 탈퇴 후에도 그 기간이 끝날 때까지 남습니다.
       </p>
       {rows === null && <p className="mt-3 text-xs leading-5 text-slate-500">불러오는 중</p>}
       {rows !== null && message && <p className="mt-3 text-xs leading-5 text-slate-500">{message}</p>}
-      {rows !== null && !message && rows.length === 0 && (
+      {empty && (
         <p className="mt-3 text-xs leading-5 text-slate-500">제3자에게 개인정보나 위치, 기록을 제공한 내역이 없습니다.</p>
+      )}
+      {events !== null && events.length > 0 && (
+        <ul className="mt-3 space-y-2">
+          {events.map((event, index) => (
+            <li key={`${event.at}-${event.kind}-${index}`} className="rounded-2xl bg-slate-50 px-3 py-3 text-xs leading-5 text-slate-600">
+              <p className="font-bold text-slate-800">{handlingLine(event)}</p>
+              <p>{formatDisclosureWhen(event.at)}</p>
+            </li>
+          ))}
+        </ul>
       )}
       {rows !== null && !message && !intact && (
         <p className="mt-3 text-xs leading-5 text-amber-800">이 기록의 연결이 맞지 않습니다.</p>

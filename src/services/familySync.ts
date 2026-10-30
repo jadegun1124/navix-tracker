@@ -832,7 +832,7 @@ export async function familyEndpointAvailable(code: string, token: string): Prom
       familyEndpointReady.set(code, false);
       return false;
     }
-    if (response.ok) {
+    if (response.ok || response.status === 401 || response.status === 403) {
       familyEndpointReady.set(code, true);
       return true;
     }
@@ -872,7 +872,11 @@ export function startManagedFamilySync(
         if (stopped) return;
         const response = await request(`/v1/rooms/${link.code}/family`, {
           method: 'GET',
-          headers: { 'x-umap-sync-key': link.token },
+          headers: {
+            'x-umap-sync-key': link.token,
+            ...(self?.memberId ? { 'x-umap-member': self.memberId } : {}),
+            ...(self?.profileKey ? { 'x-umap-profile-key': self.profileKey } : {}),
+          },
         });
         if (response.status === 404) continue;
         classify(response);

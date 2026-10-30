@@ -59,12 +59,16 @@ export function buildInviteLink(
   syncToken?: string | null,
   rosterName?: string | null,
   senderName?: string | null,
+  ticket?: string | null,
 ): string {
   const url = new URL(window.location.href);
   url.searchParams.set('app', '1');
   url.searchParams.set('invite', code);
   url.searchParams.delete('reset');
-  if (syncToken) url.searchParams.set('sync', syncToken);
+  if (ticket) {
+    url.searchParams.set('ticket', ticket);
+    url.searchParams.delete('sync');
+  } else if (syncToken) url.searchParams.set('sync', syncToken);
   else url.searchParams.delete('sync');
   const who = rosterName?.trim().slice(0, 80);
   if (who) url.searchParams.set('who', who);

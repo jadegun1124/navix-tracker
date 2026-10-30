@@ -404,6 +404,12 @@ const TERM_COPY: { id: string; title: string; required: boolean; body: string }[
     body: '가족 지도, 우리 집 안심존, 들어오고 나간 알림, 이 기기에 남기는 이동 경로에 위치를 사용합니다. 최근 30일 여정·방문은 다시 설치해도 찾을 수 있게 가족 서버 계정에 백업합니다.',
   },
   {
+    id: 'locationUse',
+    title: '개인위치정보 이용 동의',
+    required: true,
+    body: '내 위치 수집과 가족에게 보여주는 이용에 동의합니다. 설정에서 철회하면 수집이 멈춥니다.',
+  },
+  {
     id: 'privacy',
     title: '개인정보 수집·이용 동의',
     required: true,
@@ -476,7 +482,14 @@ function Terms({
                   {open === term.id ? '닫기' : '보기'}
                 </button>
               </div>
-              {open === term.id && <p className="px-9 pb-3 text-sm leading-6 text-slate-500">{term.body}</p>}
+              {open === term.id && (
+                <div className="px-9 pb-3 text-sm leading-6 text-slate-500">
+                  <p>{term.body}</p>
+                  {term.id === 'locationUse' && (
+                    <a className="mt-1 inline-block font-bold text-[#0084FF]" href="/location-terms.html">개인위치정보 이용약관</a>
+                  )}
+                </div>
+              )}
             </li>
           ))}
         </ul>

@@ -20,6 +20,7 @@
 // notice, so withdrawal keeps only entries still inside that window.
 
 const MEMBER_ID = /^local-[a-z0-9]{3,64}$/;
+const ACCOUNT_ID = /^[A-Za-z0-9_-]{16,64}$/;
 export const DISCLOSURE_CATEGORIES = Object.freeze([
   'name', 'kakao', 'naver', 'family', 'device', 'account', 'location', 'history', 'place', 'other',
 ]);
@@ -70,8 +71,17 @@ const COORD_KEYS = new Set(['lat', 'lng', 'latitude', 'longitude', 'coordinates'
 
 export const DISCLOSURE_AUDIENCE = 'third-party';
 
-export function disclosureKey(memberId) {
-  return `disclosure:${memberId}`;
+export function disclosureKey(accountId) {
+  return `disclosure:${accountId}`;
+}
+
+async function accountIdForMember(store, memberId) {
+  if (typeof memberId !== 'string' || !MEMBER_ID.test(memberId)) return '';
+  const id = await store.get(`member:${memberId}`);
+  if (typeof id !== 'string' || !ACCOUNT_ID.test(id)) return '';
+  const record = await store.get(`acct:${id}`);
+  if (!record || record.id !== id) return '';
+  return id;
 }
 
 export function disclosureExpiresAt(at) {
@@ -216,14 +226,17 @@ export async function verifyDisclosureChain(chain) {
 export async function purgeExpiredDisclosureIndex(store, now = Date.now()) {
   const current = await store.get(INDEX_KEY);
   const list = Array.isArray(current) ? [...current] : [];
-  for (const memberId of list) {
-    if (typeof memberId === 'string') await purgeExpiredDisclosures(store, memberId, now);
+  const { purgeHandling } = await import('./handling.mjs');
+  for (const accountId of list) {
+    if (typeof accountId !== 'string') continue;
+    await purgeExpiredDisclosures(store, accountId, now);
+    await purgeHandling(store, accountId, now);
   }
 }
 
-export async function purgeExpiredDisclosures(store, memberId, now = Date.now()) {
-  if (typeof memberId !== 'string' || !MEMBER_ID.test(memberId)) return { kept: 0 };
-  const chain = await readChain(store, memberId);
+export async function purgeExpiredDisclosures(store, accountId, now = Date.now()) {
+  if (typeof accountId !== 'string' || !ACCOUNT_ID.test(accountId)) return { kept: 0 };
+  const chain = await readChain(store, accountId);
   if (!chain || chain.broken) return { kept: chain?.entries?.length || 0 };
   let cut = 0;
   while (cut < chain.entries.length) {
@@ -234,12 +247,12 @@ export async function purgeExpiredDisclosures(store, memberId, now = Date.now())
   if (cut === 0) return { kept: chain.entries.length };
   const kept = chain.entries.slice(cut);
   if (!kept.length) {
-    await store.delete(disclosureKey(memberId));
-    await forgetMemberIndex(store, memberId);
+    await store.delete(disclosureKey(accountId));
+    await forgetMemberIndex(store, accountId);
     return { kept: 0 };
   }
   const anchor = chain.entries[cut - 1].hash;
-  await writeChain(store, memberId, {
+  await writeChain(store, accountId, {
     anchor: typeof anchor === 'string' ? anchor : chain.anchor,
     entries: kept,
   });
@@ -330,10 +343,10 @@ function publicEntry(entry) {
   };
 }
 
-export async function listDisclosures(store, memberId, now = Date.now()) {
-  if (typeof memberId !== 'string' || !MEMBER_ID.test(memberId)) return { error: 'member' };
-  await purgeExpiredDisclosures(store, memberId, now);
-  const chain = await readChain(store, memberId);
+export async function listDisclosures(store, accountId, now = Date.now()) {
+  if (typeof accountId !== 'string' || !ACCOUNT_ID.test(accountId)) return { error: 'account' };
+  await purgeExpiredDisclosures(store, accountId, now);
+  const chain = await readChain(store, accountId);
   if (!chain) return { intact: true, disclosures: [] };
   const intact = await verifyDisclosureChain(chain);
   return {
@@ -358,6 +371,8 @@ export async function releaseToThirdParty(store, input = {}, now = Date.now()) {
   const memberId = typeof input.memberId === 'string' ? input.memberId : '';
   if (!MEMBER_ID.test(memberId)) return { error: 'member' };
   if (input.audience !== DISCLOSURE_AUDIENCE) return { error: 'audience' };
+  const accountId = await accountIdForMember(store, memberId);
+  if (!accountId) return { error: 'account' };
   const categories = normalizeCategories(input.categories);
   if (!categories) return { error: 'category' };
   const detail = cleanDetail(categories, input.detail);
@@ -377,8 +392,8 @@ export async function releaseToThirdParty(store, input = {}, now = Date.now()) {
   if (checked.error) return checked;
   if (!categoriesMatch(categories, checked.released)) return { error: 'category' };
 
-  await purgeExpiredDisclosures(store, memberId, now);
-  const chain = await readChain(store, memberId);
+  await purgeExpiredDisclosures(store, accountId, now);
+  const chain = await readChain(store, accountId);
   if (chain?.broken) return { error: 'chain' };
   const entries = chain ? chain.entries : [];
   if (entries.length >= MAX_ENTRIES) return { error: 'full' };
@@ -401,8 +416,8 @@ export async function releaseToThirdParty(store, input = {}, now = Date.now()) {
     entries: [...entries, entry],
   };
   if (!(await verifyDisclosureChain(next))) return { error: 'chain' };
-  await writeChain(store, memberId, next);
-  await rememberMember(store, memberId);
+  await writeChain(store, accountId, next);
+  await rememberMember(store, accountId);
   return { ok: true, entry: publicEntry(entry), released: checked.released };
 }
 

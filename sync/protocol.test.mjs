@@ -25,11 +25,12 @@ function publicJson(value) {
   return JSON.stringify(value, (key, item) => (key === 'at' ? undefined : item));
 }
 
-async function call(store, method, path, { token, readKey, profileKey, body, raw } = {}) {
+async function call(store, method, path, { token, readKey, profileKey, member, body, raw } = {}) {
   const headers = new Headers();
   if (token) headers.set('x-umap-sync-key', token);
   if (readKey) headers.set('x-umap-read-key', readKey);
   if (profileKey) headers.set('x-umap-profile-key', profileKey);
+  if (member) headers.set('x-umap-member', member);
   if (body !== undefined || raw !== undefined) headers.set('content-type', 'application/json');
   const request = new Request(`http://sync.local${path}`, {
     method,
@@ -385,7 +386,7 @@ test('a family leave with a member id is departed immediately', async () => {
     },
   });
   assert.equal(live.status, 200);
-  const sharing = await call(store, 'GET', `/v1/rooms/${code}/family`, { token });
+  const sharing = await call(store, 'GET', `/v1/rooms/${code}/family`, { token, profileKey, member: memberId });
   assert.equal(sharing.body.places.length, 1);
   assert.deepEqual(sharing.body.departed, []);
   const left = await call(store, 'PUT', `/v1/rooms/${code}/place`, {
@@ -394,7 +395,7 @@ test('a family leave with a member id is departed immediately', async () => {
     body: { code, name: '민지', memberId, lat: null, lng: null, accuracyM: 0, at: at + 10, sharing: false, audience: 'family' },
   });
   assert.equal(left.status, 200);
-  const after = await call(store, 'GET', `/v1/rooms/${code}/family`, { token });
+  const after = await call(store, 'GET', `/v1/rooms/${code}/family`, { token, profileKey, member: memberId });
   assert.deepEqual(after.body.places, []);
   assert.deepEqual(after.body.departed, [memberId]);
 });
@@ -875,7 +876,7 @@ test('member id keeps the fix across a rename and only the profile key can chang
   assert.equal(JSON.stringify(withPhoto.body).includes(profileKey), false);
   assert.equal(JSON.stringify(withPhoto.body).includes(hash), false);
 
-  const family = await call(store, 'GET', `/v1/rooms/${code}/family`, { token });
+  const family = await call(store, 'GET', `/v1/rooms/${code}/family`, { token, profileKey, member: memberId });
   assert.equal(family.body.profiles[0].photo, photo);
   assert.equal(family.body.places.length, 0);
 
@@ -1019,7 +1020,7 @@ test('a member trail replaces the room copy and a stop removes it', async () => 
   assert.equal(reader.body.trails[0].points.length, 2);
   assert.equal(reader.body.trails[0].points[1].lat, 37.66);
   assert.equal(JSON.stringify(reader.body).includes(profileKey), false);
-  const family = await call(store, 'GET', `/v1/rooms/${code}/family`, { token });
+  const family = await call(store, 'GET', `/v1/rooms/${code}/family`, { token, profileKey, member: memberId });
   assert.equal(family.body.trails[0].moving, true);
   const stopped = await call(store, 'PUT', `/v1/rooms/${code}/place`, {
     token,
@@ -1102,7 +1103,7 @@ test('a sealed place keeps ciphertext only and a removed member cannot register 
     },
   });
   assert.equal(published.status, 200);
-  const visible = await call(store, 'GET', `/v1/rooms/${code}/family`, { token });
+  const visible = await call(store, 'GET', `/v1/rooms/${code}/family`, { token, profileKey, member: 'local-sealowner' });
   assert.equal(visible.body.places.length, 1);
   assert.equal(visible.body.places[0].lat, null);
   assert.equal(visible.body.places[0].lng, null);

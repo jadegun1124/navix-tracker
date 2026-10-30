@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useReducer } from 'react';
 import { hasLocation, haversineMeters } from '../../lib/geo';
 import { applyAccountSnapshot, clearDeviceAccount, logoutLocalAccount } from '../../lib/accountRestore.mjs';
+import { deviceSealAvailable, openDeviceText, sealDeviceText } from '../../lib/deviceSeal.mjs';
 import { cancelAccountBackup, scheduleAccountBackup } from '../../services/familyAccount';
 import { deviceProfileKey, localProfile } from '../../lib/localProfile.mjs';
 import { carryPlace, cleanPlace } from '../../lib/memberPlace.mjs';
@@ -45,6 +46,8 @@ type CanonicalTrail = {
 };
 
 const STORAGE_KEY = 'umap_family_v1';
+const DEVICE_SEAL_PREFIX = 'umap-device-seal:';
+let pendingDeviceSeal = '';
 const SESSION_KEYS = [STORAGE_KEY, `${STORAGE_KEY}:admin`, `${STORAGE_KEY}:managed`] as const;
 
 function clearStoredSessions() {
@@ -77,6 +80,7 @@ function storedSnapshots(): Session[] {
 const EMPTY_TERMS: Record<string, boolean> = {
   terms: false,
   location: false,
+  locationUse: false,
   privacy: false,
   guardian: false,
   marketing: false,
@@ -117,6 +121,15 @@ function shouldReset(): boolean {
   return new URLSearchParams(window.location.search).get('reset') === '1';
 }
 
+function sealedSession() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    return raw && raw.startsWith(DEVICE_SEAL_PREFIX) ? raw : '';
+  } catch {
+    return '';
+  }
+}
+
 function fresh(stage: Stage = 'splash'): Session {
   return {
     stage,
@@ -133,6 +146,7 @@ function fresh(stage: Stage = 'splash'): Session {
     journeys: {},
     trailRevisions: {},
     shareSelfWithFamily: false,
+    locationConsent: true,
     historyLocked: false,
     sealedHistory: null,
     accountVault: null,
@@ -539,7 +553,11 @@ function load(): Session {
   }
   try {
     const merged = mergePeerSessions(storedSnapshots());
-    if (!merged || !isSession(merged)) return { ...fresh(), pendingSyncToken };
+    if (!merged || !isSession(merged)) {
+      const sealed = sealedSession();
+      if (sealed) pendingDeviceSeal = sealed;
+      return { ...fresh(), pendingSyncToken };
+    }
     const parsed = merged;
     const invite = readInvite();
     const base = fresh();
@@ -565,6 +583,7 @@ function load(): Session {
       journeys: cleanJourneys((parsed as Session).journeys),
       trailRevisions: cleanTrailRevisions((parsed as Session).trailRevisions),
       shareSelfWithFamily: parsed.shareSelfWithFamily === true,
+      locationConsent: parsed.locationConsent !== false,
       backgroundKeepAlive: parsed.backgroundKeepAlive === true,
       phoneVerified: false,
       phone: '',
@@ -591,6 +610,8 @@ function load(): Session {
       journeys: journeysWithinHistory(loaded.journeys ?? {}, now),
     }, now));
   } catch {
+    const sealed = sealedSession();
+    if (sealed) pendingDeviceSeal = sealed;
     return { ...fresh(), pendingSyncToken };
   }
 }
@@ -608,6 +629,8 @@ type Action =
   | { type: 'toggle-term'; id: string; value: boolean }
   | { type: 'toggle-all-terms'; on: boolean }
   | { type: 'continue-terms' }
+  | { type: 'withdraw-location-consent' }
+  | { type: 'rehydrate' }
   | { type: 'save-phone'; phone: string }
   | { type: 'skip-phone' }
   | { type: 'finish-permissions'; permissions: PermissionState }
@@ -724,7 +747,11 @@ function reduceSession(state: Session, action: Action): Session {
       };
     case 'continue-terms':
       if (!REQUIRED_TERMS.every((id) => state.terms[id])) return state;
-      return { ...state, stage: 'permissions' };
+      return { ...state, stage: 'permissions', locationConsent: true };
+    case 'withdraw-location-consent':
+      return { ...state, locationConsent: false, shareSelfWithFamily: false, backgroundKeepAlive: false };
+    case 'rehydrate':
+      return load();
     case 'save-phone':
     case 'skip-phone':
       return { ...state, phone: '', phoneVerified: false, stage: 'permissions' };
@@ -1426,6 +1453,7 @@ interface FamilyApi {
   toggleTerm: (id: string, value: boolean) => void;
   toggleAllTerms: (on: boolean) => void;
   continueTerms: () => void;
+  withdrawLocationConsent: () => void;
   savePhone: (phone: string) => void;
   skipPhone: () => void;
   finishPermissions: (permissions: PermissionState) => void;
@@ -1478,10 +1506,31 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
   }, [state.profile]);
 
   useEffect(() => {
+    const sealed = pendingDeviceSeal;
+    if (!sealed) return;
+    pendingDeviceSeal = '';
+    void openDeviceText(sealed).then((plain) => {
+      if (!plain) return;
+      try {
+        sessionStorage.setItem(STORAGE_KEY, plain);
+      } catch {
+        return;
+      }
+      dispatch({ type: 'rehydrate' });
+    });
+  }, []);
+
+  useEffect(() => {
     const raw = JSON.stringify({ ...state, mode: null });
     try {
       sessionStorage.setItem(STORAGE_KEY, raw);
-      localStorage.setItem(STORAGE_KEY, raw);
+      if (deviceSealAvailable()) {
+        void sealDeviceText(raw).then((sealed) => {
+          if (typeof sealed === 'string' && sealed.startsWith(DEVICE_SEAL_PREFIX)) localStorage.setItem(STORAGE_KEY, sealed);
+        });
+      } else {
+        localStorage.setItem(STORAGE_KEY, raw);
+      }
       localStorage.setItem(`${STORAGE_KEY}:at`, String(Date.now()));
       localStorage.removeItem(`${STORAGE_KEY}:admin`);
       localStorage.removeItem(`${STORAGE_KEY}:managed`);
@@ -1506,6 +1555,7 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
     toggleTerm: (id, value) => dispatch({ type: 'toggle-term', id, value }),
     toggleAllTerms: (on) => dispatch({ type: 'toggle-all-terms', on }),
     continueTerms: () => dispatch({ type: 'continue-terms' }),
+    withdrawLocationConsent: () => dispatch({ type: 'withdraw-location-consent' }),
     savePhone: (phone) => dispatch({ type: 'save-phone', phone }),
     skipPhone: () => dispatch({ type: 'skip-phone' }),
     finishPermissions: (permissions) => dispatch({ type: 'finish-permissions', permissions }),

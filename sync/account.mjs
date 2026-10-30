@@ -5,6 +5,8 @@
 import { isSeal, isVault } from '../src/lib/familySeal.mjs';
 import { NAVER_REDIRECT, allowedNaverRedirect } from '../src/lib/naverAuth.mjs';
 import { listDisclosures, purgeExpiredDisclosureIndex, purgeExpiredDisclosures } from './disclosure.mjs';
+import { listHandling, recordHandling } from './handling.mjs';
+import { mintInvite, redeemInvite } from './invite.mjs';
 
 const MEMBER_ID = /^local-[a-z0-9]{3,64}$/;
 const KEY_PART = /^[A-Za-z0-9_-]{16,64}$/;
@@ -1036,7 +1038,7 @@ export async function deleteAccount(store, accountKey, options = {}) {
   if (!record) return { error: 'account' };
   await leaveFamilyRooms(record, options.forgetMember);
   await bestEffortProviderUnlink(record, options);
-  await purgeExpiredDisclosures(store, record.memberId, options.now || Date.now());
+  await purgeExpiredDisclosures(store, record.id, options.now || Date.now());
   await eraseRecord(store, record);
   return { ok: true };
 }
@@ -1062,9 +1064,20 @@ export async function parseAccountOperation(request) {
 
   const accountKey = request.headers.get('x-umap-account-key') || '';
 
-  if (path === '/v1/account/disclosures') {
-    if (request.method === 'GET') return { kind: 'account-disclosures', accountKey };
+  if (path === '/v1/account/disclosures' || path === '/v1/account/handling') {
+    if (request.method === 'GET') {
+      return { kind: path.endsWith('/handling') ? 'account-handling' : 'account-disclosures', accountKey };
+    }
     return json({ error: 'method' }, 405);
+  }
+
+  const inviteRedeem = path.match(/^\/v1\/invites\/([A-Za-z0-9_-]{16,64})\/redeem$/);
+  if (inviteRedeem) {
+    if (request.method !== 'POST') return json({ error: 'method' }, 405);
+    return { kind: 'account-invite-redeem', ticket: inviteRedeem[1] };
+  }
+  if (path === '/v1/invites') {
+    if (request.method !== 'POST') return json({ error: 'method' }, 405);
   }
 
   if (request.method === 'GET' && path === '/v1/account') {
@@ -1084,6 +1097,15 @@ export async function parseAccountOperation(request) {
         return json({ error: 'json' }, 400);
       }
     }
+  }
+
+  if (request.method === 'POST' && path === '/v1/invites') {
+    return {
+      kind: 'account-invite-mint',
+      code: typeof value.code === 'string' ? value.code : '',
+      syncToken: typeof value.syncToken === 'string' ? value.syncToken : '',
+      memberId: typeof value.memberId === 'string' ? value.memberId : '',
+    };
   }
 
   if (request.method === 'POST' && path === '/v1/account') {
@@ -1194,10 +1216,33 @@ export async function handleAccountOperation(store, op, options = {}) {
     if (result.error) return accountError(result.error);
     return json({ ok: true });
   }
+  if (op.kind === 'account-handling') {
+    const record = await findBySession(store, op.accountKey);
+    if (!record) return accountError('account');
+    const listed = await listHandling(store, record.id, options.now || Date.now());
+    if (listed.error) return accountError(listed.error);
+    return json({ ok: true, retentionMonths: 6, intact: listed.intact === true, events: listed.events });
+  }
+  if (op.kind === 'account-handling-record') {
+    const recorded = await recordHandling(store, op.event || {}, options.now || Date.now());
+    if (recorded.error) return json({ error: recorded.error }, 400);
+    return json({ ok: true, skipped: recorded.skipped === true });
+  }
+  if (op.kind === 'account-invite-mint') {
+    const minted = await mintInvite(store, op, options.now || Date.now());
+    if (minted.error) return json({ error: minted.error }, 400);
+    return json({ ok: true, ticket: minted.ticket, exp: minted.exp });
+  }
+  if (op.kind === 'account-invite-redeem') {
+    const redeemed = await redeemInvite(store, op.ticket, options.now || Date.now());
+    if (redeemed.error === 'expired') return json({ error: 'expired', message: '초대 링크가 만료되었습니다. 새 초대를 받아 주세요.' }, 410);
+    if (redeemed.error) return json({ error: 'invite', message: '초대 링크를 확인하지 못했습니다. 한 번 쓴 링크는 다시 열 수 없습니다.' }, 404);
+    return json({ ok: true, code: redeemed.code, syncToken: redeemed.syncToken });
+  }
   if (op.kind === 'account-disclosures') {
     const record = await findBySession(store, op.accountKey);
     if (!record) return accountError('account');
-    const listed = await listDisclosures(store, record.memberId, options.now || Date.now());
+    const listed = await listDisclosures(store, record.id, options.now || Date.now());
     if (listed.error) return accountError(listed.error);
     return json({
       ok: true,

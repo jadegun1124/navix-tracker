@@ -150,6 +150,84 @@ function cleanDisclosure(value: unknown): DisclosureRecord | null {
   };
 }
 
+export interface HandlingEvent {
+  kind: 'collect' | 'use';
+  memberId: string;
+  actor: string;
+  categories: Array<'location' | 'history' | 'place'>;
+  at: number;
+}
+
+export async function loadOwnHandling(accountKey = readStoredAccountKey(typeof localStorage === 'undefined' ? null : localStorage)): Promise<{
+  ok: boolean;
+  intact: boolean;
+  events: HandlingEvent[];
+  message?: string;
+}> {
+  if (!accountKey || !familySyncUrl()) return { ok: false, intact: true, events: [], message: '위치 서버에 연결되지 않아 이용 기록을 확인하지 못했습니다.' };
+  try {
+    const response = await request('/v1/account/handling', { method: 'GET', headers: accountHeaders(accountKey) });
+    const body = await response.json().catch(() => null) as { ok?: boolean; intact?: boolean; events?: unknown } | null;
+    if (!response.ok || !body || body.ok !== true || !Array.isArray(body.events)) {
+      return { ok: false, intact: true, events: [], message: '이용 기록을 불러오지 못했습니다.' };
+    }
+    const events: HandlingEvent[] = [];
+    for (const item of body.events) {
+      if (!item || typeof item !== 'object') continue;
+      const row = item as Record<string, unknown>;
+      if (row.kind !== 'collect' && row.kind !== 'use') continue;
+      if (typeof row.at !== 'number' || typeof row.actor !== 'string') continue;
+      if (!Array.isArray(row.categories)) continue;
+      events.push({
+        kind: row.kind,
+        memberId: typeof row.memberId === 'string' ? row.memberId : '',
+        actor: row.actor,
+        categories: row.categories.filter((category): category is HandlingEvent['categories'][number] => category === 'location' || category === 'history' || category === 'place'),
+        at: row.at,
+      });
+    }
+    return { ok: true, intact: body.intact !== false, events };
+  } catch {
+    return { ok: false, intact: true, events: [], message: '이용 기록을 불러오지 못했습니다.' };
+  }
+}
+
+export async function mintFamilyInvite(code: string, syncToken: string, memberId: string) {
+  if (!familySyncUrl()) return { ok: false as const, message: '위치 서버가 없습니다.' };
+  try {
+    const response = await request('/v1/invites', {
+      method: 'POST',
+      headers: accountHeaders(),
+      body: JSON.stringify({ code, syncToken, memberId }),
+    });
+    const body = await response.json().catch(() => null) as { ok?: boolean; ticket?: string; message?: string } | null;
+    if (!response.ok || !body || body.ok !== true || typeof body.ticket !== 'string') {
+      return { ok: false as const, message: '초대 링크를 만들지 못했습니다.' };
+    }
+    return { ok: true as const, ticket: body.ticket };
+  } catch {
+    return { ok: false as const, message: '초대 링크를 만들지 못했습니다.' };
+  }
+}
+
+export async function redeemFamilyInvite(ticket: string) {
+  if (!familySyncUrl()) return { ok: false as const, message: '위치 서버가 없습니다.' };
+  try {
+    const response = await request(`/v1/invites/${encodeURIComponent(ticket)}/redeem`, {
+      method: 'POST',
+      headers: accountHeaders(),
+      body: '{}',
+    });
+    const body = await response.json().catch(() => null) as { ok?: boolean; code?: string; syncToken?: string; message?: string } | null;
+    if (!response.ok || !body || body.ok !== true || typeof body.syncToken !== 'string' || typeof body.code !== 'string') {
+      return { ok: false as const, message: body && typeof body.message === 'string' ? body.message : '초대 링크를 확인하지 못했습니다.' };
+    }
+    return { ok: true as const, code: body.code, syncToken: body.syncToken };
+  } catch {
+    return { ok: false as const, message: '초대 링크를 확인하지 못했습니다.' };
+  }
+}
+
 export async function loadOwnDisclosures(accountKey = readStoredAccountKey(typeof localStorage === 'undefined' ? null : localStorage)): Promise<{
   ok: boolean;
   intact: boolean;

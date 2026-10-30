@@ -62,6 +62,12 @@ async function accountCall(accounts, method, path, { body, accountKey, now } = {
   return { status: response.status, body: text ? JSON.parse(text) : null };
 }
 
+async function ledgerId(accounts, memberId) {
+  const id = await accounts.get(`member:${memberId}`);
+  if (typeof id !== 'string') throw new Error(`missing ledger for ${memberId}`);
+  return id;
+}
+
 async function register(accounts, memberId = 'local-restore1', code = '48291') {
   const created = await accountCall(accounts, 'POST', '/v1/account', { body: snapshot(memberId, code) });
   assert.equal(created.status, 200);
@@ -77,7 +83,7 @@ test('six calendar months is the disclosure retention', () => {
 test('release appends a hash chain and refuses coordinates or family audience', async () => {
   const accounts = createMemoryAccountStore();
   const account = await register(accounts);
-  const key = disclosureKey(account.memberId);
+  const key = disclosureKey(await ledgerId(accounts, account.memberId));
   assert.equal(await accounts.get(key), undefined);
 
   const family = await releaseToThirdParty(accounts, requestFor(account.memberId, { audience: 'family' }), AT);
@@ -125,7 +131,7 @@ test('release appends a hash chain and refuses coordinates or family audience', 
 
   stored.entries[0].purpose = '바뀐 이유';
   await accounts.put(key, stored);
-  const tampered = await listDisclosures(accounts, account.memberId, AT + 60 * 60 * 1000);
+  const tampered = await listDisclosures(accounts, await ledgerId(accounts, account.memberId), AT + 60 * 60 * 1000);
   assert.equal(tampered.intact, false);
   assert.equal(tampered.disclosures.length, 2);
   assert.equal(JSON.stringify(tampered.disclosures).includes('"lat"'), false);
@@ -143,7 +149,7 @@ test('normal API calls cannot delete entries, and another account cannot read th
   const other = await register(accounts, 'local-restore2', '10002');
   const released = await releaseToThirdParty(accounts, requestFor(owner.memberId), AT);
   assert.equal(released.ok, true);
-  const before = JSON.stringify(await accounts.get(disclosureKey(owner.memberId)));
+  const before = JSON.stringify(await accounts.get(disclosureKey(await ledgerId(accounts, owner.memberId))));
 
   for (const method of ['DELETE', 'POST', 'PUT']) {
     const blocked = await accountCall(accounts, method, '/v1/account/disclosures', {
@@ -154,7 +160,7 @@ test('normal API calls cannot delete entries, and another account cannot read th
     assert.equal(blocked.status, 405);
     assert.equal(blocked.body.error, 'method');
   }
-  assert.equal(JSON.stringify(await accounts.get(disclosureKey(owner.memberId))), before);
+  assert.equal(JSON.stringify(await accounts.get(disclosureKey(await ledgerId(accounts, owner.memberId)))), before);
 
   const own = await accountCall(accounts, 'GET', '/v1/account/disclosures', {
     accountKey: owner.accountKey,
@@ -198,16 +204,16 @@ test('withdrawal keeps unexpired disclosure metadata and drops it after six mont
   });
   assert.equal(withdrawn.status, 200);
   assert.equal(await accounts.get(`acct:${recordId}`), undefined);
-  const kept = await accounts.get(disclosureKey(owner.memberId));
+  const kept = await accounts.get(disclosureKey(recordId));
   assert.equal(kept.entries.length, 2);
   assert.equal(kept.entries[0].recipient, '개인정보 열람');
 
   const expiredAt = disclosureExpiresAt(AT);
-  const listed = await listDisclosures(accounts, owner.memberId, expiredAt);
+  const listed = await listDisclosures(accounts, recordId, expiredAt);
   assert.equal(listed.disclosures.length, 1);
   assert.deepEqual(listed.disclosures[0].categories, ['place']);
   assert.equal(listed.intact, true);
-  const trimmed = await accounts.get(disclosureKey(owner.memberId));
+  const trimmed = await accounts.get(disclosureKey(recordId));
   assert.equal(trimmed.entries.length, 1);
   assert.equal(trimmed.entries[0].prevHash, trimmed.anchor);
   assert.equal(trimmed.anchor, kept.entries[0].hash);
@@ -220,9 +226,27 @@ test('withdrawal keeps unexpired disclosure metadata and drops it after six mont
     now: stillThere,
   });
   assert.equal(swept.status, 200);
-  assert.equal(await accounts.get(disclosureKey(owner.memberId)), undefined);
-  const gone = await listDisclosures(accounts, owner.memberId, stillThere);
+  assert.equal(await accounts.get(disclosureKey(recordId)), undefined);
+  const gone = await listDisclosures(accounts, recordId, stillThere);
   assert.deepEqual(gone.disclosures, []);
+});
+
+test('a new account with the same member id cannot read a withdrawn ledger', async () => {
+  const accounts = createMemoryAccountStore();
+  const owner = await register(accounts);
+  const released = await releaseToThirdParty(accounts, requestFor(owner.memberId), AT);
+  assert.equal(released.ok, true);
+  const recordId = await ledgerId(accounts, owner.memberId);
+  const removed = await accountCall(accounts, 'DELETE', '/v1/account', { accountKey: owner.accountKey, now: AT });
+  assert.equal(removed.status, 200);
+  const again = await register(accounts);
+  assert.notEqual(await ledgerId(accounts, again.memberId), recordId);
+  const seen = await accountCall(accounts, 'GET', '/v1/account/disclosures', { accountKey: again.accountKey, now: AT });
+  assert.equal(seen.status, 200);
+  assert.deepEqual(seen.body.disclosures, []);
+  const kept = await accounts.get(disclosureKey(recordId));
+  assert.equal(kept.entries.length, 1);
+  assert.equal(kept.entries[0].recipient, '개인정보 열람');
 });
 
 test('a disclosure lists every personal-data category and stores none of the values', async () => {
@@ -243,7 +267,7 @@ test('a disclosure lists every personal-data category and stores none of the val
   }), AT);
   assert.equal(missing.error, 'category');
   assert.equal(missing.released, undefined);
-  assert.equal(await accounts.get(disclosureKey(account.memberId)), undefined);
+  assert.equal(await accounts.get(disclosureKey(await ledgerId(accounts, account.memberId))), undefined);
 
   const unnamed = await releaseToThirdParty(accounts, requestFor(account.memberId, {
     categories: ['name', 'kakao', 'naver', 'family', 'device', 'account'],
@@ -260,7 +284,7 @@ test('a disclosure lists every personal-data category and stores none of the val
   assert.deepEqual(released.entry.categories, ['name', 'kakao', 'naver', 'family', 'device', 'account', 'other']);
   assert.equal(released.entry.detail, '프로필 사진');
   assert.equal(released.released.kakaoId, '123456789');
-  const stored = JSON.stringify(await accounts.get(disclosureKey(account.memberId)));
+  const stored = JSON.stringify(await accounts.get(disclosureKey(await ledgerId(accounts, account.memberId))));
   assert.equal(stored.includes('123456789'), false);
   assert.equal(stored.includes('naver-user-88'), false);
   assert.equal(stored.includes('pixel-8'), false);

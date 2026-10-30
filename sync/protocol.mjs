@@ -109,7 +109,7 @@ export function withCors(response) {
   const headers = new Headers(response.headers);
   headers.set('access-control-allow-origin', '*');
   headers.set('access-control-allow-methods', 'GET, PUT, POST, DELETE, OPTIONS');
-  headers.set('access-control-allow-headers', 'content-type, x-umap-sync-key, x-umap-read-key, x-umap-profile-key, x-umap-account-key');
+  headers.set('access-control-allow-headers', 'content-type, x-umap-sync-key, x-umap-read-key, x-umap-profile-key, x-umap-account-key, x-umap-member');
   headers.set('access-control-max-age', '86400');
   headers.set('cache-control', 'no-store');
   return new Response(response.body, { status: response.status, headers });
@@ -454,6 +454,20 @@ function viewProfiles(room) {
 
 function roomOwners(room) {
   return room.owners && typeof room.owners === 'object' ? room.owners : {};
+}
+
+export async function authorizeReader(room, memberId, profileKey) {
+  const owners = roomOwners(room);
+  if (!Object.keys(owners).length) return { error: null };
+  if (typeof memberId !== 'string' || !MEMBER_ID.test(memberId)) return { error: json({ error: 'member' }, 403) };
+  if (typeof profileKey !== 'string' || !isKeyPart(profileKey)) return { error: json({ error: 'profile-key' }, 403) };
+  const seals = room.seals && typeof room.seals === 'object' ? room.seals : {};
+  if (Array.isArray(seals.revoked) && seals.revoked.includes(memberId)) return { error: json({ error: 'revoked' }, 403) };
+  const current = owners[memberId];
+  if (!current) return { error: json({ error: 'member' }, 403) };
+  const hash = await sha256Base64Url(profileKey);
+  if (!safeEqual(current, hash)) return { error: json({ error: 'profile-key' }, 403) };
+  return { error: null };
 }
 
 export async function authorizeMember(room, memberId, profileKey) {
@@ -904,7 +918,12 @@ export async function parseOperation(request) {
   const id = await roomToken(code, token.writeKey, token.readKeyHash);
 
   if (request.method === 'GET' && action === '/family') {
-    return { kind: 'family', token: id };
+    return {
+      kind: 'family',
+      token: id,
+      viewerId: request.headers.get('x-umap-member') || '',
+      profileKey: request.headers.get('x-umap-profile-key') || '',
+    };
   }
 
   if (request.method === 'GET' && action === '/chat') {
@@ -1154,7 +1173,26 @@ export async function handleSyncRequest(store, request, extras = {}) {
 
   const room = (await store.read(op.token)) || emptyRoom();
   if (op.kind === 'get') return json(viewRoom(room, op.since));
-  if (op.kind === 'family') return json(viewFamilyPlaces(room));
+  if (op.kind === 'family') {
+    const auth = await authorizeReader(room, op.viewerId, op.profileKey);
+    if (auth.error) return auth.error;
+    const view = viewFamilyPlaces(room);
+    if (extras.accounts && typeof op.viewerId === 'string' && op.viewerId) {
+      const { recordHandling } = await import('./handling.mjs');
+      const places = Array.isArray(view.places) ? view.places : [];
+      for (const place of places) {
+        if (!place || place.memberId === op.viewerId || typeof place.memberId !== 'string') continue;
+        await recordHandling(extras.accounts, {
+          kind: 'use',
+          memberId: place.memberId,
+          actor: op.viewerId,
+          categories: ['location'],
+          at: Date.now(),
+        }, extras.now || Date.now()).catch(() => undefined);
+      }
+    }
+    return json(view);
+  }
   if (op.kind === 'chat-get') {
     const view = op.peer ? viewDirectMessages(room, op.me, op.peer) : viewMyThreads(room, op.me);
     if (!view) return json({ error: 'chat' }, 400);
@@ -1168,7 +1206,19 @@ export async function handleSyncRequest(store, request, extras = {}) {
   if (op.kind === 'place') {
     const next = await commitPlace(room, op.place, op.profileKey || '');
     if (next.error) return next.error;
-    if (!next.ignored) await store.write(op.token, next.room);
+    if (!next.ignored) {
+      await store.write(op.token, next.room);
+      if (extras.accounts && op.place && op.place.memberId) {
+        const { recordHandling } = await import('./handling.mjs');
+        await recordHandling(extras.accounts, {
+          kind: 'collect',
+          memberId: op.place.memberId,
+          actor: op.place.memberId,
+          categories: ['location'],
+          at: op.place.at,
+        }, extras.now || Date.now()).catch(() => undefined);
+      }
+    }
     return json({ ok: true });
   }
   if (op.kind === 'profile') {
@@ -1180,7 +1230,19 @@ export async function handleSyncRequest(store, request, extras = {}) {
   if (op.kind === 'trail') {
     const next = await commitTrail(room, op.trail, op.profileKey || '');
     if (next.error) return next.error;
-    if (!next.ignored) await store.write(op.token, next.room);
+    if (!next.ignored) {
+      await store.write(op.token, next.room);
+      if (extras.accounts && op.trail && op.trail.memberId) {
+        const { recordHandling } = await import('./handling.mjs');
+        await recordHandling(extras.accounts, {
+          kind: 'collect',
+          memberId: op.trail.memberId,
+          actor: op.trail.memberId,
+          categories: ['history'],
+          at: op.trail.at || Date.now(),
+        }, extras.now || Date.now()).catch(() => undefined);
+      }
+    }
     return json({ ok: true });
   }
   if (op.kind === 'keys') {

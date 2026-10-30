@@ -129,6 +129,8 @@ export interface Session {
   /** Publisher id → timestamp of the canonical trail already applied on this phone. */
   trailRevisions: Record<string, number>;
   shareSelfWithFamily: boolean;
+  /** False only after the person withdraws 개인위치정보 이용 동의. */
+  locationConsent?: boolean;
   /** Past journeys stay sealed until this phone has the recovery code. */
   historyLocked: boolean;
   sealedHistory: unknown;
@@ -158,10 +160,11 @@ export const DEFAULT_CENTER = { lat: 37.6366, lng: 127.0672 };
 export const TERM_IDS = {
   terms: 'terms',
   location: 'location',
+  locationUse: 'locationUse',
   privacy: 'privacy',
   guardian: 'guardian',
   marketing: 'marketing',
   overseas: 'overseas',
 } as const;
 
-export const REQUIRED_TERMS = [TERM_IDS.terms, TERM_IDS.location, TERM_IDS.privacy, TERM_IDS.guardian];
+export const REQUIRED_TERMS = [TERM_IDS.terms, TERM_IDS.location, TERM_IDS.locationUse, TERM_IDS.privacy, TERM_IDS.guardian];

@@ -169,6 +169,7 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
   }, [trackingOn]);
 
   useEffect(() => {
+    if (state.locationConsent === false) return;
     const name = (state.profile?.name || self?.name || '가족').trim().slice(0, 20) || '가족';
     const memberId = state.profile?.profileKey ? state.profile.id : undefined;
     const nextTokens: Record<string, string> = {};
@@ -218,6 +219,7 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
   }, [selfPublishKey, state.guardians, state.mode, state.profile?.id, state.profile?.name, state.profile?.profileKey]);
 
   useEffect(() => {
+    if (state.locationConsent === false) return;
     if (!state.syncWriteKey || !state.syncReadKey) return;
     let cancel = false;
     const name = (state.profile?.name || self?.name || '가족').trim().slice(0, 20) || '가족';
@@ -303,6 +305,7 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
     state.permissions.accuracy,
     state.backgroundKeepAlive,
     state.shareSelfWithFamily,
+    state.locationConsent === false ? '0' : '1',
     state.profile?.name ?? '',
     state.profile?.id ?? '',
     state.profile?.profileKey ?? '',
@@ -323,7 +326,7 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
         await umapLocation.stop().catch(() => undefined);
         return;
       }
-      const wanted = current.permissions.locationMode === 'always' && current.backgroundKeepAlive;
+      const wanted = current.locationConsent !== false && current.permissions.locationMode === 'always' && current.backgroundKeepAlive;
       const base = familySyncUrl();
       if (!wanted || !base || !umapLocationNative()) {
         if (status.running) await umapLocation.stop().catch(() => undefined);
