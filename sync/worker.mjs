@@ -251,14 +251,27 @@ async function noteHandling(env, op, data) {
     });
     return;
   }
-  if (op.kind !== 'family' || !op.viewerId || !Array.isArray(data.places)) return;
-  for (const place of data.places) {
-    if (!place || typeof place.memberId !== 'string' || place.memberId === op.viewerId) continue;
+  if ((op.kind !== 'family' && op.kind !== 'get') || !op.viewerId) return;
+  const seen = new Set();
+  for (const place of Array.isArray(data.places) ? data.places : []) {
+    if (!place || typeof place.memberId !== 'string' || place.memberId === op.viewerId || seen.has(`p:${place.memberId}`)) continue;
+    seen.add(`p:${place.memberId}`);
     await post({
       kind: 'use',
       memberId: place.memberId,
       actor: op.viewerId,
       categories: ['location'],
+      at: Date.now(),
+    });
+  }
+  for (const trail of Array.isArray(data.trails) ? data.trails : []) {
+    if (!trail || typeof trail.memberId !== 'string' || trail.memberId === op.viewerId || seen.has(`t:${trail.memberId}`)) continue;
+    seen.add(`t:${trail.memberId}`);
+    await post({
+      kind: 'use',
+      memberId: trail.memberId,
+      actor: op.viewerId,
+      categories: ['history'],
       at: Date.now(),
     });
   }
@@ -317,7 +330,7 @@ export default {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(op),
     });
-    if (op.kind === 'place' || op.kind === 'trail' || op.kind === 'family') {
+    if (op.kind === 'place' || op.kind === 'trail' || op.kind === 'family' || op.kind === 'get') {
       const data = await response.json();
       await noteHandling(env, op, data).catch(() => undefined);
       return withCors(Response.json(data, { status: response.status }));

@@ -941,7 +941,13 @@ export async function parseOperation(request) {
     const actual = await sha256Base64Url(readKey);
     if (!safeEqual(actual, token.readKeyHash)) return json({ error: 'read-key' }, 403);
     const since = Number(url.searchParams.get('since') || 0);
-    return { kind: 'get', token: id, since: Number.isFinite(since) ? since : 0 };
+    return {
+      kind: 'get',
+      token: id,
+      since: Number.isFinite(since) ? since : 0,
+      viewerId: request.headers.get('x-umap-member') || '',
+      profileKey: request.headers.get('x-umap-profile-key') || '',
+    };
   }
 
   if (request.method === 'DELETE' && action === '') {
@@ -1144,6 +1150,34 @@ export async function forgetMemberInStore(store, target) {
   return { ok: true, deleted: false };
 }
 
+async function logLocationUse(accounts, viewerId, view, now) {
+  if (!accounts || typeof viewerId !== 'string' || !viewerId || !view) return;
+  const { recordHandling } = await import('./handling.mjs');
+  const seen = new Set();
+  for (const place of Array.isArray(view.places) ? view.places : []) {
+    if (!place || typeof place.memberId !== 'string' || place.memberId === viewerId || seen.has(`p:${place.memberId}`)) continue;
+    seen.add(`p:${place.memberId}`);
+    await recordHandling(accounts, {
+      kind: 'use',
+      memberId: place.memberId,
+      actor: viewerId,
+      categories: ['location'],
+      at: now,
+    }, now).catch(() => undefined);
+  }
+  for (const trail of Array.isArray(view.trails) ? view.trails : []) {
+    if (!trail || typeof trail.memberId !== 'string' || trail.memberId === viewerId || seen.has(`t:${trail.memberId}`)) continue;
+    seen.add(`t:${trail.memberId}`);
+    await recordHandling(accounts, {
+      kind: 'use',
+      memberId: trail.memberId,
+      actor: viewerId,
+      categories: ['history'],
+      at: now,
+    }, now).catch(() => undefined);
+  }
+}
+
 export async function handleSyncRequest(store, request, extras = {}) {
   if (request.method === 'OPTIONS') return new Response(null, { status: 204 });
   const op = await parseOperation(request);
@@ -1172,25 +1206,16 @@ export async function handleSyncRequest(store, request, extras = {}) {
   }
 
   const room = (await store.read(op.token)) || emptyRoom();
-  if (op.kind === 'get') return json(viewRoom(room, op.since));
+  if (op.kind === 'get') {
+    const view = viewRoom(room, op.since);
+    await logLocationUse(extras.accounts, op.viewerId, view, extras.now || Date.now());
+    return json(view);
+  }
   if (op.kind === 'family') {
     const auth = await authorizeReader(room, op.viewerId, op.profileKey);
     if (auth.error) return auth.error;
     const view = viewFamilyPlaces(room);
-    if (extras.accounts && typeof op.viewerId === 'string' && op.viewerId) {
-      const { recordHandling } = await import('./handling.mjs');
-      const places = Array.isArray(view.places) ? view.places : [];
-      for (const place of places) {
-        if (!place || place.memberId === op.viewerId || typeof place.memberId !== 'string') continue;
-        await recordHandling(extras.accounts, {
-          kind: 'use',
-          memberId: place.memberId,
-          actor: op.viewerId,
-          categories: ['location'],
-          at: Date.now(),
-        }, extras.now || Date.now()).catch(() => undefined);
-      }
-    }
+    await logLocationUse(extras.accounts, op.viewerId, view, extras.now || Date.now());
     return json(view);
   }
   if (op.kind === 'chat-get') {

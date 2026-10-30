@@ -770,6 +770,8 @@ export function startAdminRemoteSync(
         headers: {
           'x-umap-sync-key': token,
           'x-umap-read-key': link.readKey,
+          ...(self?.memberId ? { 'x-umap-member': self.memberId } : {}),
+          ...(self?.profileKey ? { 'x-umap-profile-key': self.profileKey } : {}),
         },
       });
       classify(response);
