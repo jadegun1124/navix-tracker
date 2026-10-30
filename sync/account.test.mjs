@@ -375,6 +375,19 @@ test('linking someone else\'s Kakao does not rotate that session', async () => {
   assert.equal(same.status, 200);
   assert.equal(same.body.account.memberId, 'local-restore1');
   assert.equal(same.body.account.accountKey, owner.body.account.accountKey);
+
+  const missed = await accountCall(accounts, 'POST', '/v1/account/kakao', {
+    accountKey: 'missingKeyAAAAAAAAA',
+    body: {
+      accessToken: 'kakao-access-ok',
+      mode: 'link',
+      accountKey: 'missingKeyAAAAAAAAA',
+    },
+    extras,
+  });
+  assert.equal(missed.status, 404);
+  const still = await accounts.get(`acct:${ownerId}`);
+  assert.equal(still.sessionHash, before.sessionHash);
 });
 
 test('logout wipes the stored account key so the next sign-in does not reuse the previous person', () => {
@@ -393,6 +406,13 @@ test('logout wipes the stored account key so the next sign-in does not reuse the
     naverLinked: true,
   });
   assert.deepEqual(readStoredAccountLinks(fake), { kakao: true, naver: true });
+  rememberAccountSecrets(fake, {
+    accountKey: 'accountKeyBBBBBBBBBB',
+    recoveryCode: 'ABCDEFGHJKLN',
+    kakaoLinked: false,
+    naverLinked: false,
+  });
+  assert.deepEqual(readStoredAccountLinks(fake), { kakao: false, naver: false });
   fake.setItem(LEFTOVER_GOOGLE_ACCOUNT_KEY, JSON.stringify({ sub: '1098234765', localId: 'local-restore1' }));
   const epoch = currentAccountBackupEpoch();
   logoutLocalAccount(fake);

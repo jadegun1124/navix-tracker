@@ -90,11 +90,11 @@ export function rememberAccountSecrets(storage, account) {
   if (!account) return;
   if (account.accountKey) writeStoredAccountKey(storage, account.accountKey);
   if (account.recoveryCode) writeStoredRecoveryCode(storage, account.recoveryCode);
-  if (account.kakaoLinked === true || account.naverLinked === true) {
+  if (typeof account.kakaoLinked === 'boolean' || typeof account.naverLinked === 'boolean') {
     const current = readStoredAccountLinks(storage);
     writeStoredAccountLinks(storage, {
-      kakao: current.kakao || account.kakaoLinked === true,
-      naver: current.naver || account.naverLinked === true,
+      kakao: typeof account.kakaoLinked === 'boolean' ? account.kakaoLinked : current.kakao,
+      naver: typeof account.naverLinked === 'boolean' ? account.naverLinked : current.naver,
     });
   }
 }

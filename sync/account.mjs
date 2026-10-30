@@ -663,7 +663,8 @@ async function attachLinkedProvider(store, {
   const linking = mode === 'link';
   const current = currentKey ? await findBySession(store, currentKey) : null;
   if (existing && linking) {
-    if (!current || current.id !== existing.id) return { error: 'member' };
+    if (!current) return { error: 'account' };
+    if (current.id !== existing.id) return { error: 'member' };
     const next = { ...current, [field]: providerId, updatedAt: now };
     await writeRecord(store, next, current);
     return { record: next, accountKey: currentKey, linked: true };
