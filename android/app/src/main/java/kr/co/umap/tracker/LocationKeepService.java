@@ -166,7 +166,9 @@ public class LocationKeepService {
         String sealKids = sealKidFingerprint(config);
         if (!sealKids.equals(prefs(context).getString("sealKids", ""))) {
             synchronized (LOCK) {
+                ensureFilter(context);
                 lastPublishedAt = 0L;
+                rememberFilter(context);
             }
             prefs(context).edit().putBoolean("registered", true).putString("sealKids", sealKids).commit();
         } else {
