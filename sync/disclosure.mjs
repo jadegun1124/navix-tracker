@@ -269,10 +269,18 @@ function normalizeCategories(value) {
   return DISCLOSURE_CATEGORIES.filter((item) => seen.has(item));
 }
 
+const SEAL_KEYS = new Set(['v', 'alg', 'kid', 'iv', 'ct']);
+
 function isSealShape(value) {
   return !!value && typeof value === 'object' && !Array.isArray(value)
     && value.v === 1 && value.alg === 'A256GCM'
     && typeof value.kid === 'string' && typeof value.iv === 'string' && typeof value.ct === 'string';
+}
+
+function noteField(state, key) {
+  const mapped = KEY_CATEGORY[key.toLowerCase()];
+  if (mapped) state.detected.add(mapped);
+  else if (!STRUCTURAL.has(key) && !SEAL_KEYS.has(key)) state.unknown.push(key);
 }
 
 function inspectPayload(value, state, depth = 0, parentKey = '') {
@@ -281,6 +289,11 @@ function inspectPayload(value, state, depth = 0, parentKey = '') {
     const mapped = KEY_CATEGORY[parentKey.toLowerCase()];
     if (OPAQUE.has(mapped)) state.detected.add(mapped);
     else state.unlabeledSeal = true;
+    for (const [key, child] of Object.entries(value)) {
+      if (SEAL_KEYS.has(key)) continue;
+      noteField(state, key);
+      inspectPayload(child, state, depth + 1, key);
+    }
     return;
   }
   if (Array.isArray(value)) {
@@ -289,9 +302,7 @@ function inspectPayload(value, state, depth = 0, parentKey = '') {
   }
   if (typeof value !== 'object') return;
   for (const [key, child] of Object.entries(value)) {
-    const mapped = KEY_CATEGORY[key.toLowerCase()];
-    if (mapped) state.detected.add(mapped);
-    else if (!STRUCTURAL.has(key) && !isSealShape(child)) state.unknown.push(key);
+    noteField(state, key);
     inspectPayload(child, state, depth + 1, key);
   }
 }

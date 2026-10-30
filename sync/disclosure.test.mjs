@@ -302,6 +302,29 @@ test('a disclosure lists every personal-data category and stores none of the val
   assert.equal(secretDetail.error, 'category');
 });
 
+test('a seal object cannot hide another personal field', async () => {
+  const accounts = createMemoryAccountStore();
+  const account = await register(accounts);
+  const payload = {
+    ...sealedPayload(),
+    kakaoId: '123456789',
+  };
+  const hidden = await releaseToThirdParty(accounts, requestFor(account.memberId, {
+    categories: ['location'],
+    payload,
+  }), AT);
+  assert.equal(hidden.error, 'category');
+  assert.equal(hidden.released, undefined);
+  assert.equal(await accounts.get(disclosureKey(await ledgerId(accounts, account.memberId))), undefined);
+  const listed = await releaseToThirdParty(accounts, requestFor(account.memberId, {
+    categories: ['location', 'kakao'],
+    payload,
+  }), AT);
+  assert.equal(listed.ok, true);
+  assert.deepEqual(listed.entry.categories, ['kakao', 'location']);
+  assert.equal(JSON.stringify(await accounts.get(disclosureKey(await ledgerId(accounts, account.memberId)))).includes('123456789'), false);
+});
+
 test('only releaseToThirdParty writes the disclosure chain', () => {
   const account = readFileSync(new URL('./account.mjs', import.meta.url), 'utf8');
   const worker = readFileSync(new URL('./worker.mjs', import.meta.url), 'utf8');
