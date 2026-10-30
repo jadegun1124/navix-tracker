@@ -379,11 +379,15 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
       if (document.visibilityState === 'hidden') return;
       void syncKeepAlive.current();
     };
+    const timer = window.setInterval(() => void syncKeepAlive.current(), 20_000);
     document.addEventListener('visibilitychange', onVisible);
     document.addEventListener('resume', onVisible);
+    window.addEventListener('umap-family-keys', onVisible);
     return () => {
+      window.clearInterval(timer);
       document.removeEventListener('visibilitychange', onVisible);
       document.removeEventListener('resume', onVisible);
+      window.removeEventListener('umap-family-keys', onVisible);
     };
   }, [keepKey]);
 

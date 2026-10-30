@@ -520,30 +520,35 @@ export async function rotateRemovedMember(input: {
 }): Promise<void> {
   if (typeof localStorage === 'undefined') return;
   const device = await ensureDevice(localStorage);
-  const directory = await putRoomKeys(input.code, input.token, input.profileKey, {
-    memberId: input.memberId,
-    publicKey: device.publicKey,
-  });
-  if (!directory) return;
-  const minted = await mintFamilyKey();
-  const wraps: Record<string, { epk: string; iv: string; ct: string }> = {};
-  const pubs = { ...(directory.pubs || {}), [input.memberId]: device.publicKey };
-  delete pubs[input.removedId];
-  for (const [id, pub] of Object.entries(pubs)) {
-    if ((directory.revoked || []).includes(id)) continue;
-    const wrap = await wrapFamilyKey(pub, minted.key, minted.kid);
-    if (wrap) wraps[id] = wrap;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const directory = await putRoomKeys(input.code, input.token, input.profileKey, {
+      memberId: input.memberId,
+      publicKey: device.publicKey,
+    });
+    if (!directory) continue;
+    const minted = await mintFamilyKey();
+    const wraps: Record<string, { epk: string; iv: string; ct: string }> = {};
+    const pubs = { ...(directory.pubs || {}), [input.memberId]: device.publicKey };
+    delete pubs[input.removedId];
+    for (const [id, pub] of Object.entries(pubs)) {
+      if ((directory.revoked || []).includes(id)) continue;
+      const wrap = await wrapFamilyKey(pub, minted.key, minted.kid);
+      if (wrap) wraps[id] = wrap;
+    }
+    if (!wraps[input.memberId]) continue;
+    const saved = await putRoomKeys(input.code, input.token, input.profileKey, {
+      memberId: input.memberId,
+      publicKey: device.publicKey,
+      kid: minted.kid,
+      wraps,
+      rotate: true,
+      revoke: input.removedId,
+    });
+    if (saved?.kid === minted.kid && (saved.revoked || []).includes(input.removedId)) {
+      rememberFamilyKey(localStorage, input.code, minted.kid, minted.key);
+      return;
+    }
   }
-  if (!wraps[input.memberId]) return;
-  const saved = await putRoomKeys(input.code, input.token, input.profileKey, {
-    memberId: input.memberId,
-    publicKey: device.publicKey,
-    kid: minted.kid,
-    wraps,
-    rotate: true,
-    revoke: input.removedId,
-  });
-  if (saved?.kid === minted.kid) rememberFamilyKey(localStorage, input.code, minted.kid, minted.key);
 }
 
 async function flushQueues() {

@@ -62,6 +62,7 @@ export function rememberFamilyKey(storage, code, kid, key) {
   const all = readJson(storage, FAMILY_KEY_STORAGE) || {};
   all[code] = { kid, key: bytesToBase64Url(key) };
   storage.setItem(FAMILY_KEY_STORAGE, JSON.stringify(all));
+  if (typeof window !== 'undefined') window.dispatchEvent(new Event('umap-family-keys'));
 }
 
 export function contentKeyBytes(device) {
