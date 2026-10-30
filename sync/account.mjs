@@ -662,9 +662,9 @@ async function attachLinkedProvider(store, {
 }) {
   const linking = mode === 'link';
   const current = currentKey ? await findBySession(store, currentKey) : null;
-  if (existing && linking) {
+  if (linking) {
     if (!current) return { error: 'account' };
-    if (current.id !== existing.id) return { error: 'member' };
+    if (existing && current.id !== existing.id) return { error: 'member' };
     const next = { ...current, [field]: providerId, updatedAt: now };
     await writeRecord(store, next, current);
     return { record: next, accountKey: currentKey, linked: true };
@@ -680,7 +680,6 @@ async function attachLinkedProvider(store, {
     await writeRecord(store, next, current);
     return { record: next, accountKey: currentKey, linked: true };
   }
-  if (linking && !snapshot) return { error: 'account' };
   const seed = snapshot || snapshotFromDisplayName(displayName);
   const minted = await mintRecord(seed, now, { [field]: providerId });
   await writeRecord(store, minted.record);

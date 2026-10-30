@@ -390,6 +390,20 @@ test('linking someone else\'s Kakao does not rotate that session', async () => {
   assert.equal(still.sessionHash, before.sessionHash);
 });
 
+test('link mode does not mint an account when this phone has no session', async () => {
+  const accounts = createMemoryAccountStore();
+  const extras = {
+    fetchKakaoUser: async () => ({ id: 555666777, kakao_account: { profile: { nickname: '엄마' } } }),
+  };
+  const missing = await accountCall(accounts, 'POST', '/v1/account/kakao', {
+    body: { accessToken: 'kakao-access-ok', mode: 'link', snapshot: snapshot() },
+    extras,
+  });
+  assert.equal(missing.status, 404);
+  assert.equal(await accounts.get('kakao:555666777'), undefined);
+  assert.equal(await accounts.get('member:local-restore1'), undefined);
+});
+
 test('logout wipes the stored account key so the next sign-in does not reuse the previous person', () => {
   const storage = new Map();
   const fake = {
