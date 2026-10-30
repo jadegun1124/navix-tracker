@@ -84,21 +84,20 @@ jobs:
           echo "Assets copied to Android:"
           ls -la android/app/src/main/assets/public/
 
-      - name: Build Debug APK with Gradle
+      - name: Build release APK with Gradle
         env:
           KAKAO_NATIVE_APP_KEY: ${{ secrets.KAKAO_NATIVE_APP_KEY != '' && secrets.KAKAO_NATIVE_APP_KEY || secrets.VITE_KAKAO_NATIVE_APP_KEY }}
         run: |
           cd android
-          # assembleDebug uses android/app/umap-sideload.keystore, not the runner's
-          # ~/.android/debug.keystore. A fresh debug key on each runner made
-          # sideload updates fail with a certificate mismatch.
-          ./gradlew assembleDebug --no-daemon --stacktrace
+          # assembleRelease uses android/app/umap-sideload.keystore, the same
+          # certificate as earlier sideload APKs. SHA-1 must stay
+          # 00:57:37:35:22:70:B8:4C:7F:B6:01:61:29:BD:A9:A3:CD:09:35:0C.
+          ./gradlew assembleRelease --no-daemon --stacktrace
 
       - name: Prepare APK Output
         run: |
           mkdir -p output
-          find android/ -name "*.apk" -ls
-          find android/ -name "*.apk" -exec cp {} output/kinnex-v1.33.0.apk \;
+          cp android/app/build/outputs/apk/release/app-release.apk output/kinnex-v1.33.0.apk
           echo "Output directory contents:"
           ls -lh output/
 
@@ -135,6 +134,9 @@ jobs:
           sha1 = re.search(r"SHA1:\s*([0-9A-Fa-f:]+)", listed)
           if not sha1:
               raise SystemExit("keystore has no SHA1 fingerprint")
+          expected = "005737352270b84c7fb6016129bda9a3cd09350c"
+          if norm(sha1.group(1)) != expected:
+              raise SystemExit(f"keystore SHA1 {sha1.group(1)} is not the Kakao release hash")
           print(f"Release keystore SHA1={sha1.group(1)}")
           PY
 

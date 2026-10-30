@@ -10,7 +10,7 @@ android {
         versionCode 37
         versionName "1.33.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
-        def kakaoKey = (System.getenv("KAKAO_NATIVE_APP_KEY") ?: "").trim()
+        def kakaoKey = (System.getenv("KAKAO_NATIVE_APP_KEY") ?: System.getenv("VITE_KAKAO_NATIVE_APP_KEY") ?: "b42233e0170711205fa75bbca06e98e9").trim()
         buildConfigField "String", "KAKAO_NATIVE_APP_KEY", "\"${kakaoKey.replace('"', '')}\""
         manifestPlaceholders = [kakaoScheme: kakaoKey ? "kakao${kakaoKey}" : "kakaoplaceholder"]
         aaptOptions {

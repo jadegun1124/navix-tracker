@@ -19,6 +19,8 @@ const HISTORY_MS = 30 * 24 * 60 * 60 * 1000;
 const EARLIEST_AT = Date.UTC(2024, 0, 1);
 
 export const ACCOUNT_SETUP_MESSAGE = '계정 확인을 마치지 못했습니다. 이 상태로 시작하지 않습니다.';
+export const NAVER_SECRET_MESSAGE = '네이버 로그인 확인에 필요한 서버 비밀 NAVER_CLIENT_SECRET이 없습니다. 이 상태로 로그인하지 않습니다.';
+export const ACCOUNT_LINK_CONFLICT_MESSAGE = '이 로그인은 다른 사람에 이미 연결되어 있습니다. 이 폰의 지도를 바꾸지 않았습니다.';
 export const ACCOUNT_VERIFY_MESSAGE = '계정 확인에 실패했습니다. 다시 로그인해 주세요.';
 export const ACCOUNT_RECOVER_MESSAGE = '복구 코드를 확인하지 못했습니다. 코드를 다시 입력해 주세요.';
 export const ACCOUNT_MISSING_MESSAGE = '저장된 계정을 찾지 못했습니다.';
@@ -395,11 +397,6 @@ async function findByRecovery(store, code) {
   return readRecord(store, await store.get(`recovery:${hash}`));
 }
 
-async function findByGoogle(store, sub) {
-  if (typeof sub !== 'string' || !/^[0-9]{5,}$/.test(sub)) return null;
-  return readRecord(store, await store.get(`google:${sub}`));
-}
-
 async function findByKakao(store, id) {
   if (typeof id !== 'string' || !/^[0-9]{3,20}$/.test(id)) return null;
   return readRecord(store, await store.get(`kakao:${id}`));
@@ -637,7 +634,8 @@ export async function exchangeNaverAuthCode({ code, state, redirectUri, clientId
   const redirect = allowedNaverRedirect(redirectUri);
   const id = naverClientId(clientId);
   const secret = naverClientSecret(clientSecret);
-  if (!id || !secret) return { error: 'setup' };
+  if (!secret) return { error: 'naver-secret' };
+  if (!id) return { error: 'setup' };
   if (!authCode || authCode.length > 256 || !csrf || csrf.length > 128 || !redirect) return { error: 'token' };
   const exchange = typeof exchangeNaverCode === 'function' ? exchangeNaverCode : defaultExchangeNaverCode;
   const issued = await exchange({
@@ -660,28 +658,35 @@ async function attachLinkedProvider(store, {
   field,
   providerId,
   now,
+  mode,
 }) {
+  const linking = mode === 'link';
+  const current = currentKey ? await findBySession(store, currentKey) : null;
+  if (existing && linking) {
+    if (!current || current.id !== existing.id) return { error: 'member' };
+    const next = { ...current, [field]: providerId, updatedAt: now };
+    await writeRecord(store, next, current);
+    return { record: next, accountKey: currentKey, linked: true };
+  }
   if (existing) {
     const nextKey = mintAccountKey();
     const next = { ...existing, sessionHash: await accountKeyHash(nextKey), updatedAt: now };
     await writeRecord(store, next, existing);
     return { record: next, accountKey: nextKey, restored: true };
   }
-  if (currentKey) {
-    const current = await findBySession(store, currentKey);
-    if (current) {
-      const next = { ...current, [field]: providerId, updatedAt: now };
-      await writeRecord(store, next, current);
-      return { record: next, accountKey: currentKey, linked: true };
-    }
+  if (current) {
+    const next = { ...current, [field]: providerId, updatedAt: now };
+    await writeRecord(store, next, current);
+    return { record: next, accountKey: currentKey, linked: true };
   }
+  if (linking && !snapshot) return { error: 'account' };
   const seed = snapshot || snapshotFromDisplayName(displayName);
   const minted = await mintRecord(seed, now, { [field]: providerId });
   await writeRecord(store, minted.record);
   return { record: minted.record, accountKey: minted.accountKey, created: true };
 }
 
-export async function linkKakaoAccount(store, { accessToken, snapshot, accountKey }, options = {}) {
+export async function linkKakaoAccount(store, { accessToken, snapshot, accountKey, mode }, options = {}) {
   const verified = await verifyKakaoAccessToken(accessToken, options);
   if (!verified.ok) return { error: 'token' };
   return attachLinkedProvider(store, {
@@ -692,10 +697,11 @@ export async function linkKakaoAccount(store, { accessToken, snapshot, accountKe
     field: 'kakaoId',
     providerId: verified.id,
     now: options.now || Date.now(),
+    mode,
   });
 }
 
-export async function linkNaverAccount(store, { accessToken, code, state, redirectUri, snapshot, accountKey }, options = {}) {
+export async function linkNaverAccount(store, { accessToken, code, state, redirectUri, snapshot, accountKey, mode }, options = {}) {
   let token = bearerToken(accessToken);
   if (!token && (code || state)) {
     const exchanged = await exchangeNaverAuthCode({
@@ -720,14 +726,16 @@ export async function linkNaverAccount(store, { accessToken, code, state, redire
     field: 'naverId',
     providerId: verified.id,
     now: options.now || Date.now(),
+    mode,
   });
 }
 
 export function accountError(code) {
+  if (code === 'naver-secret') return json({ error: 'setup', message: NAVER_SECRET_MESSAGE }, 503);
   if (code === 'setup') return json({ error: 'setup', message: ACCOUNT_SETUP_MESSAGE }, 503);
   if (code === 'token') return json({ error: 'token', message: ACCOUNT_VERIFY_MESSAGE }, 401);
   if (code === 'recovery') return json({ error: 'recovery', message: ACCOUNT_RECOVER_MESSAGE }, 403);
-  if (code === 'member') return json({ error: 'member' }, 409);
+  if (code === 'member') return json({ error: 'member', message: ACCOUNT_LINK_CONFLICT_MESSAGE }, 409);
   if (code === 'snapshot' || code === 'name' || code === 'room' || code === 'profile-key' || code === 'photo') {
     return json({ error: code }, 400);
   }
@@ -784,6 +792,7 @@ export async function parseAccountOperation(request) {
       accessToken: typeof value.accessToken === 'string' ? value.accessToken : '',
       snapshot: cleaned.snapshot,
       accountKey: typeof value.accountKey === 'string' ? value.accountKey : accountKey,
+      mode: value.mode === 'link' ? 'link' : 'login',
     };
   }
 
@@ -798,6 +807,7 @@ export async function parseAccountOperation(request) {
       redirectUri: typeof value.redirectUri === 'string' ? value.redirectUri : '',
       snapshot: cleaned.snapshot,
       accountKey: typeof value.accountKey === 'string' ? value.accountKey : accountKey,
+      mode: value.mode === 'link' ? 'link' : 'login',
     };
   }
 

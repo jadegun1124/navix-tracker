@@ -4,7 +4,7 @@ import { currentAppVersionLabel } from '../../lib/appRelease.mjs';
 import { looksLikePhone, localProfile } from '../../lib/localProfile.mjs';
 import { KAKAO_SETUP_MESSAGE } from '../../lib/kakaoAuth.mjs';
 import { NAVER_SETUP_MESSAGE } from '../../lib/naverAuth.mjs';
-import { ACCOUNT_LINKED_OTHER_MESSAGE, linkedAccountWouldSwitch, rememberAccountSecrets, snapshotFromSession } from '../../lib/accountRestore.mjs';
+import { ACCOUNT_LINKED_OTHER_MESSAGE, linkedAccountWouldSwitch, readStoredAccountLinks, readStoredRecoveryCode, rememberAccountSecrets, snapshotFromSession } from '../../lib/accountRestore.mjs';
 import type { AccountSnapshot } from '../../services/familyAccount';
 import { buildInviteLink, formatClock, hasLocation, haversineMeters, shouldAlertLeave } from '../../lib/geo';
 import { ALWAYS_GUIDE_DISMISSED_KEY, CHAT_NOTIFY_ASKED_KEY, KEEP_PERMISSION_ASKED_KEY, KEEP_START_ASKED_KEY, keepEntryPrompt, markSessionFlag, readSessionFlag } from '../../lib/systemSettings.mjs';
@@ -36,7 +36,6 @@ import { askAlwaysLocation, askBattery, askNotifications } from '../../services/
 import { useFamilyTracking } from './useFamilyTracking';
 import { useFamily } from './session';
 import { consumeAndroidBack } from '../../platform/androidExit';
-import { readStoredRecoveryCode } from '../../lib/accountRestore.mjs';
 import { configuredKakaoLoginKey, signInWithKakao } from '../../services/kakaoSignIn';
 import { configuredNaverClientId, signInWithNaver } from '../../services/naverSignIn';
 
@@ -2329,11 +2328,12 @@ function RecoveryCodePanel() {
   const [copied, setCopied] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [links, setLinks] = useState(() => readStoredAccountLinks(typeof localStorage === 'undefined' ? null : localStorage));
   const code = readStoredRecoveryCode(typeof localStorage === 'undefined' ? null : localStorage);
   const kakaoKey = configuredKakaoLoginKey();
   const naverId = configuredNaverClientId();
   const snapshot = snapshotFromSession(family.state);
-  const persistOnly = { persist: false as const };
+  const linkOnly = { persist: false as const, mode: 'link' as const };
 
   const linkProvider = (
     start: () => Promise<{ ok: boolean; snapshot?: AccountSnapshot; message?: string }>,
@@ -2358,15 +2358,23 @@ function RecoveryCodePanel() {
         return;
       }
       if (result.snapshot) rememberAccountSecrets(localStorage, result.snapshot);
+      setLinks(readStoredAccountLinks(localStorage));
       setNote('이 계정에 연결했습니다. 다시 설치한 뒤에도 같은 사람으로 돌아옵니다.');
     });
   };
 
   return (
-    <div className="mt-3">
+    <section className="mt-4" aria-label="계정 연결">
+      <h3 className="text-sm font-black text-slate-800">계정 연결</h3>
+      <p className="mt-1 text-xs leading-5 text-slate-500">
+        카카오, 네이버, 복구 코드를 이 계정에 연결합니다. 다시 설치한 뒤 어느 방법으로 들어와도 같은 사람, 가족, 기록으로 돌아갑니다.
+      </p>
       {code ? (
-        <div className="rounded-2xl bg-slate-50 px-3 py-3">
-          <p className="text-xs font-bold text-slate-500">복구 코드</p>
+        <div className="mt-3 rounded-2xl bg-slate-50 px-3 py-3">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-xs font-bold text-slate-500">복구 코드</p>
+            <p className="text-xs font-bold text-slate-700">연결됨</p>
+          </div>
           <p className="mt-1 font-mono text-base font-black tracking-[0.18em] text-slate-800">{code}</p>
           <p className="mt-1 text-xs leading-5 text-slate-500">앱을 다시 설치한 뒤 「복구 코드로 복원」에 넣으면 같은 사람과 가족 방으로 돌아갑니다.</p>
           <button
@@ -2383,31 +2391,38 @@ function RecoveryCodePanel() {
           </button>
         </div>
       ) : (
-        <p className="text-xs leading-5 text-slate-500">
-          앱을 지운 뒤에도 같은 사람과 가족으로 돌아오려면 카카오·네이버 또는 복구 코드를 쓰세요. 코드는 이 폰이 서버에 계정을 만든 뒤 여기에 나타납니다.
+        <p className="mt-3 text-xs leading-5 text-slate-500">
+          복구 코드는 이 폰이 서버에 계정을 만든 뒤 여기에 나타납니다. 연결되면 「연결됨」으로 보입니다.
         </p>
       )}
-      <p className="mt-3 text-xs leading-5 text-slate-500">여러 로그인을 한 계정에 연결할 수 있습니다. 키가 없는 버튼은 누르지 않습니다.</p>
-      <div className="mt-2 space-y-2">
+      <div className="mt-3 space-y-2">
+        <div className="flex items-center justify-between gap-3 px-1">
+          <p className="text-xs font-bold text-slate-500">카카오</p>
+          <p className="text-xs font-bold text-slate-700">{links.kakao ? '연결됨' : '연결 안 됨'}</p>
+        </div>
         <button
           type="button"
           disabled={busy || !kakaoKey}
-          onClick={() => linkProvider(() => signInWithKakao(snapshot, persistOnly), KAKAO_SETUP_MESSAGE, kakaoKey, '카카오 연결에 실패했습니다.')}
+          onClick={() => linkProvider(() => signInWithKakao(snapshot, linkOnly), KAKAO_SETUP_MESSAGE, kakaoKey, '카카오 연결에 실패했습니다.')}
           className="w-full rounded-full bg-[#FEE500] py-2.5 text-xs font-bold text-[#191919] disabled:opacity-40"
         >
           카카오 연결
         </button>
+        <div className="flex items-center justify-between gap-3 px-1 pt-1">
+          <p className="text-xs font-bold text-slate-500">네이버</p>
+          <p className="text-xs font-bold text-slate-700">{links.naver ? '연결됨' : '연결 안 됨'}</p>
+        </div>
         <button
           type="button"
           disabled={busy || !naverId}
-          onClick={() => linkProvider(() => signInWithNaver(snapshot, persistOnly), NAVER_SETUP_MESSAGE, naverId, '네이버 연결에 실패했습니다.')}
+          onClick={() => linkProvider(() => signInWithNaver(snapshot, linkOnly), NAVER_SETUP_MESSAGE, naverId, '네이버 연결에 실패했습니다.')}
           className="w-full rounded-full bg-[#03C75A] py-2.5 text-xs font-bold text-white disabled:opacity-40"
         >
           네이버 연결
         </button>
       </div>
       {note && <p className="mt-2 whitespace-pre-line text-xs leading-5 text-slate-600">{note}</p>}
-    </div>
+    </section>
   );
 }
 

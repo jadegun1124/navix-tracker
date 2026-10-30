@@ -1,4 +1,7 @@
 // Kakao Login. The Kakao user id is never the family member id.
+// The native app key is public. The JavaScript key stays empty until the web app is registered.
+
+export const PUBLIC_KAKAO_NATIVE_APP_KEY = 'b42233e0170711205fa75bbca06e98e9';
 
 export const KAKAO_SETUP_MESSAGE = [
   '카카오 로그인을 마치지 못했습니다. 이 상태로 시작하지 않습니다.',
@@ -19,6 +22,10 @@ function kakaoAppKey(value) {
 
 export function kakaoNativeAppKey(value) {
   return kakaoAppKey(value);
+}
+
+export function kakaoNativeAppKeyOrPublic(value) {
+  return kakaoAppKey(value) || kakaoAppKey(PUBLIC_KAKAO_NATIVE_APP_KEY);
 }
 
 export function kakaoJavascriptKey(value) {

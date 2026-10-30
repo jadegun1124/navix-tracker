@@ -11,11 +11,14 @@ import {
 import { createMemoryStore, handleSyncRequest, randomKey, syncTokenFor } from './protocol.mjs';
 import {
   ACCOUNT_KEY_STORAGE,
+  ACCOUNT_LINKS_STORAGE,
   RECOVERY_CODE_STORAGE,
   applyAccountSnapshot,
   currentAccountBackupEpoch,
   logoutLocalAccount,
   persistAccountSecretsIfCurrent,
+  readStoredAccountLinks,
+  rememberAccountSecrets,
   snapshotFromSession,
   writeStoredAccountKey,
   writeStoredRecoveryCode,
@@ -308,6 +311,7 @@ test('Kakao and Naver tokens restore the same book and can share one account', a
     extras: { ...extras, naverClientSecret: '' },
   });
   assert.equal(missingSecret.status, 503);
+  assert.match(missingSecret.body.message, /NAVER_CLIENT_SECRET/);
 
   const missingRedirect = await accountCall(accounts, 'POST', '/v1/account/naver', {
     body: { code: 'naver-code-1', state: 'state-1' },
@@ -322,6 +326,57 @@ test('Kakao and Naver tokens restore the same book and can share one account', a
   assert.equal(forgedRedirect.status, 401);
 });
 
+test('linking someone else\'s Kakao does not rotate that session', async () => {
+  const accounts = createMemoryAccountStore();
+  const extras = {
+    fetchKakaoUser: async () => ({ id: 123456789, kakao_account: { profile: { nickname: '엄마' } } }),
+  };
+  const owner = await accountCall(accounts, 'POST', '/v1/account/kakao', {
+    body: { accessToken: 'kakao-access-ok', snapshot: snapshot() },
+    extras,
+  });
+  assert.equal(owner.status, 200);
+  const ownerId = await accounts.get('member:local-restore1');
+  const before = await accounts.get(`acct:${ownerId}`);
+
+  const other = await accountCall(accounts, 'POST', '/v1/account', {
+    body: snapshot({
+      memberId: 'local-otherphone',
+      profileKey: 'otherkeyAAAAAAAAAA',
+      profile: { name: '아빠', photo: null },
+      room: { code: '10002', writeKey: 'writeKeyBBBBBBBBBB', readKey: 'readKeyBBBBBBBBBBB' },
+    }),
+  });
+  assert.equal(other.status, 200);
+  const conflict = await accountCall(accounts, 'POST', '/v1/account/kakao', {
+    accountKey: other.body.account.accountKey,
+    body: {
+      accessToken: 'kakao-access-ok',
+      mode: 'link',
+      accountKey: other.body.account.accountKey,
+    },
+    extras,
+  });
+  assert.equal(conflict.status, 409);
+  assert.match(conflict.body.message, /다른 사람/);
+  const after = await accounts.get(`acct:${ownerId}`);
+  assert.equal(after.sessionHash, before.sessionHash);
+  assert.equal(after.kakaoId, '123456789');
+
+  const same = await accountCall(accounts, 'POST', '/v1/account/kakao', {
+    accountKey: owner.body.account.accountKey,
+    body: {
+      accessToken: 'kakao-access-ok',
+      mode: 'link',
+      accountKey: owner.body.account.accountKey,
+    },
+    extras,
+  });
+  assert.equal(same.status, 200);
+  assert.equal(same.body.account.memberId, 'local-restore1');
+  assert.equal(same.body.account.accountKey, owner.body.account.accountKey);
+});
+
 test('logout wipes the stored account key so the next sign-in does not reuse the previous person', () => {
   const storage = new Map();
   const fake = {
@@ -331,11 +386,19 @@ test('logout wipes the stored account key so the next sign-in does not reuse the
   };
   writeStoredAccountKey(fake, 'accountKeyAAAAAAAAAA');
   writeStoredRecoveryCode(fake, 'ABCDEFGHJKLN');
+  rememberAccountSecrets(fake, {
+    accountKey: 'accountKeyAAAAAAAAAA',
+    recoveryCode: 'ABCDEFGHJKLN',
+    kakaoLinked: true,
+    naverLinked: true,
+  });
+  assert.deepEqual(readStoredAccountLinks(fake), { kakao: true, naver: true });
   fake.setItem(LEFTOVER_GOOGLE_ACCOUNT_KEY, JSON.stringify({ sub: '1098234765', localId: 'local-restore1' }));
   const epoch = currentAccountBackupEpoch();
   logoutLocalAccount(fake);
   assert.equal(fake.getItem(ACCOUNT_KEY_STORAGE), null);
   assert.equal(fake.getItem(RECOVERY_CODE_STORAGE), null);
+  assert.equal(fake.getItem(ACCOUNT_LINKS_STORAGE), null);
   assert.equal(fake.getItem(LEFTOVER_GOOGLE_ACCOUNT_KEY), null);
   assert.equal(persistAccountSecretsIfCurrent(fake, {
     memberId: 'local-restore1',

@@ -1,5 +1,6 @@
 export const ACCOUNT_KEY_STORAGE: string;
 export const RECOVERY_CODE_STORAGE: string;
+export const ACCOUNT_LINKS_STORAGE: string;
 
 type StorageLike = {
   getItem: (key: string) => string | null;
@@ -19,11 +20,14 @@ export type AccountSnapshot = {
   recoveryCode?: string;
   accountKey?: string;
   googleLinked?: boolean;
+  kakaoLinked?: boolean;
+  naverLinked?: boolean;
 };
 
 export function readStoredAccountKey(storage: StorageLike): string;
 export function writeStoredAccountKey(storage: StorageLike, key: string): void;
 export function readStoredRecoveryCode(storage: StorageLike): string;
+export function readStoredAccountLinks(storage: StorageLike): { kakao: boolean; naver: boolean };
 export function writeStoredRecoveryCode(storage: StorageLike, code: string): void;
 export function clearStoredAccount(storage: StorageLike): void;
 export function currentAccountBackupEpoch(): number;

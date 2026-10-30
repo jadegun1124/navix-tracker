@@ -1,5 +1,6 @@
 import { createServer } from 'node:http';
 import { pathToFileURL } from 'node:url';
+import { PUBLIC_NAVER_CLIENT_ID } from '../src/lib/naverAuth.mjs';
 import { createMemoryAccountStore } from './account.mjs';
 import { createMemoryStore, handleSyncRequest, withCors } from './protocol.mjs';
 
@@ -21,7 +22,7 @@ async function readBody(incoming) {
 export function startSyncServer(port = 0) {
   const store = createMemoryStore();
   const accounts = createMemoryAccountStore();
-  const naverClientId = process.env.NAVER_CLIENT_ID || process.env.VITE_NAVER_CLIENT_ID || '';
+  const naverClientId = process.env.NAVER_CLIENT_ID || process.env.VITE_NAVER_CLIENT_ID || PUBLIC_NAVER_CLIENT_ID;
   const naverClientSecret = process.env.NAVER_CLIENT_SECRET || '';
   const server = createServer(async (incoming, outgoing) => {
     try {

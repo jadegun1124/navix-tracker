@@ -1,4 +1,7 @@
 // Naver Login (네아로). The Naver id is never the family member id.
+// The client id is public. NAVER_CLIENT_SECRET stays on the Worker only.
+
+export const PUBLIC_NAVER_CLIENT_ID = 'dQCiRLIzbNkDG6ULiroD';
 
 export const NAVER_SETUP_MESSAGE = [
   '네이버 로그인을 마치지 못했습니다. 이 상태로 시작하지 않습니다.',
@@ -16,6 +19,10 @@ export function naverClientId(value) {
   if (!id || /your-|placeholder|example/i.test(id)) return '';
   if (id.length < 8 || id.length > 64) return '';
   return id;
+}
+
+export function naverClientIdOrPublic(value) {
+  return naverClientId(value) || naverClientId(PUBLIC_NAVER_CLIENT_ID);
 }
 
 export function naverRedirectUri() {

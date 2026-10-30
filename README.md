@@ -96,7 +96,7 @@ npm run dev
 
 받는 곳: https://github.com/jadegun1124/umap/releases/download/v1.33.0/kinnex-v1.33.0.apk
 
-`main` 푸시마다 `Build Android APK (Kinnex)` 워크플로가 웹을 빌드하고 `dist` 를 안드로이드 에셋으로 복사한 뒤 `assembleDebug` 로 APK를 만듭니다. 결과 파일은 GitHub Release `v1.33.0`에 올립니다. 앱 `versionName`은 `1.33.0`, `versionCode`는 37입니다. Play 스토어 트랙은 없습니다.
+`main` 푸시마다 `Build Android APK (Kinnex)` 워크플로가 웹을 빌드하고 `dist` 를 안드로이드 에셋으로 복사한 뒤 `assembleRelease` 로 APK를 만듭니다. 서명은 `android/app/umap-sideload.keystore` 이고 SHA-1은 `00:57:37:35:22:70:B8:4C:7F:B6:01:61:29:BD:A9:A3:CD:09:35:0C` 입니다. 결과 파일은 GitHub Release `v1.33.0`에 올립니다. 앱 `versionName`은 `1.33.0`, `versionCode`는 37입니다. Play 스토어 트랙은 없습니다.
 
 1.16.0까지 그 빌드는 러너마다 새로 만든 디버그 키로 서명했습니다. 패키지가 `kr.co.umap.tracker`여도 인증서가 다르면 안드로이드는 덮어쓰기를 거절해서, 지우고 다시 깔아야 했습니다. 1.17.0부터 debug와 release는 저장소의 `android/app/umap-sideload.keystore`(별칭 `umap-sideload`)로 서명합니다. 비밀번호는 `android/app/build.gradle`에 있습니다. 인증서 SHA-256은 `4A:15:08:0F:72:C3:87:D1:E8:50:A8:DE:5A:89:34:9A:B4:1A:48:0D:C5:97:71:AB:22:9C:85:44:C8:61:7A:6C`입니다. 이 키는 가족 폰에 직접 설치하는 사이드로드 전용이고, Play 앱 서명 키가 아닙니다.
 
@@ -111,7 +111,7 @@ npm run dev
 무료 카카오 로그인만 씁니다. Worker는 액세스 토큰을 `https://kapi.kakao.com/v1/user/access_token_info`와 `https://kapi.kakao.com/v2/user/me`로 확인하고, 카카오 사용자 id로 같은 계정을 찾습니다.
 
 1. [Kakao Developers](https://developers.kakao.com/) → 내 애플리케이션 추가 → **카카오 로그인** 활성화.
-2. 앱 키의 **네이티브 앱 키**를 `VITE_KAKAO_NATIVE_APP_KEY`와 `KAKAO_NATIVE_APP_KEY`에 넣습니다. **JavaScript 키**는 `VITE_KAKAO_JAVASCRIPT_KEY`에 넣습니다. 시크릿이 아닙니다. 저장소에 커밋하지 않습니다. Pages와 APK 빌드는 Actions secret `VITE_KAKAO_NATIVE_APP_KEY`와 `VITE_KAKAO_JAVASCRIPT_KEY`를, Gradle은 `KAKAO_NATIVE_APP_KEY`를 읽습니다.
+2. 네이티브 앱 키 `b42233e0170711205fa75bbca06e98e9` 는 공개 값이라 앱에 들어 있습니다. 환경 변수 `VITE_KAKAO_NATIVE_APP_KEY` 또는 `KAKAO_NATIVE_APP_KEY`가 있으면 그 값이 우선입니다. 웹 로그인은 **JavaScript 키** `VITE_KAKAO_JAVASCRIPT_KEY`가 있을 때만 열립니다. 그 키는 아직 앱에 없습니다.
 3. 플랫폼 → Android. 패키지 이름 `kr.co.umap.tracker`. 키 해시 `AFc3NSJwuEx/tgFhKb2po80JNQw=` (사이드로드 SHA-1 `00:57:37:35:22:70:B8:4C:7F:B6:01:61:29:BD:A9:A3:CD:09:35:0C`의 Base64).
 4. 플랫폼 → Web. 사이트 도메인 `jadegun1124.github.io`. Redirect URI 스킴은 `kakao{네이티브앱키}://oauth` 입니다. 카카오 계정으로 로그인, 닉네임만 받으면 됩니다.
 
@@ -123,8 +123,8 @@ npm run dev
 2. 로그인 오픈 API 서비스 환경 **Android**. 패키지 이름 `kr.co.umap.tracker`.
 3. 다운로드 URL `https://github.com/jadegun1124/umap/releases/download/v1.33.0/kinnex-v1.33.0.apk`.
 4. Callback URL은 `kinnex://naver` 와 `https://jadegun1124.github.io/kinnex/` 와 `http://localhost:5173/` 입니다.
-5. Client ID를 `VITE_NAVER_CLIENT_ID`에 넣습니다. Pages와 APK 빌드는 Actions secret `VITE_NAVER_CLIENT_ID`를 읽습니다.
-6. Client Secret은 `npx wrangler secret put NAVER_CLIENT_SECRET`으로만 Worker에 넣습니다. 앱에 넣지 않습니다. Worker에 `NAVER_CLIENT_ID`도 같은 값으로 넣습니다.
+5. Client ID `dQCiRLIzbNkDG6ULiroD` 는 공개 값이라 앱과 Worker `NAVER_CLIENT_ID`에 들어 있습니다. `VITE_NAVER_CLIENT_ID`가 있으면 그 값이 우선입니다.
+6. Client Secret은 `npx wrangler secret put NAVER_CLIENT_SECRET`으로만 Worker에 넣습니다. 앱, 저장소, APK에 넣지 않습니다. 비밀이 없으면 Worker는 네이버 로그인을 거절하고 `NAVER_CLIENT_SECRET`이 없다고 알립니다.
 
 카카오 사용자 id와 네이버 id는 구성원 ID가 되지 않습니다. 같은 계정 또는 복구 코드로 다시 들어오면 Worker에 저장된 `local-` ID와 방 키를 다시 씁니다.
 
@@ -173,7 +173,7 @@ npx wrangler@4 deploy
 
 개인 대화는 `POST /v1/rooms/:code/chat` 과 `GET /v1/rooms/:code/chat?me=&with=` 입니다. `me`만 있으면 그 이름이 참여한 대화만 돌아옵니다. 방 조회와 `GET /family`에는 글을 넣지 않습니다. 이 경로가 있는 Worker를 다시 올려야 다른 폰과 글이 오갑니다. 예전 Worker면 글은 이 기기에만 남고, 화면에 그 사실을 알립니다.
 
-`sync/wrangler.toml`이 Durable Object `FamilyRoom`과 `FamilyAccount`를 만듭니다. 계정은 카카오 사용자 id, 네이버 id, 또는 복구 코드 해시로 구성원 id, 방 키, 최근 30일 여정·방문을 보관합니다. 무료 한도에서 관리자 화면 하나가 켜져 있으면 조회가 하루 약 3만 번을 넘습니다. 한도에 닿으면 `src/services/familySync.ts`의 폴링 간격을 늘립니다. Worker 비밀은 `npx wrangler secret put NAVER_CLIENT_ID`, `NAVER_CLIENT_SECRET` 입니다.
+`sync/wrangler.toml`이 Durable Object `FamilyRoom`과 `FamilyAccount`를 만듭니다. 계정은 카카오 사용자 id, 네이버 id, 또는 복구 코드 해시로 구성원 id, 방 키, 최근 30일 여정·방문을 보관합니다. 무료 한도에서 관리자 화면 하나가 켜져 있으면 조회가 하루 약 3만 번을 넘습니다. 한도에 닿으면 `src/services/familySync.ts`의 폴링 간격을 늘립니다. Worker의 공개 변수는 `NAVER_CLIENT_ID` 입니다. 비밀은 `npx wrangler secret put NAVER_CLIENT_SECRET` 만 해당합니다.
 
 ### 두 기기로 확인
 

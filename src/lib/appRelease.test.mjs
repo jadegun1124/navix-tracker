@@ -55,8 +55,11 @@ test('package.json, Gradle, and the release workflow stay on 1.33.0 / 37', () =>
   assert.match(workflow, /versionName: 1\.33\.0/);
   assert.match(workflow, /versionCode: 37/);
   assert.match(workflow, /kinnex-v1\.33\.0\.apk/);
+  assert.match(workflow, /assembleRelease/);
+  assert.match(workflow, /005737352270b84c7fb6016129bda9a3cd09350c/);
   assert.match(workflow, /keytool/);
   assert.match(workflow, /SHA1/);
+  assert.match(gradle, /b42233e0170711205fa75bbca06e98e9/);
   assert.equal(workflow.includes('1.26.0'), false);
 
   const readme = text('../../README.md');
@@ -79,6 +82,9 @@ test('package.json, Gradle, and the release workflow stay on 1.33.0 / 37', () =>
 
   const screen = text('../components/family/FamilyMapScreen.tsx');
   assert.equal((screen.match(/<AppVersionLine \/>/g) || []).length, 2);
+  assert.match(screen, /계정 연결/);
+  assert.match(screen, /카카오 연결/);
+  assert.match(screen, /네이버 연결/);
   assert.match(screen, /복구 코드/);
   assert.match(text('../components/family/Onboarding.tsx'), /카카오로 로그인/);
   assert.match(text('../components/family/Onboarding.tsx'), /네이버로 로그인/);

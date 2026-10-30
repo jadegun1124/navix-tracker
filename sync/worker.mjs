@@ -1,3 +1,4 @@
+import { PUBLIC_NAVER_CLIENT_ID } from '../src/lib/naverAuth.mjs';
 import { createMemoryAccountStore, handleAccountOperation } from './account.mjs';
 import { applyAlert, applyDirectMessage, applySubscription, alertPushPayload, chatPushPayload, commitPlace, commitProfile, commitTrail, emptyRoom, parseOperation, pushesForAlert, pushesForChat, removeSubscriptions, viewDirectMessages, viewFamilyPlaces, viewMyThreads, viewRoom, withCors } from './protocol.mjs';
 import { createVapidKeys, sendWebPush } from './webpush.mjs';
@@ -127,7 +128,7 @@ export class FamilyAccount {
   async fetch(request) {
     const body = await request.json();
     return handleAccountOperation(durableAccountStore(this.ctx.storage), body.op, {
-      naverClientId: body.naverClientId || '',
+      naverClientId: body.naverClientId || PUBLIC_NAVER_CLIENT_ID,
       naverClientSecret: body.naverClientSecret || '',
       now: body.now,
     });
@@ -192,7 +193,7 @@ export default {
         : null;
       if (!accounts) {
         return withCors(await handleAccountOperation(createMemoryAccountStore(), op, {
-          naverClientId: env.NAVER_CLIENT_ID || '',
+          naverClientId: env.NAVER_CLIENT_ID || PUBLIC_NAVER_CLIENT_ID,
           naverClientSecret: env.NAVER_CLIENT_SECRET || '',
         }));
       }
@@ -201,7 +202,7 @@ export default {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           op,
-          naverClientId: env.NAVER_CLIENT_ID || '',
+          naverClientId: env.NAVER_CLIENT_ID || PUBLIC_NAVER_CLIENT_ID,
           naverClientSecret: env.NAVER_CLIENT_SECRET || '',
         }),
       });

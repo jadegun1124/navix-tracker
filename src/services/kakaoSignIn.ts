@@ -1,5 +1,5 @@
 import { Capacitor, registerPlugin } from '@capacitor/core';
-import { KAKAO_CANCEL_MESSAGE, KAKAO_SETUP_MESSAGE, KAKAO_VERIFY_MESSAGE, kakaoJavascriptKey, kakaoNativeAppKey } from '../lib/kakaoAuth.mjs';
+import { KAKAO_CANCEL_MESSAGE, KAKAO_SETUP_MESSAGE, KAKAO_VERIFY_MESSAGE, kakaoJavascriptKey, kakaoNativeAppKeyOrPublic } from '../lib/kakaoAuth.mjs';
 import { localProfile } from '../lib/localProfile.mjs';
 import { restoredProfile } from '../lib/accountRestore.mjs';
 import { familySyncUrl } from './familySync';
@@ -20,7 +20,7 @@ export interface ProviderSignInResult {
 }
 
 export function configuredKakaoNativeAppKey() {
-  return kakaoNativeAppKey(import.meta.env.VITE_KAKAO_NATIVE_APP_KEY);
+  return kakaoNativeAppKeyOrPublic(import.meta.env.VITE_KAKAO_NATIVE_APP_KEY);
 }
 
 export function configuredKakaoJavascriptKey() {
@@ -88,7 +88,7 @@ async function browserAccessToken(appKey: string): Promise<string> {
 
 export async function signInWithKakao(
   snapshot?: AccountSnapshot | null,
-  options: { persist?: boolean } = {},
+  options: { persist?: boolean; mode?: 'login' | 'link' } = {},
 ): Promise<ProviderSignInResult> {
   const appKey = configuredKakaoLoginKey();
   if (!appKey) return { ok: false, message: KAKAO_SETUP_MESSAGE };
@@ -110,7 +110,7 @@ export async function signInWithKakao(
       return { ok: false, message: message === 'canceled' ? KAKAO_CANCEL_MESSAGE : KAKAO_VERIFY_MESSAGE };
     }
   }
-  const linked = await linkKakaoAccount(accessToken, snapshot).catch(() => ({ ok: false as const, message: KAKAO_VERIFY_MESSAGE }));
+  const linked = await linkKakaoAccount(accessToken, snapshot, options.mode || 'login').catch(() => ({ ok: false as const, message: KAKAO_VERIFY_MESSAGE }));
   if (!linked.ok || !linked.account) return { ok: false, message: linked.message || KAKAO_VERIFY_MESSAGE };
   if (options.persist !== false) await persistAccountResult(linked);
   const profile = profileFromAccount(linked.account);

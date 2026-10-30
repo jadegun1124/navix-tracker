@@ -1,5 +1,5 @@
 import { Capacitor, registerPlugin } from '@capacitor/core';
-import { NAVER_CANCEL_MESSAGE, NAVER_REDIRECT, NAVER_SETUP_MESSAGE, NAVER_VERIFY_MESSAGE, naverClientId, naverRedirectUri } from '../lib/naverAuth.mjs';
+import { NAVER_CANCEL_MESSAGE, NAVER_REDIRECT, NAVER_SETUP_MESSAGE, NAVER_VERIFY_MESSAGE, naverClientIdOrPublic, naverRedirectUri } from '../lib/naverAuth.mjs';
 import { localProfile } from '../lib/localProfile.mjs';
 import { restoredProfile } from '../lib/accountRestore.mjs';
 import { familySyncUrl } from './familySync';
@@ -26,7 +26,7 @@ export interface ProviderSignInResult {
 }
 
 export function configuredNaverClientId() {
-  return naverClientId(import.meta.env.VITE_NAVER_CLIENT_ID);
+  return naverClientIdOrPublic(import.meta.env.VITE_NAVER_CLIENT_ID);
 }
 
 function profileFromAccount(account: AccountSnapshot) {
@@ -87,7 +87,7 @@ async function browserAuthCode(clientId: string): Promise<{ code: string; state:
 
 export async function signInWithNaver(
   snapshot?: AccountSnapshot | null,
-  options: { persist?: boolean } = {},
+  options: { persist?: boolean; mode?: 'login' | 'link' } = {},
 ): Promise<ProviderSignInResult> {
   const clientId = configuredNaverClientId();
   if (!clientId) return { ok: false, message: NAVER_SETUP_MESSAGE };
@@ -117,7 +117,7 @@ export async function signInWithNaver(
       return { ok: false, message: message === 'canceled' ? NAVER_CANCEL_MESSAGE : NAVER_VERIFY_MESSAGE };
     }
   }
-  const linked = await linkNaverAccount({ accessToken, code, state, redirectUri }, snapshot).catch(() => ({
+  const linked = await linkNaverAccount({ accessToken, code, state, redirectUri }, snapshot, options.mode || 'login').catch(() => ({
     ok: false as const,
     message: NAVER_VERIFY_MESSAGE,
   }));
