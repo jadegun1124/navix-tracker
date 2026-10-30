@@ -242,11 +242,11 @@ export function choosePlaceLabel(candidates, point) {
     return residentialInside[0].label;
   }
   const poiInside = scored.filter((item) => !item.residential && item.inside);
-  const residentialNear = scored.filter((item) => item.residential && item.distanceM <= RESIDENTIAL_SNAP_M);
-  if (poiInside.length && !residentialNear.length) {
+  if (poiInside.length) {
     poiInside.sort((left, right) => left.distanceM - right.distanceM);
     return poiInside[0].label;
   }
+  const residentialNear = scored.filter((item) => item.residential && item.distanceM <= RESIDENTIAL_SNAP_M);
   if (residentialNear.length) {
     residentialNear.sort((left, right) => left.distanceM - right.distanceM);
     return residentialNear[0].label;

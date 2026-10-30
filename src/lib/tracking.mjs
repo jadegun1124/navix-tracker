@@ -630,7 +630,9 @@ function resolvedTrailDecision(points, point) {
  * Live pin and the coordinate published to the family.
  * Holds only inside the stay bubble. Bus, subway, and a sparse GPS jump past that
  * bubble move the pin even when the trail sampler still drops the vertex.
- * A dropped sample (poor accuracy, impossible jump) does not move the pin.
+ * A dropped sample that is only an indoor-quality reading (worse than the trail
+ * gate, still within FIX_PRECISE_ACCURACY_M) moves the pin. An impossible jump
+ * does not.
  */
 export function liveCoordinate(anchor, point) {
   if (!point || !Number.isFinite(point.lat) || !Number.isFinite(point.lng)) {
@@ -642,7 +644,13 @@ export function liveCoordinate(anchor, point) {
   if (!anchor || !Number.isFinite(anchor.lat) || !Number.isFinite(anchor.lng)) return point;
   const decision = trailDecision(anchor, point);
   if (decision === 'keep') return point;
-  if (decision === 'drop') return { ...point, lat: anchor.lat, lng: anchor.lng };
+  if (decision === 'drop') {
+    const accuracy = positiveMeters(point.accuracyM);
+    if (accuracy > TRAIL_POOR_ACCURACY_M && accuracy <= FIX_PRECISE_ACCURACY_M && !isImpossibleJump(anchor, point)) {
+      return point;
+    }
+    return { ...point, lat: anchor.lat, lng: anchor.lng };
+  }
   if (haversineMeters(anchor, point) <= staySnapGate(anchor, point)) {
     return { ...point, lat: anchor.lat, lng: anchor.lng };
   }

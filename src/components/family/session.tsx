@@ -880,10 +880,31 @@ function reduceSession(state: Session, action: Action): Session {
       if (riding) sample.staying = false;
       const settled = settleTrailPoint(state.tracks.self, sample, at);
       if (settled.decision === 'drop') {
-        if (settled.points === state.tracks.self) return archiveJourneys(state, at);
+        const nextLat = settled.lat;
+        const nextLng = settled.lng;
+        const pinMoved = !!self && nextLat != null && nextLng != null && (self.lat !== nextLat || self.lng !== nextLng);
+        const tracks = tracksWithinHistory(
+          settled.points === state.tracks.self ? state.tracks : { ...state.tracks, self: settled.points },
+          at,
+        );
+        if (!pinMoved && tracks === state.tracks) return archiveJourneys(state, at);
+        const keptPlace = pinMoved ? carryPlace(self, nextLat, nextLng) : self?.place;
         return archiveJourneys({
           ...state,
-          tracks: tracksWithinHistory({ ...state.tracks, self: settled.points }, at),
+          visits: visitsWithinHistory(state.visits, at),
+          tracks,
+          members: pinMoved
+            ? state.members.map((member) => (member.id === 'self'
+              ? {
+                  ...member,
+                  lat: nextLat,
+                  lng: nextLng,
+                  accuracyM: Math.max(1, Math.round(action.accuracyM)),
+                  updatedAt: at,
+                  ...(keptPlace ? { place: keptPlace } : { place: undefined }),
+                }
+              : member))
+            : state.members,
         }, at);
       }
       const tracks = tracksWithinHistory(

@@ -343,7 +343,14 @@ test('a short step inside the walking gate is not a vertex, and a poor fix is dr
   assert.equal(trailDecision(origin, { ...offset(origin, 3, 0, t + 2_500), speedMps: 1.2, staying: false, accuracyM: 19 }), 'keep');
   assert.equal(trailDecision(origin, { ...offset(origin, 3, 0, t + 2_500), speedMps: 0, staying: false, accuracyM: 12 }), 'keep');
   assert.equal(trailDecision(origin, { ...offset(origin, 15, 0, t + 10_000), speedMps: 1.2, staying: false }), 'keep');
-  assert.equal(trailDecision(origin, { ...offset(origin, 70, 0, t + 10_000), accuracyM: 55, speedMps: 1.4, staying: false }), 'drop');
+  const indoor = { ...offset(origin, 70, 0, t + 10_000), accuracyM: 55, speedMps: 1.4, staying: false };
+  assert.equal(trailDecision(origin, indoor), 'drop');
+  assert.equal(liveCoordinate(origin, indoor).lat, indoor.lat);
+  assert.equal(liveCoordinate(origin, { ...indoor, accuracyM: 120 }).lat, origin.lat);
+  const settled = settleTrailPoint([origin], indoor, indoor.at);
+  assert.equal(settled.decision, 'drop');
+  assert.equal(settled.lat, indoor.lat);
+  assert.equal(settled.points.some((point) => point.lat === indoor.lat), false);
   const stayed = settleTrailPoint([origin], { ...origin, at: t + 4 * 60 * 1000 }, t + 4 * 60 * 1000);
   assert.equal(visibleTrail(stayed.points).length, 1);
   assert.equal(stayed.points.length, 2);
