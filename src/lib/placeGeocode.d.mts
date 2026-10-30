@@ -7,8 +7,7 @@ export function formatPrecisePlace(parts?: {
   poi?: string;
 }): string;
 
-export const RESIDENTIAL_SNAP_M: number;
-export const POI_SNAP_M: number;
+export const NEAREST_PLACE_M: number;
 
 export function choosePlaceLabel(
   candidates: Array<Record<string, unknown>>,
