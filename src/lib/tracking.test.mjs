@@ -363,7 +363,10 @@ test('stale cached fix is rejected and a fresh precise fix is kept', () => {
   const coarse = acceptFix(null, { lat: 37.5, lng: 127, accuracy: 300, at: now }, { precise: true, now });
   assert.equal(coarse.ok, false);
   assert.equal(coarse.reason, 'accuracy');
-  const laterPoor = acceptFix({ lat: 37.5, lng: 127, at: now - 5_000 }, { lat: 37.5004, lng: 127, accuracy: 50, at: now }, { precise: true, now });
+  const indoor = acceptFix({ lat: 37.5, lng: 127, at: now - 5_000 }, { lat: 37.5004, lng: 127, accuracy: 50, at: now }, { precise: true, now });
+  assert.equal(indoor.ok, true);
+  assert.equal(indoor.fix.accuracy, 50);
+  const laterPoor = acceptFix({ lat: 37.5, lng: 127, at: now - 5_000 }, { lat: 37.5004, lng: 127, accuracy: 120, at: now }, { precise: true, now });
   assert.equal(laterPoor.ok, false);
   assert.equal(laterPoor.reason, 'accuracy');
 });

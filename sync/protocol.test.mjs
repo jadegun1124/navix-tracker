@@ -9,6 +9,7 @@ import {
   createMemoryStore,
   departedMemberIds,
   emptyRoom,
+  viewFamilyPlaces,
   handleSyncRequest,
   pushesForAlert,
   pushesForChat,
@@ -1028,4 +1029,18 @@ test('a member trail replaces the room copy and a stop removes it', async () => 
   assert.equal(stopped.status, 200);
   const after = await call(store, 'GET', `/v1/rooms/${code}`, { token, readKey });
   assert.equal(after.body.trails.length, 0);
+});
+
+test('family view keeps the newest place when one memberId was stored twice', () => {
+  const room = {
+    ...emptyRoom(),
+    places: {
+      old: { code: '48291', audience: 'family', name: '엄마', memberId: 'local-aaa', lat: 37.5, lng: 127, accuracyM: 8, sharing: true, at: 10 },
+      next: { code: '48291', audience: 'family', name: '민지', memberId: 'local-aaa', lat: 37.6, lng: 127.1, accuracyM: 8, sharing: true, at: 20 },
+    },
+  };
+  const view = viewFamilyPlaces(room);
+  const mine = view.places.filter((place) => place.memberId === 'local-aaa');
+  assert.equal(mine.length, 1);
+  assert.equal(mine[0].name, '민지');
 });

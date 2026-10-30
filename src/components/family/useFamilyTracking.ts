@@ -34,6 +34,7 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
   const familyRef = useRef(family);
   const onFirstFixRef = useRef(onFirstFix);
   const centered = useRef(false);
+  const nativeFixAt = useRef(0);
   const sharedTokens = useRef<Record<string, string>>({});
   const adminShared = useRef(false);
   const nativeAdminShared = useRef(false);
@@ -140,7 +141,10 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
     return startLocationWatch({
       precise,
       onFix: apply,
-      onWaiting: (reason) => setWaiting(reason ? WAITING_KO[reason] ?? null : null),
+      onWaiting: (reason) => {
+        if (reason && Date.now() - nativeFixAt.current < 30_000) return;
+        setWaiting(reason ? WAITING_KO[reason] ?? null : null);
+      },
     });
   }, [appVisible, nativeKeeps, precise, trackingOn]);
 
@@ -149,6 +153,8 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
     let remove = () => {};
     void umapLocation.addListener('fix', (fix) => {
       const speed = typeof fix.speedMps === 'number' ? fix.speedMps : null;
+      nativeFixAt.current = Date.now();
+      setWaiting(null);
       familyRef.current.updateSelf(fix.lat, fix.lng, fix.accuracyM || 1, speed);
       if (!centered.current) {
         centered.current = true;

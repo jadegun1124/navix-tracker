@@ -50,7 +50,7 @@ export const FIX_PRECISE_ACCURACY_M = 80;
 export const FIX_APPROXIMATE_ACCURACY_M = 400;
 export const FIX_MAX_JUMP_MPS = 350;
 export const FIX_JUMP_WINDOW_MS = 180_000;
-/** A later fix worse than this does not move the pin or the line. */
+/** The drawn trail drops a point worse than this. The live pin still accepts it up to FIX_PRECISE_ACCURACY_M. */
 export const TRAIL_POOR_ACCURACY_M = 40;
 /** Reported speed under this, while still, is not a new vertex. */
 export const TRAIL_STAY_SPEED_MPS = 0.8;
@@ -1312,7 +1312,6 @@ export function acceptFix(previous, reading, options = {}) {
     accuracy = maxAccuracy;
   }
   if (accuracy > maxAccuracy) return { ok: false, reason: 'accuracy' };
-  if (previous && accuracy > TRAIL_POOR_ACCURACY_M) return { ok: false, reason: 'accuracy' };
   if (previous && Number.isFinite(previous.at)) {
     const dtMs = at - previous.at;
     if (dtMs > 0 && dtMs <= FIX_JUMP_WINDOW_MS) {

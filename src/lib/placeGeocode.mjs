@@ -8,10 +8,12 @@
 import { APP_VERSION_NAME } from './appRelease.mjs';
 
 const NOMINATIM_UA = `Kinnex/${APP_VERSION_NAME} (family location; https://github.com/jadegun1124/umap)`;
-const CACHE_KEY = 'umap_geocode_cache_v4';
+const CACHE_KEY = 'umap_geocode_cache_v5';
 const PLACE_LIMIT = 56;
-export const RESIDENTIAL_SNAP_M = 30;
-export const POI_SNAP_M = 40;
+/** Courtyard of a complex, not only the footprint of one 동. */
+export const RESIDENTIAL_SNAP_M = 80;
+/** A named POI wins only when no apartment is this close. */
+export const POI_SNAP_M = 30;
 const NOMINATIM_GAP_MS = 1100;
 let nominatimNotBefore = 0;
 
@@ -208,6 +210,10 @@ function candidateLabel(candidate) {
   return formatPrecisePlace({ poi: name }) || name;
 }
 
+function polygonCovers(origin, geometry) {
+  return geometryRings(geometry).some((ring) => ring.length >= 3 && pointInRing(origin, ring));
+}
+
 export function choosePlaceLabel(candidates, point) {
   const origin = {
     lat: Number(point?.lat),
@@ -218,10 +224,11 @@ export function choosePlaceLabel(candidates, point) {
   for (const candidate of Array.isArray(candidates) ? candidates : []) {
     const label = candidateLabel(candidate);
     if (!label) continue;
+    const geometry = candidate.geometry || null;
     const distanceM = Number.isFinite(candidate.distanceM)
       ? candidate.distanceM
-      : distanceToGeometry(origin, candidate.geometry || candidate);
-    const inside = candidate.inside === true || distanceM === 0;
+      : distanceToGeometry(origin, geometry || candidate);
+    const inside = polygonCovers(origin, geometry);
     scored.push({
       label,
       residential: isResidentialPlace(candidate),
@@ -229,14 +236,24 @@ export function choosePlaceLabel(candidates, point) {
       distanceM: Number.isFinite(distanceM) ? distanceM : Infinity,
     });
   }
-  const residential = scored.filter((item) => item.residential && (item.inside || item.distanceM <= RESIDENTIAL_SNAP_M));
-  if (residential.length) {
-    residential.sort((left, right) => Number(right.inside) - Number(left.inside) || left.distanceM - right.distanceM);
-    return residential[0].label;
+  const residentialInside = scored.filter((item) => item.residential && item.inside);
+  if (residentialInside.length) {
+    residentialInside.sort((left, right) => left.distanceM - right.distanceM);
+    return residentialInside[0].label;
   }
-  const pois = scored.filter((item) => !item.residential && (item.inside || item.distanceM <= POI_SNAP_M));
+  const poiInside = scored.filter((item) => !item.residential && item.inside);
+  const residentialNear = scored.filter((item) => item.residential && item.distanceM <= RESIDENTIAL_SNAP_M);
+  if (poiInside.length && !residentialNear.length) {
+    poiInside.sort((left, right) => left.distanceM - right.distanceM);
+    return poiInside[0].label;
+  }
+  if (residentialNear.length) {
+    residentialNear.sort((left, right) => left.distanceM - right.distanceM);
+    return residentialNear[0].label;
+  }
+  const pois = scored.filter((item) => !item.residential && item.distanceM <= POI_SNAP_M);
   if (pois.length) {
-    pois.sort((left, right) => Number(right.inside) - Number(left.inside) || left.distanceM - right.distanceM);
+    pois.sort((left, right) => left.distanceM - right.distanceM);
     return pois[0].label;
   }
   return '';
@@ -431,6 +448,14 @@ function featureName(properties) {
   };
 }
 
+function placeKind(name, hints = {}) {
+  if (POI_NAME.test(name) && !RESIDENTIAL_NAME.test(name)) return 'poi';
+  if (RESIDENTIAL_NAME.test(name) || /\d+\s*동/.test(name)) return 'residential';
+  if (RESIDENTIAL_BUILDING.test(String(hints.building || ''))) return 'residential';
+  if (RESIDENTIAL_LANDUSE.test(String(hints.landuse || ''))) return 'residential';
+  return 'poi';
+}
+
 function vworldBuilding(body) {
   const features = body && body.response && body.response.result && body.response.result.featureCollection
     ? body.response.result.featureCollection.features
@@ -441,10 +466,11 @@ function vworldBuilding(body) {
     const named = featureName(feature && feature.properties);
     const name = named.building || named.poi;
     if (!name) continue;
+    const kind = placeKind(name);
     candidates.push({
       name,
       unit: named.unit,
-      kind: named.building || RESIDENTIAL_NAME.test(name) ? 'residential' : 'poi',
+      kind,
       geometry: feature.geometry || null,
     });
   }
@@ -495,9 +521,7 @@ async function fetchVworld(fetchImpl, lat, lng, key) {
   } catch {
     /* 건물 레이어로 이어간다 */
   }
-  const precise = formatPrecisePlace(parts);
-  if (precise) return precise;
-  let building = { building: '', unit: '', poi: '' };
+  let building = { building: '', unit: '', poi: '', candidates: [] };
   try {
     const dataUrl = new URL('https://api.vworld.kr/req/data');
     dataUrl.searchParams.set('service', 'data');
@@ -507,7 +531,7 @@ async function fetchVworld(fetchImpl, lat, lng, key) {
     dataUrl.searchParams.set('format', 'json');
     dataUrl.searchParams.set('crs', 'EPSG:4326');
     dataUrl.searchParams.set('geomFilter', `POINT(${lng} ${lat})`);
-    dataUrl.searchParams.set('buffer', '80');
+    dataUrl.searchParams.set('buffer', '120');
     dataUrl.searchParams.set('size', '20');
     dataUrl.searchParams.set('geometry', 'true');
     const buildingResponse = await fetchImpl(dataUrl.toString(), { signal: timeoutSignal(8000) });
@@ -525,7 +549,7 @@ async function fetchVworld(fetchImpl, lat, lng, key) {
     picked = choosePlaceLabel([
       ...layer,
       ...(parts.building ? [{ name: parts.building, unit: parts.unit, kind: 'residential', lat, lng }] : []),
-      ...(parts.poi ? [{ name: parts.poi, kind: 'poi', lat, lng }] : []),
+      ...(parts.poi ? [{ name: parts.poi, kind: 'poi' }] : []),
     ], point);
   } catch {
     picked = '';
@@ -623,7 +647,7 @@ function overpassCandidates(body, lat, lng) {
 }
 
 async function fetchOverpass(fetchImpl, lat, lng) {
-  const query = `[out:json][timeout:8];(way(around:80,${lat},${lng})["name"]["building"];way(around:80,${lat},${lng})["name"]["landuse"="residential"];node(around:${POI_SNAP_M},${lat},${lng})["name"];);out tags geom;`;
+  const query = `[out:json][timeout:8];(way(around:120,${lat},${lng})["name"]["building"];way(around:120,${lat},${lng})["name"]["landuse"="residential"];relation(around:120,${lat},${lng})["name"]["landuse"="residential"];node(around:${POI_SNAP_M},${lat},${lng})["name"];);out tags geom;`;
   const response = await fetchImpl('https://overpass-api.de/api/interpreter', {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded;charset=UTF-8' },

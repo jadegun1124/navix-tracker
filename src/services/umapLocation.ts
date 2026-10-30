@@ -29,7 +29,7 @@ export interface NativePromptResult {
   openedSettings: boolean;
 }
 
-export type AlwaysSettingsScreen = 'location-radio' | 'app-permissions' | 'app-details' | 'none';
+export type AlwaysSettingsScreen = 'location-radio' | 'app-permissions' | 'app-details' | 'background-dialog' | 'foreground-dialog' | 'none';
 
 export interface AlwaysLocationResult {
   opened: boolean;
@@ -52,7 +52,8 @@ export interface NativeBattery {
 interface UmapLocationPlugin {
   openSettings(): Promise<{ opened: boolean }>;
   openAlwaysLocation(options?: { overlay?: boolean }): Promise<AlwaysLocationResult>;
-  locationAccess(): Promise<{ location: 'always' | 'while-using' | 'denied' | 'unavailable' }>;
+  locationAccess(): Promise<{ location: 'always' | 'while-using' | 'denied' | 'unavailable'; precise?: boolean; background?: boolean }>;
+  openAlwaysGate(): Promise<AlwaysLocationResult>;
   overlayPermission(): Promise<{ granted: boolean }>;
   openOverlaySettings(): Promise<{ opened: boolean; granted: boolean }>;
   requestForeground(): Promise<{ location: 'while-using' | 'denied' | 'unavailable' }>;
@@ -71,6 +72,7 @@ interface UmapLocationPlugin {
   ackStopped(): Promise<void>;
   addListener(eventName: 'fix', listenerFunc: (fix: UmapFix) => void): Promise<PluginListenerHandle>;
   addListener(eventName: 'chat', listenerFunc: (event: { code?: string; peer?: string }) => void): Promise<PluginListenerHandle>;
+  addListener(eventName: 'resume', listenerFunc: () => void): Promise<PluginListenerHandle>;
 }
 
 const web: UmapLocationPlugin = {
@@ -81,7 +83,10 @@ const web: UmapLocationPlugin = {
     return { opened: false, location: 'unavailable', native: false, screen: 'none', overlay: false };
   },
   async locationAccess() {
-    return { location: 'unavailable' };
+    return { location: 'unavailable' as const, precise: false, background: false };
+  },
+  async openAlwaysGate() {
+    return { opened: false, location: 'unavailable' as const, native: false, screen: 'none' as const, overlay: false };
   },
   async overlayPermission() {
     return { granted: false };
@@ -154,20 +159,60 @@ export async function openAppSettings(): Promise<boolean> {
   }
 }
 
+const ALWAYS_SCREENS: AlwaysSettingsScreen[] = ['location-radio', 'app-permissions', 'app-details', 'background-dialog', 'foreground-dialog'];
+
+function normalizeAlways(result: Partial<AlwaysLocationResult> | null | undefined, native: boolean): AlwaysLocationResult {
+  const location = result?.location === 'always' || result?.location === 'while-using' || result?.location === 'denied' ? result.location : 'unavailable';
+  const opened = result?.opened === true;
+  const screen = opened && result.screen && ALWAYS_SCREENS.includes(result.screen) ? result.screen : opened ? 'location-radio' : 'none';
+  return { opened, location, native, screen, overlay: result?.overlay === true };
+}
+
 export async function openAlwaysLocation(options?: { overlay?: boolean }): Promise<AlwaysLocationResult> {
   if (!umapLocationNative()) return { opened: false, location: 'unavailable', native: false, screen: 'none', overlay: false };
   try {
-    const result = await plugin.openAlwaysLocation({ overlay: options?.overlay === true });
-    const location = result.location === 'always' || result.location === 'while-using' || result.location === 'denied' ? result.location : 'unavailable';
-    const opened = result.opened === true;
-    const screen = opened && (result.screen === 'app-permissions' || result.screen === 'app-details' || result.screen === 'location-radio')
-      ? result.screen
-      : opened
-        ? 'location-radio'
-        : 'none';
-    return { opened, location, native: true, screen, overlay: result.overlay === true };
+    return normalizeAlways(await plugin.openAlwaysLocation({ overlay: options?.overlay === true }), true);
   } catch {
     return { opened: false, location: 'unavailable', native: true, screen: 'none', overlay: false };
+  }
+}
+
+export async function openAlwaysAllowGate(): Promise<AlwaysLocationResult> {
+  if (!umapLocationNative()) return { opened: false, location: 'unavailable', native: false, screen: 'none', overlay: false };
+  try {
+    return normalizeAlways(await plugin.openAlwaysGate(), true);
+  } catch {
+    return { opened: false, location: 'unavailable', native: true, screen: 'none', overlay: false };
+  }
+}
+
+export interface LocationAccessSnapshot {
+  location: 'always' | 'while-using' | 'denied' | 'unavailable';
+  precise: boolean | null;
+  background: boolean;
+}
+
+export async function readLocationSnapshot(): Promise<LocationAccessSnapshot> {
+  if (!umapLocationNative()) return { location: 'unavailable', precise: null, background: false };
+  try {
+    const result = await plugin.locationAccess();
+    const location = result.location === 'always' || result.location === 'while-using' || result.location === 'denied' ? result.location : 'unavailable';
+    const precise = result.precise === true ? true : result.precise === false ? false : null;
+    return { location, precise, background: result.background === true || location === 'always' };
+  } catch {
+    return { location: 'unavailable', precise: null, background: false };
+  }
+}
+
+export async function listenAppResume(listener: () => void): Promise<() => void> {
+  if (!umapLocationNative()) return () => {};
+  try {
+    const handle = await plugin.addListener('resume', () => listener());
+    return () => {
+      void handle.remove();
+    };
+  } catch {
+    return () => {};
   }
 }
 
