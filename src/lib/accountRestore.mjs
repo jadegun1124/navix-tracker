@@ -90,7 +90,11 @@ export function persistAccountSecretsIfCurrent(storage, account, epoch) {
 export function logoutLocalAccount(storage) {
   invalidateAccountBackup();
   clearStoredAccount(storage);
-  if (storage) storage.removeItem(LEFTOVER_GOOGLE_ACCOUNT_KEY);
+  if (storage) {
+    storage.removeItem(LEFTOVER_GOOGLE_ACCOUNT_KEY);
+    storage.removeItem('umap_seal_device_v1');
+    storage.removeItem('umap_family_keys_v1');
+  }
 }
 
 function storageKeys(storage) {
@@ -243,6 +247,9 @@ export function applyAccountSnapshot(state, account) {
     pendingLeaveAlert: null,
     pendingSyncToken: null,
     shareSelfWithFamily: state.permissions?.completed === true,
+    historyLocked: account.historyLocked === true,
+    sealedHistory: account.sealedHistory || null,
+    accountVault: account.vault || null,
     mode: null,
     stage: nextStage,
     tab: 'map',

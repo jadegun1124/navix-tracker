@@ -1,3 +1,5 @@
+import { openJson, sealJson, mintFamilyKey, unwrapFamilyKey, wrapFamilyKey } from '../lib/familySeal.mjs';
+import { ensureDevice, familyKeyRecord, rememberFamilyKey } from '../lib/familyVault.mjs';
 import { rememberPlaceName } from '../lib/placeAlias.mjs';
 import { optionalRouteMissing } from '../lib/syncRoute.mjs';
 import type { FamilyAlert } from './familyAlert';
@@ -342,6 +344,205 @@ async function sendQueued(path: string, token: string, body: unknown, drop: () =
   return response.ok || optionalMissing;
 }
 
+type KeyDirectory = {
+  kid?: string;
+  pubs?: Record<string, string>;
+  wraps?: Record<string, { epk: string; iv: string; ct: string }>;
+  revoked?: string[];
+};
+
+async function putRoomKeys(code: string, token: string, profileKey: string, body: Record<string, unknown>): Promise<KeyDirectory | null> {
+  try {
+    const response = await request(`/v1/rooms/${code}/keys`, {
+      method: 'PUT',
+      headers: {
+        'content-type': 'application/json',
+        'x-umap-sync-key': token,
+        'x-umap-profile-key': profileKey,
+      },
+      body: JSON.stringify(body),
+    });
+    if (response.status === 404) return null;
+    if (!response.ok) return null;
+    const payload = await response.json().catch(() => null) as { keys?: KeyDirectory } | null;
+    return payload?.keys || null;
+  } catch {
+    return null;
+  }
+}
+
+export async function syncFamilyKeys(code: string, token: string, memberId: string, profileKey: string): Promise<boolean> {
+  if (typeof localStorage === 'undefined' || !memberId || !profileKey || !splitSyncToken(token) || !/^\d{4,6}$/.test(code)) return false;
+  const device = await ensureDevice(localStorage);
+  let directory = await putRoomKeys(code, token, profileKey, { memberId, publicKey: device.publicKey });
+  if (!directory) return familyKeyRecord(localStorage, code) != null;
+  const revoked = new Set(directory.revoked || []);
+  const kid = directory.kid || '';
+  const wraps = directory.wraps || {};
+  if (kid && wraps[memberId]) {
+    const opened = await unwrapFamilyKey(device.privateKey, wraps[memberId], kid);
+    if (opened) rememberFamilyKey(localStorage, code, kid, opened);
+  }
+  const livePubs = Object.entries(directory.pubs || {}).filter(([id]) => !revoked.has(id));
+  if (!familyKeyRecord(localStorage, code) && kid && livePubs.length === 1 && livePubs[0][0] === memberId && !wraps[memberId]) {
+    const minted = await mintFamilyKey();
+    const wrap = await wrapFamilyKey(livePubs[0][1], minted.key, minted.kid);
+    const saved = wrap ? await putRoomKeys(code, token, profileKey, {
+      memberId,
+      publicKey: device.publicKey,
+      kid: minted.kid,
+      wraps: { [memberId]: wrap },
+      rotate: true,
+    }) : null;
+    if (saved?.kid === minted.kid) rememberFamilyKey(localStorage, code, minted.kid, minted.key);
+  }
+  if (!kid) {
+    const minted = await mintFamilyKey();
+    const nextWraps: Record<string, { epk: string; iv: string; ct: string }> = {};
+    for (const [id, pub] of Object.entries(directory.pubs || {})) {
+      if (revoked.has(id)) continue;
+      const wrap = await wrapFamilyKey(pub, minted.key, minted.kid);
+      if (wrap) nextWraps[id] = wrap;
+    }
+    const saved = await putRoomKeys(code, token, profileKey, {
+      memberId,
+      publicKey: device.publicKey,
+      kid: minted.kid,
+      wraps: nextWraps,
+    });
+    if (saved?.kid === minted.kid) rememberFamilyKey(localStorage, code, minted.kid, minted.key);
+  }
+  const record = familyKeyRecord(localStorage, code);
+  if (record && directory.kid === record.kid) {
+    const missing: Record<string, { epk: string; iv: string; ct: string }> = {};
+    for (const [id, pub] of Object.entries(directory.pubs || {})) {
+      if (revoked.has(id) || wraps[id]) continue;
+      const wrap = await wrapFamilyKey(pub, record.key, record.kid);
+      if (wrap) missing[id] = wrap;
+    }
+    if (Object.keys(missing).length) {
+      await putRoomKeys(code, token, profileKey, {
+        memberId,
+        publicKey: device.publicKey,
+        kid: record.kid,
+        wraps: missing,
+      });
+    }
+  }
+  return familyKeyRecord(localStorage, code) != null;
+}
+
+async function sealQueuedPlace(place: { code: string; token: string; body: Record<string, unknown>; profileKey: string }) {
+  const body = { ...place.body };
+  if (body.sharing !== true || typeof body.lat !== 'number' || typeof body.lng !== 'number') return body;
+  const memberId = typeof body.memberId === 'string' ? body.memberId : '';
+  if (!memberId || !place.profileKey) return null;
+  await syncFamilyKeys(place.code, place.token, memberId, place.profileKey);
+  const record = typeof localStorage === 'undefined' ? null : familyKeyRecord(localStorage, place.code);
+  if (!record) return null;
+  const seal = await sealJson(record.key, record.kid, { lat: body.lat, lng: body.lng, accuracyM: body.accuracyM });
+  if (!seal) return null;
+  return { ...body, lat: null, lng: null, accuracyM: 0, seal };
+}
+
+async function sealQueuedTrail(trail: { code: string; token: string; body: Record<string, unknown>; profileKey: string }) {
+  const memberId = typeof trail.body.memberId === 'string' ? trail.body.memberId : '';
+  if (!memberId) return null;
+  await syncFamilyKeys(trail.code, trail.token, memberId, trail.profileKey);
+  const record = typeof localStorage === 'undefined' ? null : familyKeyRecord(localStorage, trail.code);
+  if (!record) return null;
+  const seal = await sealJson(record.key, record.kid, {
+    points: trail.body.points || [],
+    journeys: trail.body.journeys || [],
+  });
+  if (!seal) return null;
+  return {
+    memberId,
+    at: trail.body.at,
+    moving: trail.body.moving === true,
+    points: [],
+    journeys: [],
+    seal,
+  };
+}
+
+async function revealPlace(place: SharedPlace): Promise<SharedPlace | null> {
+  const seal = (place as SharedPlace & { seal?: unknown }).seal;
+  if (!seal) return typeof place.lat === 'number' && typeof place.lng === 'number' ? place : null;
+  const record = typeof localStorage === 'undefined' ? null : familyKeyRecord(localStorage, place.code);
+  if (!record) return null;
+  const opened = await openJson(record.key, seal) as { lat?: unknown; lng?: unknown; accuracyM?: unknown } | null;
+  if (!opened || typeof opened.lat !== 'number' || typeof opened.lng !== 'number') return null;
+  return {
+    ...place,
+    lat: opened.lat,
+    lng: opened.lng,
+    accuracyM: typeof opened.accuracyM === 'number' ? opened.accuracyM : 0,
+  };
+}
+
+async function revealTrails(code: string, body: unknown): Promise<SharedTrail[]> {
+  if (!body || typeof body !== 'object' || !Array.isArray((body as { trails?: unknown }).trails)) return [];
+  const trails: SharedTrail[] = [];
+  for (const item of (body as { trails: unknown[] }).trails) {
+    if (!item || typeof item !== 'object') continue;
+    const trail = item as { memberId?: unknown; at?: unknown; moving?: unknown; points?: unknown; journeys?: unknown; seal?: unknown };
+    if (typeof trail.memberId !== 'string' || !/^local-[a-z0-9]{3,64}$/.test(trail.memberId)) continue;
+    if (typeof trail.at !== 'number' || !Number.isFinite(trail.at)) continue;
+    let points = trail.points;
+    let journeys = trail.journeys;
+    if (trail.seal) {
+      const record = typeof localStorage === 'undefined' ? null : familyKeyRecord(localStorage, code);
+      const opened = record ? await openJson(record.key, trail.seal) as { points?: unknown; journeys?: unknown } | null : null;
+      if (!opened) continue;
+      points = opened.points;
+      journeys = opened.journeys;
+    }
+    const readable = {
+      memberId: trail.memberId,
+      at: trail.at,
+      moving: trail.moving === true,
+      points,
+      journeys,
+    };
+    const parsed = readTrails({ trails: [readable] });
+    if (parsed[0]) trails.push(parsed[0]);
+  }
+  return trails;
+}
+
+export async function rotateRemovedMember(input: {
+  code: string;
+  token: string;
+  memberId: string;
+  profileKey: string;
+  removedId: string;
+}): Promise<void> {
+  if (typeof localStorage === 'undefined') return;
+  const device = await ensureDevice(localStorage);
+  const directory = await putRoomKeys(input.code, input.token, input.profileKey, {
+    memberId: input.memberId,
+    publicKey: device.publicKey,
+    revoke: input.removedId,
+  });
+  const minted = await mintFamilyKey();
+  const wraps: Record<string, { epk: string; iv: string; ct: string }> = {};
+  for (const [id, pub] of Object.entries(directory?.pubs || {})) {
+    if (id === input.removedId || (directory?.revoked || []).includes(id)) continue;
+    const wrap = await wrapFamilyKey(pub, minted.key, minted.kid);
+    if (wrap) wraps[id] = wrap;
+  }
+  const saved = await putRoomKeys(input.code, input.token, input.profileKey, {
+    memberId: input.memberId,
+    publicKey: device.publicKey,
+    kid: minted.kid,
+    wraps,
+    rotate: true,
+    revoke: input.removedId,
+  });
+  if (saved?.kid === minted.kid) rememberFamilyKey(localStorage, input.code, minted.kid, minted.key);
+}
+
 async function flushQueues() {
   if (flushing) return;
   flushing = true;
@@ -351,15 +552,20 @@ async function flushQueues() {
     if (epoch !== syncEpoch) return;
     const place = placeQueue;
     if (place) {
-      const ok = await sendQueued(`/v1/rooms/${place.code}/place`, place.token, place.body, () => {
-        if (placeQueue === place) placeQueue = null;
-      }, place.profileKey);
-      if (ok) {
-        const sentName = typeof place.body.name === 'string' ? place.body.name : '';
-        const sentAudience = place.body.audience === 'family' ? 'family' : 'admin';
-        if (sentName) rememberPlaceName(place.code, sentAudience, sentName);
+      const sealed = await sealQueuedPlace(place);
+      if (!sealed) {
+        failed = true;
+      } else {
+        const ok = await sendQueued(`/v1/rooms/${place.code}/place`, place.token, sealed, () => {
+          if (placeQueue === place) placeQueue = null;
+        }, place.profileKey);
+        if (ok) {
+          const sentName = typeof place.body.name === 'string' ? place.body.name : '';
+          const sentAudience = place.body.audience === 'family' ? 'family' : 'admin';
+          if (sentName) rememberPlaceName(place.code, sentAudience, sentName);
+        }
+        if (!ok) failed = true;
       }
-      if (!ok) failed = true;
     }
     const profile = profileQueue;
     if (profile) {
@@ -370,10 +576,15 @@ async function flushQueues() {
     }
     const trail = trailQueue;
     if (trail) {
-      const ok = await sendQueued(`/v1/rooms/${trail.code}/trail`, trail.token, trail.body, () => {
-        if (trailQueue === trail) trailQueue = null;
-      }, trail.profileKey);
-      if (!ok) failed = true;
+      const sealed = await sealQueuedTrail(trail);
+      if (!sealed) {
+        failed = true;
+      } else {
+        const ok = await sendQueued(`/v1/rooms/${trail.code}/trail`, trail.token, sealed, () => {
+          if (trailQueue === trail) trailQueue = null;
+        }, trail.profileKey);
+        if (!ok) failed = true;
+      }
     }
     const alert = alertQueue;
     if (alert) {
@@ -527,6 +738,7 @@ export function startAdminRemoteSync(
     onProfiles?: (profiles: SharedProfile[]) => void;
     onTrails?: (trails: SharedTrail[]) => void;
   },
+  self: { memberId: string; profileKey: string } | null = null,
 ): () => void {
   if (!link || !familySyncUrl() || !isKeyPart(link.writeKey) || !isKeyPart(link.readKey) || !/^\d{4,6}$/.test(link.code)) return () => {};
   let stopped = false;
@@ -555,13 +767,16 @@ export function startAdminRemoteSync(
       classify(response);
       if (response.ok) {
         const body: unknown = await response.json();
+        if (self?.memberId && self.profileKey) await syncFamilyKeys(link.code, token, self.memberId, self.profileKey);
         const places = body && typeof body === 'object' && Array.isArray((body as { places?: unknown[] }).places) ? (body as { places: unknown[] }).places : [];
         const alerts = body && typeof body === 'object' && Array.isArray((body as { alerts?: unknown[] }).alerts) ? (body as { alerts: unknown[] }).alerts : [];
         for (const place of places) {
-          if (isSharedPlace(place)) handlers.onPlace(place);
+          if (!isSharedPlace(place)) continue;
+          const opened = await revealPlace(place);
+          if (opened) handlers.onPlace(opened);
         }
         handlers.onProfiles?.(readProfiles(body));
-        handlers.onTrails?.(readTrails(body));
+        handlers.onTrails?.(await revealTrails(link.code, body));
         for (const alert of alerts) {
           if (!isRemoteAlert(alert)) continue;
           handlers.onAlert(alert);
@@ -634,6 +849,7 @@ function readDeparted(body: unknown): string[] {
 export function startManagedFamilySync(
   links: { code: string; token: string }[],
   onRoom: (code: string, places: SharedPlace[], profiles: SharedProfile[], trails: SharedTrail[], departed: string[]) => void,
+  self: { memberId: string; profileKey: string } | null = null,
 ): () => void {
   const usable = links.filter((link) => splitSyncToken(link.token) && /^\d{4,6}$/.test(link.code));
   if (!familySyncUrl() || usable.length === 0) return () => {};
@@ -657,9 +873,16 @@ export function startManagedFamilySync(
           continue;
         }
         const body: unknown = await response.json();
+        if (self?.memberId && self.profileKey) await syncFamilyKeys(link.code, link.token, self.memberId, self.profileKey);
         const raw = body && typeof body === 'object' && Array.isArray((body as { places?: unknown[] }).places) ? (body as { places: unknown[] }).places : [];
-        const places = raw.filter((place): place is SharedPlace => isSharedPlace(place) && place.audience === 'family' && place.sharing && typeof place.memberId === 'string' && /^local-[a-z0-9]{3,64}$/.test(place.memberId));
-        onRoom(link.code, places, readProfiles(body), readTrails(body), readDeparted(body));
+        const places: SharedPlace[] = [];
+        for (const place of raw) {
+          if (!isSharedPlace(place) || place.audience !== 'family' || !place.sharing) continue;
+          if (typeof place.memberId !== 'string' || !/^local-[a-z0-9]{3,64}$/.test(place.memberId)) continue;
+          const opened = await revealPlace(place);
+          if (opened && opened.lat != null && opened.lng != null) places.push(opened);
+        }
+        onRoom(link.code, places, readProfiles(body), await revealTrails(link.code, body), readDeparted(body));
       }
     } catch {
       if (!stopped && familySyncUrl()) setPhase('down');

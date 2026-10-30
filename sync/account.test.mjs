@@ -840,3 +840,41 @@ test('kakao verification reports the upstream code and never logs the token', as
     globalThis.fetch = originalFetch;
   }
 });
+
+test('a sealed backup deletes plaintext history and the stored recovery code', async () => {
+  const { base64UrlToBytes, mintDeviceKey, sealJson, wrapVault } = await import('../src/lib/familySeal.mjs');
+  const accounts = createMemoryAccountStore();
+  const created = await accountCall(accounts, 'POST', '/v1/account', { body: snapshot() });
+  assert.equal(created.status, 200);
+  assert.equal(created.body.account.journeys[0].start.label, '하계1차청구아파트 104동');
+  const code = normalizeRecoveryCode(created.body.account.recoveryCode);
+  const device = await mintDeviceKey();
+  const content = base64UrlToBytes(device.contentKey);
+  const sealedHistory = await sealJson(content, device.publicKey, {
+    journeys: snapshot().journeys,
+    visits: snapshot().visits,
+    home: { label: '하계1차청구아파트', lat: 37.6365, lng: 127.068, radiusM: 200 },
+  });
+  const vault = await wrapVault(code, device);
+  const saved = await accountCall(accounts, 'PUT', '/v1/account', {
+    accountKey: created.body.account.accountKey,
+    body: {
+      ...snapshot({ journeys: [], visits: [], home: null }),
+      vault,
+      sealedHistory,
+      dropRecovery: true,
+    },
+  });
+  assert.equal(saved.status, 200);
+  assert.equal(saved.body.account.recoveryCode, '');
+  assert.equal(saved.body.account.journeys.length, 0);
+  assert.equal(saved.body.account.visits.length, 0);
+  assert.equal(saved.body.account.home, null);
+  assert.equal(JSON.stringify(saved.body.account.journeys).includes('하계1차청구아파트'), false);
+  assert.equal(typeof saved.body.account.sealedHistory.ct, 'string');
+  const again = await accountCall(accounts, 'POST', '/v1/account/recover', { body: { code } });
+  assert.equal(again.status, 200);
+  assert.equal(again.body.account.recoveryCode, '');
+  assert.equal(again.body.account.journeys.length, 0);
+  assert.ok(again.body.account.vault);
+});

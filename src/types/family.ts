@@ -129,6 +129,10 @@ export interface Session {
   /** Publisher id → timestamp of the canonical trail already applied on this phone. */
   trailRevisions: Record<string, number>;
   shareSelfWithFamily: boolean;
+  /** Past journeys stay sealed until this phone has the recovery code. */
+  historyLocked: boolean;
+  sealedHistory: unknown;
+  accountVault: unknown;
   backgroundKeepAlive: boolean;
   home: HomeZone | null;
   inviteCode: string;

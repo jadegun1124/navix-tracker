@@ -387,12 +387,16 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
         if (!stopped && splitSyncToken(token)) links.push({ code: current.inviteCode, token });
       }
       if (stopped || links.length === 0) return;
+      const self = {
+        memberId: current.profile?.profileKey ? current.profile.id : '',
+        profileKey: current.profile?.profileKey || '',
+      };
       stop = startManagedFamilySync(links, (code, places, profiles, trails, departed) => {
         remoteRooms.current[code] = places;
         familyRef.current.setRoomFamilyPlaces(code, places, profiles, departed);
         familyRef.current.applySharedProfiles(code, profiles);
         if (trails.length > 0) familyRef.current.applyCanonicalTrails(trails);
-      });
+      }, self);
     })();
     return () => {
       stopped = true;

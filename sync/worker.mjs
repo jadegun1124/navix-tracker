@@ -1,6 +1,6 @@
 import { PUBLIC_NAVER_CLIENT_ID } from '../src/lib/naverAuth.mjs';
 import { createMemoryAccountStore, handleAccountOperation } from './account.mjs';
-import { applyAlert, applyDirectMessage, applySubscription, alertPushPayload, chatPushPayload, commitPlace, commitProfile, commitTrail, emptyRoom, memberRoomToken, parseOperation, planForgetMember, pushesForAlert, pushesForChat, removeSubscriptions, viewDirectMessages, viewFamilyPlaces, viewMyThreads, viewRoom, withCors } from './protocol.mjs';
+import { applyAlert, applyDirectMessage, applySubscription, alertPushPayload, chatPushPayload, commitKeys, commitPlace, commitProfile, commitTrail, emptyRoom, memberRoomToken, parseOperation, planForgetMember, pushesForAlert, pushesForChat, removeSubscriptions, viewDirectMessages, viewFamilyPlaces, viewMyThreads, viewRoom, withCors } from './protocol.mjs';
 import { createVapidKeys, sendWebPush } from './webpush.mjs';
 
 // One Durable Object per family room. The id is a hash of the invite code,
@@ -78,6 +78,13 @@ export class FamilyRoom {
         await this.ctx.storage.put('room', room);
       }
       return Response.json({ ok: true });
+    }
+    if (op.kind === 'keys') {
+      const next = await commitKeys(room, op.keys, op.profileKey || '');
+      if (next.error) return next.error;
+      room = next.room;
+      await this.ctx.storage.put('room', room);
+      return Response.json({ ok: true, keys: next.directory });
     }
     if (op.kind === 'alert') {
       const next = applyAlert(room, op.alert, Date.now());

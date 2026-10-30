@@ -14,7 +14,9 @@ import { motionAlertCopy, motionNotifyNames, nextMotionAlert } from '../../lib/m
 import { collapseDuplicateJourneys, collapseIndoorStayDisplay, displayCoordinate, historyDayKeys, historyDayLabel, lastTravelAt, liveMotionLabel, liveTrailDrawable, liveTrailPoints, MOTION_STILL_HOLD_MS, previewOpenJourney, seoulDayEndMs, seoulDayKey } from '../../lib/tracking.mjs';
 import { ackFamilyAlert, isFamilyAlertAcked, publishFamilyAlert, readFamilyAlert, subscribeFamilyAlerts, type FamilyAlert } from '../../services/familyAlert';
 import { readSharedPlaces, subscribeSharedPlaces } from '../../services/familyShare';
-import { abandonFamilySync, currentSyncPhase, deleteFamilyRoomRemote, familySyncConfigured, familySyncUrl, fetchMyDirectThreads, registerRoomPush, revokeFamilyPlace, splitSyncToken, startAdminRemoteSync, startSyncMonitor, subscribeSyncPhase, syncTokenFor, type SyncPhase } from '../../services/familySync';
+import { openAccountSecrets } from '../../lib/familyVault.mjs';
+import { isMemberId } from '../../lib/sharedIdentity.mjs';
+import { abandonFamilySync, currentSyncPhase, deleteFamilyRoomRemote, familySyncConfigured, familySyncUrl, fetchMyDirectThreads, registerRoomPush, revokeFamilyPlace, rotateRemovedMember, splitSyncToken, startAdminRemoteSync, startSyncMonitor, subscribeSyncPhase, syncTokenFor, type SyncPhase } from '../../services/familySync';
 import { consumePendingChat, listenChatOpen, overlayPermissionGranted, umapLocation, umapLocationNative } from '../../services/umapLocation';
 import { sounds } from '../../utils/audio';
 import { DEFAULT_CENTER, type GuardianLink, type HomeZone, type Member, type Session } from '../../types/family';
@@ -52,6 +54,8 @@ export function FamilyMapScreen() {
   const mapRef = useRef<StreetMapHandle>(null);
   const [sheet, setSheet] = useState<'invite' | 'accept' | 'add' | 'today' | null>(state.pendingInvite ? 'accept' : null);
   const [shareAsk, setShareAsk] = useState(false);
+  const [historyCode, setHistoryCode] = useState('');
+  const [historyNote, setHistoryNote] = useState('');
   const [confirm, setConfirm] = useState<{ kind: 'remove' | 'leave' | 'delete-room' | 'logout' | 'delete-account'; id: string; name: string } | null>(null);
   const [accountBusy, setAccountBusy] = useState(false);
   const [incoming, setIncoming] = useState<FamilyAlert | null>(null);
@@ -210,7 +214,7 @@ export function FamilyMapScreen() {
           kind: 'leave',
           code: link.code,
           from: profileName,
-          body: `${profileName} 님이 ${zone.label} 반경 ${zone.radiusM}m 밖으로 나갔습니다.`,
+          body: `${profileName} 님이 집 반경을 벗어났습니다.`,
         }, link.syncToken);
       }
       insideRef.current[`leave-${link.id}`] = inside;
@@ -272,13 +276,17 @@ export function FamilyMapScreen() {
         onTrails: (trails) => familyRef.current.applyCanonicalTrails(trails),
         onAlert: handle,
       },
+      {
+        memberId: state.profile?.profileKey ? state.profile.id : '',
+        profileKey: state.profile?.profileKey || '',
+      },
     );
     return () => {
       stopLocal();
       stopRemote();
       navigator.serviceWorker?.removeEventListener('message', onPush);
     };
-  }, [notifyOk, state.inviteCode, watchFamilyRoom, state.syncReadKey, state.syncWriteKey]);
+  }, [notifyOk, state.inviteCode, watchFamilyRoom, state.syncReadKey, state.syncWriteKey, state.profile?.id, state.profile?.profileKey]);
 
   const dmRoomKey = `peer:${state.inviteCode}:${state.syncWriteKey}:${state.guardians.map((link) => `${link.code}:${link.syncToken ?? ''}`).join('|')}`;
   useEffect(() => {
@@ -1013,6 +1021,42 @@ export function FamilyMapScreen() {
               <h2 className="text-lg font-black">우리 가족</h2>
               <p className="text-[11px] font-semibold text-slate-400">한 번 누르면 지도에서 보고, 한 번 더 누르면 기록을 봅니다</p>
             </div>
+            {state.historyLocked && (
+              <form
+                className="mb-2 rounded-2xl bg-amber-50 px-3 py-3"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  setHistoryNote('');
+                  void openAccountSecrets({
+                    vault: state.accountVault,
+                    sealedHistory: state.sealedHistory,
+                    journeys: [],
+                    visits: [],
+                    home: null,
+                  }, localStorage, historyCode).then((opened) => {
+                    if (opened.historyLocked) {
+                      setHistoryNote('복구 코드가 맞지 않습니다. 코드가 없으면 다른 가족이 앱을 켜야 앞으로의 위치가 보이고, 지난 기록은 열리지 않습니다.');
+                      return;
+                    }
+                    const journeys = Array.isArray(opened.journeys) ? opened.journeys as Session['journeys'][string] : [];
+                    const visits = Array.isArray(opened.visits) ? opened.visits as Session['visits'][string] : [];
+                    family.unlockHistory(journeys, visits, (opened.home || null) as Session['home']);
+                  });
+                }}
+              >
+                <p className="text-sm font-black text-slate-900">지난 위치 기록은 복구 코드로만 열립니다</p>
+                <p className="mt-1 text-xs font-semibold leading-5 text-slate-600">카카오·네이버만으로는 암호를 풀 수 없습니다. 다른 가족이 앱을 켜면 앞으로의 가족 위치는 다시 보이지만, 이 계정의 지난 기록과 우리 집은 복구 코드가 있어야 돌아옵니다.</p>
+                <input
+                  value={historyCode}
+                  onChange={(event) => setHistoryCode(event.target.value.toUpperCase())}
+                  placeholder="복구 코드"
+                  autoComplete="off"
+                  className="mt-2 w-full rounded-xl border border-amber-200 bg-white px-3 py-2 text-sm outline-none"
+                />
+                <button type="submit" className="mt-2 w-full rounded-full bg-[#0084FF] py-2.5 text-sm font-bold text-white">기록 열기</button>
+                {historyNote && <p className="mt-2 text-xs font-semibold leading-5 text-rose-600">{historyNote}</p>}
+              </form>
+            )}
             {!state.shareSelfWithFamily && (people.some((member) => member.id !== 'self') || state.guardians.length > 0) && (
               <button
                 type="button"
@@ -1447,6 +1491,19 @@ export function FamilyMapScreen() {
             }}
             onConfirm={() => {
               if (confirm.kind === 'remove') {
+                const member = state.members.find((item) => item.id === confirm.id);
+                const removedId = member && isMemberId(member.publisherId) ? member.publisherId : '';
+                const selfId = state.profile?.profileKey ? state.profile.id : '';
+                const profileKey = state.profile?.profileKey || '';
+                if (removedId && selfId && profileKey && state.syncWriteKey && state.syncReadKey) {
+                  void syncTokenFor(state.syncWriteKey, state.syncReadKey).then((token) => rotateRemovedMember({
+                    code: state.inviteCode,
+                    token,
+                    memberId: selfId,
+                    profileKey,
+                    removedId,
+                  }));
+                }
                 family.removeMember(confirm.id);
                 setConfirm(null);
                 return;

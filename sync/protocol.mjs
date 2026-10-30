@@ -9,6 +9,7 @@
 // for that name, so the other phone can receive that conversation. SOS still
 // uses the read key. Endpoints are never returned.
 
+import { isKeyWrap, isPublicKey, isSeal } from '../src/lib/familySeal.mjs';
 import { base64UrlToBytes, pushEndpointAllowed } from './webpush.mjs';
 
 const KEY_PART = /^[A-Za-z0-9_-]{16,64}$/;
@@ -37,7 +38,7 @@ const CHAT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const CHAT_ID = /^[A-Za-z0-9_-]{8,80}$/;
 
 export function emptyRoom() {
-  return { places: {}, alerts: [], pushes: [], threads: {}, profiles: {}, owners: {}, trails: {} };
+  return { places: {}, alerts: [], pushes: [], threads: {}, profiles: {}, owners: {}, trails: {}, seals: { kid: '', pubs: {}, wraps: {}, revoked: [] } };
 }
 
 /** Same pair on both phones. Keep identical to src/services/familyChat.ts chatThreadKey. */
@@ -165,9 +166,13 @@ function cleanPlace(input, code, now) {
   const battery = cleanBattery(input, input.sharing);
   if (!battery) return { error: json({ error: 'battery' }, 400) };
 
+  const seal = isSeal(input.seal) ? { v: 1, alg: 'A256GCM', kid: input.seal.kid, iv: input.seal.iv, ct: input.seal.ct } : null;
   let lat = input.lat;
   let lng = input.lng;
-  if (!input.sharing || lat == null || lng == null) {
+  if (seal) {
+    lat = null;
+    lng = null;
+  } else if (!input.sharing || lat == null || lng == null) {
     if (input.sharing && (lat != null || lng != null)) return { error: json({ error: 'coords' }, 400) };
     lat = null;
     lng = null;
@@ -185,7 +190,7 @@ function cleanPlace(input, code, now) {
   }
 
   let accuracyM = Number(input.accuracyM);
-  if (!Number.isFinite(accuracyM) || accuracyM < 0) accuracyM = 0;
+  if (seal || !Number.isFinite(accuracyM) || accuracyM < 0) accuracyM = 0;
   accuracyM = Math.min(100_000, Math.round(accuracyM));
 
   let memberId = '';
@@ -213,6 +218,7 @@ function cleanPlace(input, code, now) {
       charging: battery.charging,
       ...(memberId ? { memberId } : {}),
       ...(priorName ? { priorName } : {}),
+      ...(seal ? { seal } : {}),
     },
   };
 }
@@ -304,6 +310,7 @@ function samePlaceSnapshot(current, place) {
   return current.sharing === place.sharing
     && current.lat === place.lat
     && current.lng === place.lng
+    && (current.seal?.ct || '') === (place.seal?.ct || '')
     && current.accuracyM === place.accuracyM
     && current.name === place.name
     && (current.memberId || '') === (place.memberId || '')
@@ -313,7 +320,7 @@ function samePlaceSnapshot(current, place) {
 }
 
 function hasFix(place) {
-  return !!place && place.sharing === true && place.lat != null && place.lng != null;
+  return !!place && place.sharing === true && (isSeal(place.seal) || (place.lat != null && place.lng != null));
 }
 
 function isPlaceholder(place) {
@@ -451,6 +458,8 @@ function roomOwners(room) {
 
 export async function authorizeMember(room, memberId, profileKey) {
   if (typeof profileKey !== 'string' || !isKeyPart(profileKey)) return { error: json({ error: 'profile-key' }, 403) };
+  const seals = room.seals && typeof room.seals === 'object' ? room.seals : {};
+  if (Array.isArray(seals.revoked) && seals.revoked.includes(memberId)) return { error: json({ error: 'revoked' }, 403) };
   const hash = await sha256Base64Url(profileKey);
   const owners = roomOwners(room);
   const current = owners[memberId];
@@ -543,6 +552,19 @@ export function cleanTrailInput(body, now) {
   if (typeof body.memberId !== 'string' || !MEMBER_ID.test(body.memberId)) return { error: json({ error: 'trail' }, 400) };
   const at = finiteNumber(body.at);
   if (at == null || at < EARLIEST_AT || at > now + FUTURE_SKEW_MS) return { error: json({ error: 'trail' }, 400) };
+  const seal = isSeal(body.seal) ? { v: 1, alg: 'A256GCM', kid: body.seal.kid, iv: body.seal.iv, ct: body.seal.ct } : null;
+  if (seal) {
+    return {
+      trail: {
+        memberId: body.memberId,
+        at: Math.round(at),
+        moving: body.moving === true,
+        points: [],
+        journeys: [],
+        seal,
+      },
+    };
+  }
   const points = [];
   for (const point of Array.isArray(body.points) ? body.points : []) {
     const cleaned = cleanTrailPoint(point);
@@ -715,6 +737,16 @@ export function removeSubscriptions(room, endpoints) {
   return { ...room, pushes: roomPushes(room).filter((item) => !gone.has(item.endpoint)) };
 }
 
+function viewKeys(room) {
+  const seals = room.seals && typeof room.seals === 'object' ? room.seals : {};
+  return {
+    kid: typeof seals.kid === 'string' ? seals.kid : '',
+    pubs: seals.pubs && typeof seals.pubs === 'object' ? seals.pubs : {},
+    wraps: seals.wraps && typeof seals.wraps === 'object' ? seals.wraps : {},
+    revoked: Array.isArray(seals.revoked) ? seals.revoked.filter((id) => typeof id === 'string') : [],
+  };
+}
+
 export function viewRoom(room, since) {
   const cursor = Number.isFinite(since) ? since : 0;
   return {
@@ -723,6 +755,7 @@ export function viewRoom(room, since) {
     alerts: (room.alerts || []).filter((alert) => alert.at > cursor),
     profiles: viewProfiles(room),
     trails: viewTrails(room),
+    keys: viewKeys(room),
   };
 }
 
@@ -776,7 +809,8 @@ export function viewFamilyPlaces(room) {
   const places = [];
   const byMember = new Map();
   for (const place of Object.values(room.places || {})) {
-    if (!place || place.audience !== 'family' || !place.sharing || place.lat == null || place.lng == null) continue;
+    if (!place || place.audience !== 'family' || !place.sharing) continue;
+    if (!isSeal(place.seal) && (place.lat == null || place.lng == null)) continue;
     if (typeof place.memberId === 'string' && place.memberId) {
       const prev = byMember.get(place.memberId);
       if (!prev || (place.at || 0) >= (prev.at || 0)) byMember.set(place.memberId, place);
@@ -789,7 +823,57 @@ export function viewFamilyPlaces(room) {
     departed: departedMemberIds(room, 'family'),
     profiles: viewProfiles(room),
     trails: viewTrails(room),
+    keys: viewKeys(room),
   };
+}
+
+function roomSeals(room) {
+  const seals = room.seals && typeof room.seals === 'object' ? room.seals : {};
+  return {
+    kid: typeof seals.kid === 'string' ? seals.kid : '',
+    pubs: seals.pubs && typeof seals.pubs === 'object' ? { ...seals.pubs } : {},
+    wraps: seals.wraps && typeof seals.wraps === 'object' ? { ...seals.wraps } : {},
+    revoked: Array.isArray(seals.revoked) ? seals.revoked.filter((id) => typeof id === 'string') : [],
+  };
+}
+
+function cleanWraps(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return {};
+  const wraps = {};
+  for (const [memberId, wrap] of Object.entries(input)) {
+    if (!MEMBER_ID.test(memberId) || !isKeyWrap(wrap)) continue;
+    wraps[memberId] = { epk: wrap.epk, iv: wrap.iv, ct: wrap.ct };
+  }
+  return wraps;
+}
+
+export async function commitKeys(room, input, profileKey) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return { error: json({ error: 'keys' }, 400) };
+  if (typeof input.memberId !== 'string' || !MEMBER_ID.test(input.memberId)) return { error: json({ error: 'member' }, 400) };
+  if (!isPublicKey(input.publicKey)) return { error: json({ error: 'keys' }, 400) };
+  const auth = await authorizeMember(room, input.memberId, profileKey || '');
+  if (auth.error) return { error: auth.error, room };
+  const seals = roomSeals(auth.room);
+  seals.pubs[input.memberId] = input.publicKey;
+  const incoming = cleanWraps(input.wraps);
+  const kid = typeof input.kid === 'string' && KEY_PART.test(input.kid) ? input.kid : '';
+  if (kid && Object.keys(incoming).length) {
+    if (input.rotate === true || !seals.kid || seals.kid === kid) {
+      seals.kid = kid;
+      seals.wraps = input.rotate === true ? incoming : { ...seals.wraps, ...incoming };
+    }
+  }
+  if (typeof input.revoke === 'string' && MEMBER_ID.test(input.revoke) && input.revoke !== input.memberId) {
+    if (!seals.revoked.includes(input.revoke)) seals.revoked.push(input.revoke);
+    delete seals.pubs[input.revoke];
+    delete seals.wraps[input.revoke];
+  }
+  for (const id of seals.revoked) {
+    delete seals.pubs[id];
+    delete seals.wraps[id];
+  }
+  const next = { ...auth.room, seals };
+  return { error: null, room: next, directory: viewKeys(next) };
 }
 
 export async function parseOperation(request) {
@@ -811,7 +895,7 @@ export async function parseOperation(request) {
     return { kind: 'vapid-public' };
   }
 
-  const match = url.pathname.match(/^\/v1\/rooms\/(\d{4,6})(\/place|\/profile|\/alert|\/family|\/push|\/chat|\/trail)?\/?$/);
+  const match = url.pathname.match(/^\/v1\/rooms\/(\d{4,6})(\/place|\/profile|\/alert|\/family|\/push|\/chat|\/trail|\/keys)?\/?$/);
   if (!match) return json({ error: 'not-found' }, 404);
   const code = match[1];
   const action = match[2] || '';
@@ -858,6 +942,17 @@ export async function parseOperation(request) {
       kind: 'place',
       token: id,
       place: cleaned.place,
+      profileKey: request.headers.get('x-umap-profile-key') || '',
+    };
+  }
+
+  if (request.method === 'PUT' && action === '/keys') {
+    const body = await readJson(request, 32_768);
+    if (body.error) return body.error;
+    return {
+      kind: 'keys',
+      token: id,
+      keys: body.value,
       profileKey: request.headers.get('x-umap-profile-key') || '',
     };
   }
@@ -986,6 +1081,12 @@ export function stripMember(room, memberId) {
     profiles: drop(source.profiles),
     owners: drop(source.owners),
     trails: drop(source.trails),
+    seals: {
+      kid: source.seals?.kid || '',
+      pubs: drop(source.seals?.pubs),
+      wraps: drop(source.seals?.wraps),
+      revoked: Array.isArray(source.seals?.revoked) ? source.seals.revoked : [],
+    },
   };
 }
 
@@ -1081,6 +1182,12 @@ export async function handleSyncRequest(store, request, extras = {}) {
     if (next.error) return next.error;
     if (!next.ignored) await store.write(op.token, next.room);
     return json({ ok: true });
+  }
+  if (op.kind === 'keys') {
+    const next = await commitKeys(room, op.keys, op.profileKey || '');
+    if (next.error) return next.error;
+    await store.write(op.token, next.room);
+    return json({ ok: true, keys: next.directory });
   }
   if (op.kind === 'alert') {
     const next = applyAlert(room, op.alert, Date.now());

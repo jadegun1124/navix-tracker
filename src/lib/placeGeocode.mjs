@@ -1,4 +1,5 @@
-// Reverse geocode for the family card.
+// Reverse geocode for the family card. This runs on the phone. The family
+// server never receives the coordinate for a place name.
 // VWorld is first when VITE_VWORLD_API_KEY is set. A building layer, and Kakao
 // when VITE_KAKAO_REST_API_KEY is set, add an apartment or POI name.
 // Nominatim covers a missing key and a failed VWorld response. Overpass fills

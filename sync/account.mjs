@@ -2,6 +2,7 @@
 // look up the same member id, room keys, and a 30-day journey/visit backup.
 // An old googleSub field is kept on the record and ignored. Provider ids
 // are never the family member id.
+import { isSeal, isVault } from '../src/lib/familySeal.mjs';
 import { NAVER_REDIRECT, allowedNaverRedirect } from '../src/lib/naverAuth.mjs';
 
 const MEMBER_ID = /^local-[a-z0-9]{3,64}$/;
@@ -275,17 +276,24 @@ export function cleanAccountSnapshot(input, now = Date.now()) {
     if (cleaned && !guardians.some((entry) => entry.code === cleaned.code)) guardians.push(cleaned);
     if (guardians.length >= 8) break;
   }
+  const vault = isVault(input.vault) ? input.vault : null;
+  const sealedHistory = isSeal(input.sealedHistory)
+    ? { v: 1, alg: 'A256GCM', kid: input.sealedHistory.kid, iv: input.sealedHistory.iv, ct: input.sealedHistory.ct }
+    : null;
+  const keepHistory = input.keepHistory === true && !sealedHistory;
   const journeys = [];
-  for (const item of Array.isArray(input.journeys) ? input.journeys : []) {
-    const cleaned = cleanJourney(item, now);
-    if (cleaned) journeys.push(cleaned);
-    if (journeys.length >= MAX_JOURNEYS) break;
-  }
   const visits = [];
-  for (const item of Array.isArray(input.visits) ? input.visits : []) {
-    const cleaned = cleanVisit(item, now);
-    if (cleaned) visits.push(cleaned);
-    if (visits.length >= MAX_VISITS) break;
+  if (!sealedHistory && !keepHistory) {
+    for (const item of Array.isArray(input.journeys) ? input.journeys : []) {
+      const cleaned = cleanJourney(item, now);
+      if (cleaned) journeys.push(cleaned);
+      if (journeys.length >= MAX_JOURNEYS) break;
+    }
+    for (const item of Array.isArray(input.visits) ? input.visits : []) {
+      const cleaned = cleanVisit(item, now);
+      if (cleaned) visits.push(cleaned);
+      if (visits.length >= MAX_VISITS) break;
+    }
   }
   return {
     snapshot: {
@@ -294,9 +302,13 @@ export function cleanAccountSnapshot(input, now = Date.now()) {
       profile: { name, photo: photo ?? null },
       room,
       guardians,
-      home: cleanHome(input.home),
+      home: sealedHistory || keepHistory ? null : cleanHome(input.home),
       journeys,
       visits,
+      ...(vault ? { vault } : {}),
+      ...(sealedHistory ? { sealedHistory } : {}),
+      ...(keepHistory ? { keepHistory: true } : {}),
+      ...(input.dropRecovery === true && vault ? { dropRecovery: true } : {}),
     },
   };
 }
@@ -309,10 +321,12 @@ export function publicAccount(record, extras = {}) {
     profile: record.profile,
     room: record.room,
     guardians: record.guardians || [],
-    home: record.home || null,
-    journeys: record.journeys || [],
-    visits: record.visits || [],
-    recoveryCode: formatRecoveryCode(record.recoveryCode),
+    home: record.sealedHistory ? null : (record.home || null),
+    journeys: record.sealedHistory ? [] : (record.journeys || []),
+    visits: record.sealedHistory ? [] : (record.visits || []),
+    recoveryCode: record.recoveryCode ? formatRecoveryCode(record.recoveryCode) : '',
+    vault: record.vault || null,
+    sealedHistory: record.sealedHistory || null,
     googleLinked: typeof record.googleSub === 'string' && record.googleSub.length > 0,
     kakaoLinked: typeof record.kakaoId === 'string' && record.kakaoId.length > 0,
     naverLinked: typeof record.naverId === 'string' && record.naverId.length > 0,
@@ -457,9 +471,11 @@ async function mintRecord(snapshot, now, providers = {}) {
     profile: snapshot.profile,
     room: snapshot.room,
     guardians: snapshot.guardians,
-    home: snapshot.home,
-    journeys: snapshot.journeys,
-    visits: snapshot.visits,
+    home: snapshot.sealedHistory ? null : snapshot.home,
+    journeys: snapshot.sealedHistory ? [] : snapshot.journeys,
+    visits: snapshot.sealedHistory ? [] : snapshot.visits,
+    ...(snapshot.vault ? { vault: snapshot.vault } : {}),
+    ...(snapshot.sealedHistory ? { sealedHistory: snapshot.sealedHistory } : {}),
     googleSub: providers.googleSub || '',
     kakaoId: providers.kakaoId || '',
     naverId: providers.naverId || '',
@@ -475,18 +491,28 @@ async function mintRecord(snapshot, now, providers = {}) {
 
 function mergeSnapshot(record, snapshot, now) {
   if (snapshot.memberId !== record.memberId) return record;
-  return {
+  const next = {
     ...record,
     profileKey: snapshot.profileKey || record.profileKey,
     profile: snapshot.profile,
     room: snapshot.room,
     guardians: snapshot.guardians,
-    home: snapshot.home,
-    journeys: snapshot.journeys,
-    visits: snapshot.visits,
     nameChosen: true,
     updatedAt: now,
   };
+  if (snapshot.vault) next.vault = snapshot.vault;
+  if (snapshot.sealedHistory) {
+    next.sealedHistory = snapshot.sealedHistory;
+    next.journeys = [];
+    next.visits = [];
+    next.home = null;
+  } else if (!snapshot.keepHistory) {
+    next.home = snapshot.home;
+    next.journeys = snapshot.journeys;
+    next.visits = snapshot.visits;
+  }
+  if (snapshot.dropRecovery && next.vault) next.recoveryCode = '';
+  return next;
 }
 
 async function attachSession(store, record, snapshot, now) {
