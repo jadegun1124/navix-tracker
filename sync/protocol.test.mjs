@@ -1044,3 +1044,106 @@ test('family view keeps the newest place when one memberId was stored twice', ()
   assert.equal(mine.length, 1);
   assert.equal(mine[0].name, '민지');
 });
+
+test('an older plaintext fix does not replace a newer sealed place', () => {
+  const sealed = applyPlace(emptyRoom(), {
+    code: '48291',
+    name: '하나',
+    lat: null,
+    lng: null,
+    accuracyM: 0,
+    at: 200,
+    sharing: true,
+    audience: 'family',
+    memberId: 'local-sealowner',
+    seal: { v: 1, alg: 'A256GCM', kid: 'abcdefghijklmnop', iv: 'AAAAAAAAAAAAAAAA', ct: 'BBBBBBBBBBBBBBBBBBBBBBBB' },
+  });
+  const older = applyPlace(sealed.room, {
+    code: '48291',
+    name: '하나',
+    lat: 37.1,
+    lng: 127.1,
+    accuracyM: 8,
+    at: 100,
+    sharing: true,
+    audience: 'family',
+    memberId: 'local-sealowner',
+  });
+  const stored = Object.values(older.room.places)[0];
+  assert.equal(stored.lat, null);
+  assert.equal(stored.seal.kid, 'abcdefghijklmnop');
+});
+
+test('a sealed place keeps ciphertext only and a removed member cannot register again', async () => {
+  const { mintFamilyKey, sealJson } = await import('../src/lib/familySeal.mjs');
+  const store = createMemoryStore();
+  const code = '48291';
+  const writeKey = randomKey();
+  const readKey = randomKey();
+  const token = await syncTokenFor(writeKey, readKey);
+  const profileKey = randomKey();
+  const otherKey = randomKey();
+  const family = await mintFamilyKey();
+  const seal = await sealJson(family.key, family.kid, { lat: 37.6365, lng: 127.068, accuracyM: 18, label: '하계1차청구아파트' });
+  const published = await call(store, 'PUT', `/v1/rooms/${code}/place`, {
+    token,
+    profileKey,
+    body: {
+      code,
+      name: '하나',
+      lat: 37.6365,
+      lng: 127.068,
+      accuracyM: 18,
+      at: Date.now(),
+      sharing: true,
+      audience: 'family',
+      memberId: 'local-sealowner',
+      seal,
+    },
+  });
+  assert.equal(published.status, 200);
+  const visible = await call(store, 'GET', `/v1/rooms/${code}/family`, { token });
+  assert.equal(visible.body.places.length, 1);
+  assert.equal(visible.body.places[0].lat, null);
+  assert.equal(visible.body.places[0].lng, null);
+  assert.equal(visible.body.places[0].accuracyM, 0);
+  assert.equal(JSON.stringify(visible.body.places[0]).includes('하계1차청구아파트'), false);
+  assert.equal(JSON.stringify(visible.body.places[0]).includes('37.6365'), false);
+
+  const ownerPub = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+  const guestPub = 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB';
+  const registered = await call(store, 'PUT', `/v1/rooms/${code}/keys`, {
+    token,
+    profileKey,
+    body: { memberId: 'local-sealowner', publicKey: ownerPub },
+  });
+  assert.equal(registered.status, 200);
+  await call(store, 'PUT', `/v1/rooms/${code}/keys`, {
+    token,
+    profileKey: otherKey,
+    body: { memberId: 'local-sealguest', publicKey: guestPub },
+  });
+  const rotated = await call(store, 'PUT', `/v1/rooms/${code}/keys`, {
+    token,
+    profileKey,
+    body: {
+      memberId: 'local-sealowner',
+      publicKey: ownerPub,
+      revoke: 'local-sealguest',
+      rotate: true,
+      kid: family.kid,
+      wraps: {
+        'local-sealowner': { epk: ownerPub, iv: 'AAAAAAAAAAAAAAAA', ct: 'BBBBBBBBBBBBBBBBBBBBBBBB' },
+      },
+    },
+  });
+  assert.equal(rotated.status, 200);
+  assert.equal(rotated.body.keys.revoked.includes('local-sealguest'), true);
+  assert.equal(rotated.body.keys.pubs['local-sealguest'], undefined);
+  const blocked = await call(store, 'PUT', `/v1/rooms/${code}/keys`, {
+    token,
+    profileKey: otherKey,
+    body: { memberId: 'local-sealguest', publicKey: guestPub },
+  });
+  assert.equal(blocked.status, 403);
+});

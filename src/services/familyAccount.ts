@@ -13,6 +13,7 @@ import {
   writeStoredAccountKey,
   writeStoredRecoveryCode,
 } from '../lib/accountRestore.mjs';
+import { prepareBackup } from '../lib/familyVault.mjs';
 import { familySyncUrl } from './familySync';
 
 export {
@@ -43,6 +44,11 @@ export interface AccountSnapshot {
   naverLinked?: boolean;
   nameChosen?: boolean;
   created?: boolean;
+  vault?: unknown;
+  sealedHistory?: unknown;
+  historyLocked?: boolean;
+  keepHistory?: boolean;
+  dropRecovery?: boolean;
 }
 
 function timeoutSignal(ms: number): AbortSignal {
@@ -78,11 +84,16 @@ async function readAccountBody(response: Response): Promise<{ ok: boolean; accou
   };
 }
 
+async function sealedSnapshot(snapshot: AccountSnapshot) {
+  const storage = typeof localStorage === 'undefined' ? null : localStorage;
+  return prepareBackup(snapshot, storage, readStoredRecoveryCode(storage));
+}
+
 export async function registerFamilyAccount(snapshot: AccountSnapshot) {
   const response = await request('/v1/account', {
     method: 'POST',
     headers: accountHeaders(),
-    body: JSON.stringify(snapshot),
+    body: JSON.stringify(await sealedSnapshot(snapshot)),
   });
   return readAccountBody(response);
 }
@@ -92,7 +103,7 @@ export async function backupFamilyAccount(snapshot: AccountSnapshot, accountKey 
   const response = await request('/v1/account', {
     method: 'PUT',
     headers: accountHeaders(accountKey),
-    body: JSON.stringify(snapshot),
+    body: JSON.stringify(await sealedSnapshot(snapshot)),
   });
   return readAccountBody(response);
 }
@@ -134,7 +145,7 @@ export async function linkKakaoAccount(
     body: JSON.stringify({
       accessToken,
       mode,
-      ...(snapshot ? { snapshot } : {}),
+      ...(snapshot ? { snapshot: await sealedSnapshot(snapshot) } : {}),
       ...(accountKey ? { accountKey } : {}),
     }),
   });
@@ -158,7 +169,7 @@ export async function linkNaverAccount(
       ...(payload.code ? { code: payload.code } : {}),
       ...(payload.state ? { state: payload.state } : {}),
       ...(payload.redirectUri ? { redirectUri: payload.redirectUri } : {}),
-      ...(snapshot ? { snapshot } : {}),
+      ...(snapshot ? { snapshot: await sealedSnapshot(snapshot) } : {}),
       ...(accountKey ? { accountKey } : {}),
     }),
   });

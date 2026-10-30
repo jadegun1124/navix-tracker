@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Bell, BatteryCharging, ChevronLeft, Footprints, MapPin, Shield } from 'lucide-react';
 import { localProfile } from '../../lib/localProfile.mjs';
 import { accountNeedsDisplayName, clearStoredAccount, readStoredAccountKey, snapshotFromSession } from '../../lib/accountRestore.mjs';
+import { openAccountSecrets } from '../../lib/familyVault.mjs';
 import { KAKAO_SETUP_MESSAGE } from '../../lib/kakaoAuth.mjs';
 import { NAVER_SETUP_MESSAGE } from '../../lib/naverAuth.mjs';
 import { backupFamilyAccount, persistAccountResult, recoverFamilyAccount, type AccountSnapshot } from '../../services/familyAccount';
@@ -110,12 +111,14 @@ function Login({ onSubmit }: { onSubmit: (profile: Profile) => void }) {
     return { snapshot, mode };
   };
 
-  const finishAccount = (account: AccountSnapshot) => {
-    if (accountNeedsDisplayName(account)) {
-      openName(account);
-      return;
-    }
-    family.restoreAccount(account);
+  const finishAccount = (account: AccountSnapshot, typedCode = '') => {
+    void openAccountSecrets(account, typeof localStorage === 'undefined' ? null : localStorage, typedCode).then((opened) => {
+      if (accountNeedsDisplayName(opened)) {
+        openName(opened);
+        return;
+      }
+      family.restoreAccount(opened);
+    });
   };
 
   const finishProvider = (
@@ -173,11 +176,13 @@ function Login({ onSubmit }: { onSubmit: (profile: Profile) => void }) {
             };
             void backupFamilyAccount(next).then(async (saved) => {
               if (saved.ok && saved.account) await persistAccountResult(saved);
-              family.restoreAccount({
+              const merged = {
                 ...next,
                 ...(saved.account || {}),
                 profile: { name: profile.name, photo: saved.account?.profile?.photo ?? pending.profile?.photo ?? null },
-              });
+              };
+              const opened = await openAccountSecrets(merged, localStorage);
+              family.restoreAccount(opened);
             }).catch(() => {
               family.restoreAccount(next);
             });
@@ -289,7 +294,7 @@ function Login({ onSubmit }: { onSubmit: (profile: Profile) => void }) {
                 return;
               }
               void persistAccountResult(result);
-              finishAccount(result.account);
+              finishAccount(result.account, recovery);
             }).catch(() => {
               setBusy(false);
               setMessage('복구 코드를 확인하지 못했습니다. 위치 서버에 다시 연결해 주세요.');
@@ -402,7 +407,7 @@ const TERM_COPY: { id: string; title: string; required: boolean; body: string }[
     id: 'privacy',
     title: '개인정보 수집·이용 동의',
     required: true,
-    body: '표시 이름, 가족 방 키, 최근 30일 여정·방문을 이 기기와 가족 서버 계정에 둡니다. 전화번호는 받지 않습니다. 카카오·네이버 또는 복구 코드로 같은 사람을 다시 불러옵니다.',
+    body: '표시 이름과 가족 방 키는 계정에 둡니다. 최근 30일 여정·방문과 장소 이름은 이 기기에서 암호화해 서버에는 암호문만 둡니다. 전화번호는 받지 않습니다. 지난 기록을 다시 열려면 복구 코드가 필요합니다.',
   },
   {
     id: 'guardian',

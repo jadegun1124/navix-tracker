@@ -1,0 +1,16 @@
+export const VAULT_ITERATIONS: number;
+export function bytesToBase64Url(bytes: Uint8Array): string;
+export function base64UrlToBytes(value: string): Uint8Array | null;
+export function randomFamilyId(): string;
+export function isSeal(value: unknown): boolean;
+export function isPublicKey(value: unknown): boolean;
+export function isKeyWrap(value: unknown): boolean;
+export function isVault(value: unknown): boolean;
+export function sealJson(keyRaw: Uint8Array, kid: string, value: unknown): Promise<{ v: number; alg: string; kid: string; iv: string; ct: string } | null>;
+export function openJson(keyRaw: Uint8Array, envelope: unknown): Promise<unknown>;
+export function mintFamilyKey(): Promise<{ kid: string; key: Uint8Array }>;
+export function mintDeviceKey(): Promise<{ publicKey: string; privateKey: string; contentKey: string }>;
+export function wrapFamilyKey(recipientPublic: string, familyKey: Uint8Array, kid: string): Promise<{ epk: string; iv: string; ct: string } | null>;
+export function unwrapFamilyKey(recipientPrivate: string, wrap: { epk: string; iv: string; ct: string } | null, kid: string): Promise<Uint8Array | null>;
+export function wrapVault(recoveryCode: string, secret: { publicKey: string; privateKey: string; contentKey: string }): Promise<{ kdf: string; iter: number; salt: string; iv: string; ct: string } | null>;
+export function unwrapVault(recoveryCode: string, vault: unknown): Promise<{ publicKey: string; privateKey: string; contentKey: string } | null>;

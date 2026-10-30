@@ -133,6 +133,9 @@ function fresh(stage: Stage = 'splash'): Session {
     journeys: {},
     trailRevisions: {},
     shareSelfWithFamily: false,
+    historyLocked: false,
+    sealedHistory: null,
+    accountVault: null,
     backgroundKeepAlive: false,
     home: null,
     inviteCode: String(10000 + Math.floor(Math.random() * 90000)),
@@ -641,6 +644,7 @@ type Action =
   | { type: 'set-motion-alert-phase'; phase: Session['motionAlertPhase'] }
   | { type: 'notice'; notice: FamilyNotice }
   | { type: 'logout' }
+  | { type: 'unlock-history'; journeys: Journey[]; visits: Visit[]; home: Session['home'] }
   | { type: 'restore-account'; account: Parameters<typeof applyAccountSnapshot>[1] }
   | { type: 'clear-family-room'; serverNote: string | null }
   | { type: 'revisit-permissions' };
@@ -1356,6 +1360,16 @@ function reduceSession(state: Session, action: Action): Session {
       return { ...state, notices: [action.notice, ...state.notices].slice(0, 40) };
     case 'logout':
       return fresh('login');
+    case 'unlock-history': {
+      return {
+        ...state,
+        historyLocked: false,
+        sealedHistory: null,
+        home: action.home || state.home,
+        journeys: action.journeys.length ? { ...state.journeys, self: action.journeys } : state.journeys,
+        visits: action.visits.length ? { ...state.visits, self: action.visits } : state.visits,
+      };
+    }
     case 'restore-account': {
       const restored = applyAccountSnapshot(state, action.account);
       if (restored === state || !restored.profile) return state;
@@ -1404,6 +1418,7 @@ interface FamilyApi {
   splashDone: () => void;
   login: (profile: Profile) => void;
   restoreAccount: (account: Parameters<typeof applyAccountSnapshot>[1]) => void;
+  unlockHistory: (journeys: Journey[], visits: Visit[], home: Session['home']) => void;
   closeMode: () => void;
   skipSurvey: () => void;
   pickSurvey: (id: string) => void;
@@ -1483,6 +1498,7 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
     splashDone: () => dispatch({ type: 'splash-done' }),
     login: (profile) => dispatch({ type: 'login', profile }),
     restoreAccount: (account) => dispatch({ type: 'restore-account', account }),
+    unlockHistory: (journeys, visits, home) => dispatch({ type: 'unlock-history', journeys, visits, home }),
     closeMode: () => dispatch({ type: 'close-mode' }),
     skipSurvey: () => dispatch({ type: 'skip-survey' }),
     pickSurvey: (id) => dispatch({ type: 'pick-survey', id }),
