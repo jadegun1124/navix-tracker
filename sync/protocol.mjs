@@ -773,8 +773,19 @@ export function departedMemberIds(room, audience = 'family') {
 }
 
 export function viewFamilyPlaces(room) {
+  const places = [];
+  const byMember = new Map();
+  for (const place of Object.values(room.places || {})) {
+    if (!place || place.audience !== 'family' || !place.sharing || place.lat == null || place.lng == null) continue;
+    if (typeof place.memberId === 'string' && place.memberId) {
+      const prev = byMember.get(place.memberId);
+      if (!prev || (place.at || 0) >= (prev.at || 0)) byMember.set(place.memberId, place);
+      continue;
+    }
+    places.push(place);
+  }
   return {
-    places: Object.values(room.places || {}).filter((place) => place.audience === 'family' && place.sharing && place.lat != null && place.lng != null),
+    places: [...byMember.values(), ...places],
     departed: departedMemberIds(room, 'family'),
     profiles: viewProfiles(room),
     trails: viewTrails(room),

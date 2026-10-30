@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { memberPlaceLabel } from './memberPlace.mjs';
 import { choosePlaceLabel, formatPrecisePlace, NOMINATIM_USER_AGENT, nominatimAddress, placeGridKey, presentPlace, reverseGeocode, shortenAddress } from './placeGeocode.mjs';
-import { stayLabelPoint } from './tracking.mjs';
+import { labelCoordinate, stayLabelPoint } from './tracking.mjs';
 
 const SUTAEK = {
   display_name: '수택동, 구리시, 경기도, 11932, 대한민국',
@@ -168,6 +168,23 @@ test('an apartment polygon beats the fire station next door', async () => {
   const station = { name: '노원소방서', kind: 'poi', lat: fire.lat, lng: fire.lng };
   assert.equal(choosePlaceLabel([station, apartment], hagye), '하계1차청구아파트 104동');
   assert.equal(choosePlaceLabel([station, apartment], { lat: 37.6359, lng: 127.0680 }), '하계1차청구아파트 104동');
+  assert.equal(choosePlaceLabel([station, apartment], { lat: 37.63585, lng: 127.0680 }), '하계1차청구아파트 104동');
+  assert.equal(choosePlaceLabel([station, apartment], { lat: 37.6353, lng: 127.0680 }), '노원소방서');
+  const stationBuilding = {
+    name: '노원소방서',
+    kind: 'poi',
+    geometry: {
+      type: 'Polygon',
+      coordinates: [[
+        [127.0676, 37.63555],
+        [127.0682, 37.63555],
+        [127.0682, 37.63515],
+        [127.0676, 37.63515],
+        [127.0676, 37.63555],
+      ]],
+    },
+  };
+  assert.equal(choosePlaceLabel([stationBuilding, apartment], { lat: 37.63535, lng: 127.0679 }), '노원소방서');
   assert.equal(String(choosePlaceLabel([station, apartment], hagye)).includes('소방서'), false);
 
   const fetchImpl = async (url) => {
@@ -205,6 +222,8 @@ test('an apartment polygon beats the fire station next door', async () => {
   const label = await reverseGeocode(hagye.lat, hagye.lng, { fetch: fetchImpl, key: 'test-key', pace: false });
   assert.equal(label, '하계1차청구아파트 104동');
   assert.equal(String(label).includes('소방서'), false);
+  const yard = await reverseGeocode(37.6353, 127.0680, { fetch: fetchImpl, key: 'test-key', pace: false });
+  assert.equal(yard, '노원소방서');
 
   const jitter = [
     { lat: 37.6366, lng: 127.0679, at: 1, staying: true },
@@ -217,6 +236,14 @@ test('an apartment polygon beats the fire station next door', async () => {
   assert.ok(Math.abs(snapped.lat - 37.63625) < 0.002);
   const snappedLabel = choosePlaceLabel([station, apartment], snapped);
   assert.equal(snappedLabel, '하계1차청구아파트 104동');
+  const accurate = jitter.map((point, index) => ({ ...point, accuracyM: index === jitter.length - 1 ? 55 : 12, staying: true }));
+  const namedAt = labelCoordinate(accurate, { ...fire, accuracyM: 55 }, false);
+  assert.equal(choosePlaceLabel([station, apartment], namedAt), '하계1차청구아파트 104동');
+  const closed = [
+    { lat: 37.6365, lng: 127.0680, at: 1, staying: true, accuracyM: 12, stayEnd: true },
+    { lat: fire.lat, lng: fire.lng, at: 2, staying: true, accuracyM: 55 },
+  ];
+  assert.equal(labelCoordinate(closed, { ...fire, accuracyM: 55 }, false).lat, 37.6365);
 });
 
 test('family card status starts with the neighborhood, never 근처', () => {

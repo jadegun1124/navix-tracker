@@ -36,6 +36,14 @@ function memberStamp(member) {
   return typeof member?.updatedAt === 'number' ? member.updatedAt : 0;
 }
 
+export function mergedShareSelf(snapshots, guardians) {
+  const ranked = [...(Array.isArray(snapshots) ? snapshots : [])].sort((left, right) => (right.savedAt || 0) - (left.savedAt || 0));
+  for (const session of ranked) {
+    if (session && typeof session.shareSelfWithFamily === 'boolean') return session.shareSelfWithFamily;
+  }
+  return (Array.isArray(guardians) ? guardians : []).some((link) => link && link.share === 'allowed');
+}
+
 export function mergePeerSessions(snapshots) {
   const list = (Array.isArray(snapshots) ? snapshots : []).filter((item) => item && typeof item === 'object');
   if (list.length === 0) return null;
@@ -72,7 +80,10 @@ export function mergePeerSessions(snapshots) {
   const inviteCode = host.inviteCode || base.inviteCode || '';
   const cleaned = withoutSelfEcho(members, profileId, inviteCode, profileName);
   const completed = ranked.some((session) => session.permissions && session.permissions.completed);
-  const sharing = ranked.some((session) => session.shareSelfWithFamily) || guardians.some((link) => link.share === 'allowed');
+  const sharing = mergedShareSelf(ranked, guardians);
+  const sharedGuardians = sharing
+    ? guardians
+    : guardians.map((link) => (link.share === 'allowed' ? { ...link, share: 'accepted' } : link));
   const stage = !profile
     ? (base.stage === 'splash' ? 'splash' : 'login')
     : completed
@@ -82,7 +93,7 @@ export function mergePeerSessions(snapshots) {
     ...base,
     profile,
     members: cleaned,
-    guardians,
+    guardians: sharedGuardians,
     inviteCode,
     syncWriteKey: host.syncWriteKey || base.syncWriteKey,
     syncReadKey: host.syncReadKey || base.syncReadKey,

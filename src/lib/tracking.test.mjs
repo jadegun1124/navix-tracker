@@ -343,7 +343,14 @@ test('a short step inside the walking gate is not a vertex, and a poor fix is dr
   assert.equal(trailDecision(origin, { ...offset(origin, 3, 0, t + 2_500), speedMps: 1.2, staying: false, accuracyM: 19 }), 'keep');
   assert.equal(trailDecision(origin, { ...offset(origin, 3, 0, t + 2_500), speedMps: 0, staying: false, accuracyM: 12 }), 'keep');
   assert.equal(trailDecision(origin, { ...offset(origin, 15, 0, t + 10_000), speedMps: 1.2, staying: false }), 'keep');
-  assert.equal(trailDecision(origin, { ...offset(origin, 70, 0, t + 10_000), accuracyM: 55, speedMps: 1.4, staying: false }), 'drop');
+  const indoor = { ...offset(origin, 70, 0, t + 10_000), accuracyM: 55, speedMps: 1.4, staying: false };
+  assert.equal(trailDecision(origin, indoor), 'drop');
+  assert.equal(liveCoordinate(origin, indoor).lat, indoor.lat);
+  assert.equal(liveCoordinate(origin, { ...indoor, accuracyM: 120 }).lat, origin.lat);
+  const settled = settleTrailPoint([origin], indoor, indoor.at);
+  assert.equal(settled.decision, 'drop');
+  assert.equal(settled.lat, indoor.lat);
+  assert.equal(settled.points.some((point) => point.lat === indoor.lat), false);
   const stayed = settleTrailPoint([origin], { ...origin, at: t + 4 * 60 * 1000 }, t + 4 * 60 * 1000);
   assert.equal(visibleTrail(stayed.points).length, 1);
   assert.equal(stayed.points.length, 2);
@@ -363,7 +370,10 @@ test('stale cached fix is rejected and a fresh precise fix is kept', () => {
   const coarse = acceptFix(null, { lat: 37.5, lng: 127, accuracy: 300, at: now }, { precise: true, now });
   assert.equal(coarse.ok, false);
   assert.equal(coarse.reason, 'accuracy');
-  const laterPoor = acceptFix({ lat: 37.5, lng: 127, at: now - 5_000 }, { lat: 37.5004, lng: 127, accuracy: 50, at: now }, { precise: true, now });
+  const indoor = acceptFix({ lat: 37.5, lng: 127, at: now - 5_000 }, { lat: 37.5004, lng: 127, accuracy: 50, at: now }, { precise: true, now });
+  assert.equal(indoor.ok, true);
+  assert.equal(indoor.fix.accuracy, 50);
+  const laterPoor = acceptFix({ lat: 37.5, lng: 127, at: now - 5_000 }, { lat: 37.5004, lng: 127, accuracy: 120, at: now }, { precise: true, now });
   assert.equal(laterPoor.ok, false);
   assert.equal(laterPoor.reason, 'accuracy');
 });

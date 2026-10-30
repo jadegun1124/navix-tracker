@@ -1,13 +1,21 @@
 import { useEffect, useState } from 'react';
+import { alwaysAllowGateCovers } from '../../lib/alwaysAllowGate.mjs';
 import { bindAndroidBack } from '../../platform/androidExit';
+import { umapLocationNative } from '../../services/umapLocation';
+import { AlwaysAllowGate } from './AlwaysAllowGate';
 import { FamilyMapScreen } from './FamilyMapScreen';
 import { Onboarding } from './Onboarding';
 import { FamilyProvider, useFamily } from './session';
 
 function FamilyRouter() {
   const { state } = useFamily();
-  if (state.stage === 'map') return <FamilyMapScreen />;
-  return <Onboarding />;
+  const gate = umapLocationNative() && alwaysAllowGateCovers(state.stage);
+  return (
+    <>
+      {state.stage === 'map' ? <FamilyMapScreen /> : <Onboarding />}
+      {gate ? <AlwaysAllowGate /> : null}
+    </>
+  );
 }
 
 function AndroidExitToast() {

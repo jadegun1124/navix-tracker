@@ -88,8 +88,9 @@
             android:exported="false" />
     </application>
 
-    <!-- ACCESS_BACKGROUND_LOCATION is declared so the location permission screen can offer 항상 허용.
-         The app opens that screen and does not call requestPermissions for background location. -->
+    <!-- ACCESS_BACKGROUND_LOCATION lets the location screen offer 항상 허용.
+         Android 11+ opens that screen. Android 10 may show the system background dialog from the blocking gate.
+         The app does not flip the switch itself. -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />

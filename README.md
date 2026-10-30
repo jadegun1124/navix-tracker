@@ -10,12 +10,12 @@
 | :--- | :--- | :--- |
 | 회사 홈 | GitHub Pages | https://jadegun1124.github.io/kinnex/ |
 | 앱 화면 미리보기 | 같은 Pages의 `?app=1` | https://jadegun1124.github.io/kinnex/?app=1 |
-| 안드로이드 앱 | GitHub Releases APK v1.34.0 | https://github.com/jadegun1124/umap/releases/download/v1.34.0/kinnex-v1.34.0.apk |
-| 릴리스 페이지 | GitHub Releases | https://github.com/jadegun1124/umap/releases/tag/v1.34.0 |
+| 안드로이드 앱 | GitHub Releases APK v1.35.0 | https://github.com/jadegun1124/umap/releases/download/v1.35.0/kinnex-v1.35.0.apk |
+| 릴리스 페이지 | GitHub Releases | https://github.com/jadegun1124/umap/releases/tag/v1.35.0 |
 
 Google Play, App Store, TestFlight에는 올리지 않았습니다. iOS는 아이콘 에셋만 있고 설치 파일은 없습니다.
 
-`main`에 푸시하면 GitHub Actions가 회사 홈을 Pages에 배포하고, 같은 커밋으로 디버그 APK를 만들어 GitHub Release `v1.34.0`의 `kinnex-v1.34.0.apk`를 갱신합니다. 이전 빌드는 `v1.33.0`, `v1.32.0`, `v1.31.1`, `v1.31.0`, `v1.30.0`, `v1.29.2`, `v1.29.1`, `v1.29.0`, `v1.27.0`, `v1.26.0`, `v1.25.0`, `v1.24.0`, `v1.23.0`, `v1.22.0`, `v1.21.0`, `v1.20.0`, `v1.19.0`, `v1.18.0`, `v1.17.0`, `v1.16.0`, `v1.15.0`, `v1.14.0`, `v1.13.0`, `v1.12.0`, `v1.11.0`, `v1.10.0`, `v1.9.0`, `v1.8.0`, `v1.7.0`, `v1.6.0`, `v1.5.0`, `v1.4.0`, `v1.3.0`, `v1.2.0`, `v1.1.0`, `v1.0.0`에 남아 있습니다.
+`main`에 푸시하면 GitHub Actions가 회사 홈을 Pages에 배포하고, 같은 커밋으로 디버그 APK를 만들어 GitHub Release `v1.35.0`의 `kinnex-v1.35.0.apk`를 갱신합니다. 이전 빌드는 `v1.34.0`, `v1.33.0`, `v1.32.0`, `v1.31.1`, `v1.31.0`, `v1.30.0`, `v1.29.2`, `v1.29.1`, `v1.29.0`, `v1.27.0`, `v1.26.0`, `v1.25.0`, `v1.24.0`, `v1.23.0`, `v1.22.0`, `v1.21.0`, `v1.20.0`, `v1.19.0`, `v1.18.0`, `v1.17.0`, `v1.16.0`, `v1.15.0`, `v1.14.0`, `v1.13.0`, `v1.12.0`, `v1.11.0`, `v1.10.0`, `v1.9.0`, `v1.8.0`, `v1.7.0`, `v1.6.0`, `v1.5.0`, `v1.4.0`, `v1.3.0`, `v1.2.0`, `v1.1.0`, `v1.0.0`에 남아 있습니다.
 
 ## 화면
 
@@ -31,7 +31,7 @@ Google Play, App Store, TestFlight에는 올리지 않았습니다. iOS는 아�
 | 권한 | 쓰는 이유 |
 | :--- | :--- |
 | 알림 | SOS와 집 반경. 처음 권한 화면에서 위치와 함께 묻고, 허용을 누르면 시스템 알림 창이 열립니다. 위치 공유 중에는 알림 목록에 Kinnex 카드를 올리지 않습니다. |
-| 위치 | 정확한 위치 또는 대략적인 위치. 앱 사용 중은 위치 권한 창, 항상 허용은 이 앱의 위치 액세스 권한 화면을 먼저 엽니다. 그 화면이 열리지 않으면 앱 권한 목록으로 갑니다. |
+| 위치 | 정확한 위치 또는 대략적인 위치. 앱 사용 중은 위치 권한 창, 항상 허용은 이 앱의 위치 액세스 권한 화면을 먼저 엽니다. 그 화면이 열리지 않으면 앱 권한 목록으로 갑니다. 로그인한 뒤 항상 허용과 정확한 위치가 아니면 안드로이드 앱 전체를 막는 안내가 뜹니다. |
 | 움직임 | 안드로이드 신체 활동 권한 창. 다시 물을 수 없으면 설정으로 이동합니다. |
 | 배터리 | 배터리 제한 없음을 누르면 시스템 팝업이 바로 열립니다. 스위치는 직접 고릅니다. |
 | 카메라 | 초대 QR을 읽을 때만. 허용을 누르면 카메라 권한 창이 열리고, 다시 물을 수 없으면 설정으로 갑니다. 스캔이 끝나면 끄고, 마이크와 전화번호는 읽지 않습니다. |
@@ -94,9 +94,9 @@ npm run dev
 
 ## 안드로이드 APK
 
-받는 곳: https://github.com/jadegun1124/umap/releases/download/v1.34.0/kinnex-v1.34.0.apk
+받는 곳: https://github.com/jadegun1124/umap/releases/download/v1.35.0/kinnex-v1.35.0.apk
 
-`main` 푸시마다 `Build Android APK (Kinnex)` 워크플로가 웹을 빌드하고 `dist` 를 안드로이드 에셋으로 복사한 뒤 `assembleRelease` 로 APK를 만듭니다. 서명은 `android/app/umap-sideload.keystore` 이고 SHA-1은 `00:57:37:35:22:70:B8:4C:7F:B6:01:61:29:BD:A9:A3:CD:09:35:0C` 입니다. 결과 파일은 GitHub Release `v1.34.0`에 올립니다. 앱 `versionName`은 `1.34.0`, `versionCode`는 38입니다. Play 스토어 트랙은 없습니다.
+`main` 푸시마다 `Build Android APK (Kinnex)` 워크플로가 웹을 빌드하고 `dist` 를 안드로이드 에셋으로 복사한 뒤 `assembleRelease` 로 APK를 만듭니다. 서명은 `android/app/umap-sideload.keystore` 이고 SHA-1은 `00:57:37:35:22:70:B8:4C:7F:B6:01:61:29:BD:A9:A3:CD:09:35:0C` 입니다. 결과 파일은 GitHub Release `v1.35.0`에 올립니다. 앱 `versionName`은 `1.35.0`, `versionCode`는 39입니다. Play 스토어 트랙은 없습니다.
 
 1.16.0까지 그 빌드는 러너마다 새로 만든 디버그 키로 서명했습니다. 패키지가 `kr.co.umap.tracker`여도 인증서가 다르면 안드로이드는 덮어쓰기를 거절해서, 지우고 다시 깔아야 했습니다. 1.17.0부터 debug와 release는 저장소의 `android/app/umap-sideload.keystore`(별칭 `umap-sideload`)로 서명합니다. 비밀번호는 `android/app/build.gradle`에 있습니다. 인증서 SHA-256은 `4A:15:08:0F:72:C3:87:D1:E8:50:A8:DE:5A:89:34:9A:B4:1A:48:0D:C5:97:71:AB:22:9C:85:44:C8:61:7A:6C`입니다. 이 키는 가족 폰에 직접 설치하는 사이드로드 전용이고, Play 앱 서명 키가 아닙니다.
 
@@ -121,7 +121,7 @@ npm run dev
 
 1. [Naver Developers](https://developers.naver.com/apps/#/register) → 애플리케이션 등록 → 사용 API **네아로(네이버 로그인)**.
 2. 로그인 오픈 API 서비스 환경 **Android**. 패키지 이름 `kr.co.umap.tracker`.
-3. 다운로드 URL `https://github.com/jadegun1124/umap/releases/download/v1.34.0/kinnex-v1.34.0.apk`.
+3. 다운로드 URL `https://github.com/jadegun1124/umap/releases/download/v1.35.0/kinnex-v1.35.0.apk`.
 4. Callback URL은 `https://umap-family-sync.umap-jadegun.workers.dev/v1/naver/callback` 입니다. Worker가 그 주소를 `kinnex://naver` 로 돌려 앱이 인가 코드를 받습니다. 웹은 `https://jadegun1124.github.io/kinnex/` 와 `http://localhost:5173/` 입니다.
 5. Client ID `dQCiRLIzbNkDG6ULiroD` 는 공개 값이라 앱과 Worker `NAVER_CLIENT_ID`에 들어 있습니다. `VITE_NAVER_CLIENT_ID`가 있으면 그 값이 우선입니다.
 6. Client Secret은 `npx wrangler secret put NAVER_CLIENT_SECRET`으로만 Worker에 넣습니다. 앱, 저장소, APK에 넣지 않습니다. 비밀이 없으면 Worker는 네이버 로그인을 거절하고 `NAVER_CLIENT_SECRET`이 없다고 알립니다.
@@ -138,7 +138,7 @@ npm run dev
 
 ## 다른 폰과 위치 나누기
 
-초대를 수락하고 **위치 공유 허용**을 누른 뒤에만 좌표가 나갑니다. 허용 전에는 핀이 없고, 공유를 끄거나 연결을 끊으면 좌표를 지운 상태가 전달되어 가족 지도의 핀이 사라집니다. 전화번호는 이 동기화에 쓰지 않습니다.
+초대를 만들 때와 받을 때 **위치 공유 허용**을 묻습니다. 이미 공유 중이면 다시 묻지 않고 그 방에도 바로 나갑니다. 허용하면 지금 공유가 시작되고 앱을 다시 열어도 유지됩니다. 나중에를 고르면 내 위치는 나가지 않고, 가족 목록에서 다시 허용할 수 있습니다. 메뉴에는 위치 공유 항목이 없습니다. 전화번호는 이 동기화에 쓰지 않습니다.
 
 가족 지도는 초대 코드와 이름으로 핀을 맞춥니다. 코드가 같고 이름이 같거나, 그 코드의 구성원이 한 명이면 붙습니다. 이 맞추기는 `apply-shared-place` 그대로입니다.
 

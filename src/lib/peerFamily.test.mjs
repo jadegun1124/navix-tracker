@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { isSelfEchoPlace, mergePeerSessions, rosterMembers } from './peerFamily.mjs';
+import { isSelfEchoPlace, mergePeerSessions, mergedShareSelf, rosterMembers } from './peerFamily.mjs';
 
 test('admin and managed snapshots become one family without a second 관리자', () => {
   const profile = { id: 'local-abc', name: '엄마' };
@@ -53,6 +53,18 @@ test('admin and managed snapshots become one family without a second 관리자',
   assert.equal(rosterMembers(merged.members, profile.id, merged.inviteCode, profile.name).some((member) => member.id === 'm-1'), true);
   assert.equal(isSelfEchoPlace({ code: '10001', audience: 'family', memberId: 'local-abc', name: '엄마' }, 'local-abc', '10001'), true);
   assert.equal(isSelfEchoPlace({ code: '10001', audience: 'family', memberId: 'local-other', name: '아빠' }, 'local-abc', '10001'), false);
+});
+
+test('a newer explicit decline stays off when an older copy was sharing', () => {
+  const older = { savedAt: 1, shareSelfWithFamily: true, guardians: [{ code: '10001', share: 'allowed' }] };
+  const newer = { savedAt: 2, shareSelfWithFamily: false, guardians: [] };
+  assert.equal(mergedShareSelf([older, newer], []), false);
+  const declined = mergePeerSessions([
+    { ...older, stage: 'map', profile: { id: 'local-abc', name: '나' }, inviteCode: '10001', members: [], permissions: { completed: true } },
+    { ...newer, stage: 'map', profile: { id: 'local-abc', name: '나' }, inviteCode: '10001', members: [], permissions: { completed: true } },
+  ]);
+  assert.equal(declined.shareSelfWithFamily, false);
+  assert.equal(declined.guardians.some((link) => link.share === 'allowed'), false);
 });
 
 test('a newer copy of the same person replaces the older row', () => {

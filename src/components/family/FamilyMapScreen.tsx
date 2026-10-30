@@ -51,6 +51,7 @@ export function FamilyMapScreen() {
   const [placingHome, setPlacingHome] = useState(false);
   const mapRef = useRef<StreetMapHandle>(null);
   const [sheet, setSheet] = useState<'invite' | 'accept' | 'add' | 'today' | null>(state.pendingInvite ? 'accept' : null);
+  const [shareAsk, setShareAsk] = useState(false);
   const [confirm, setConfirm] = useState<{ kind: 'remove' | 'leave' | 'delete-room' | 'logout' | 'delete-account'; id: string; name: string } | null>(null);
   const [accountBusy, setAccountBusy] = useState(false);
   const [incoming, setIncoming] = useState<FamilyAlert | null>(null);
@@ -696,6 +697,10 @@ export function FamilyMapScreen() {
     void askBattery().then((result) => setSettingsNote(result.note));
   };
   useEffect(() => consumeAndroidBack(() => {
+    if (shareAsk) {
+      setShareAsk(false);
+      return true;
+    }
     if (alwaysSetup) {
       setAlwaysSetup(false);
       return true;
@@ -763,7 +768,7 @@ export function FamilyMapScreen() {
       return true;
     }
     return false;
-  }), [adminSettings, alertsOpen, alwaysGuide, alwaysSetup, confirm, dayPicker, detailId, dm, keepPrompt, managedSettings, menuOpen, motionOpen, placingHome, profileOpen, recordId, sheet]);
+  }), [adminSettings, alertsOpen, alwaysGuide, alwaysSetup, confirm, dayPicker, detailId, dm, keepPrompt, managedSettings, menuOpen, motionOpen, placingHome, profileOpen, recordId, shareAsk, sheet]);
   const people = rosterMembers(state.members, state.profile?.id, state.inviteCode, state.profile?.name);
   const extraChats = guardianThreads(state).filter((thread) => chatTick >= 0 || thread.peer);
 
@@ -1008,6 +1013,16 @@ export function FamilyMapScreen() {
               <h2 className="text-lg font-black">우리 가족</h2>
               <p className="text-[11px] font-semibold text-slate-400">한 번 누르면 지도에서 보고, 한 번 더 누르면 기록을 봅니다</p>
             </div>
+            {!state.shareSelfWithFamily && (people.some((member) => member.id !== 'self') || state.guardians.length > 0) && (
+              <button
+                type="button"
+                onClick={() => setShareAsk(true)}
+                className="mb-2 w-full rounded-2xl bg-amber-50 px-3 py-3 text-left"
+              >
+                <span className="block text-sm font-black text-slate-900">내 위치는 아직 가족에게 나가지 않습니다</span>
+                <span className="mt-1 block text-xs font-semibold leading-5 text-slate-600">위치 공유 허용을 누르면 지금 바로 공유가 시작되고, 앱을 다시 열어도 유지됩니다.</span>
+              </button>
+            )}
             <div className="max-h-52 overflow-y-auto">
               {people.map((member) => {
                 const thread = directThreadFor(state, member);
@@ -1138,6 +1153,8 @@ export function FamilyMapScreen() {
             senderName={state.profile?.name || ''}
             onClose={() => setSheet(null)}
             onCreate={(name) => family.addMember(name, state.inviteCode)}
+            sharing={state.shareSelfWithFamily}
+            onAllowShare={() => family.setShareSelf(true)}
           />
         )}
         {sheet === 'accept' && (
@@ -1150,7 +1167,8 @@ export function FamilyMapScreen() {
               setSheet(null);
             }}
             onAccept={(label, code, syncToken, rosterName, adminName) => family.acceptInvite(label, code, syncToken, rosterName, adminName)}
-            onShare={(code, share) => family.setGuardianShare(code, share)}
+            alreadySharing={state.shareSelfWithFamily}
+            onShare={() => family.setShareSelf(true)}
           />
         )}
         {keepPrompt !== 'none' && !state.backgroundKeepAlive && (
@@ -1212,8 +1230,6 @@ export function FamilyMapScreen() {
             photo={state.profile?.photo}
             home={state.home}
             alertHint={unreadAlerts ? '새 알림이 있습니다' : '들어오고 나간 기록'}
-            shareSelf={state.shareSelfWithFamily}
-            shareNote={state.shareSelfWithFamily ? null : tracking.familyShareNote}
             onProfile={() => setProfileOpen(true)}
             onClose={() => {
               setProfileOpen(false);
@@ -1240,9 +1256,6 @@ export function FamilyMapScreen() {
               setMenuOpen(false);
               setAdminSettings(false);
               setConfirm({ kind: 'delete-room', id: 'room', name: '가족 방' });
-            }}
-            onToggleShare={() => {
-              if (!state.shareSelfWithFamily) family.setShareSelf(true);
             }}
           />
         )}
@@ -1322,17 +1335,7 @@ export function FamilyMapScreen() {
             <p className="text-sm leading-6 text-slate-500">가족은 같은 방에서 위치를 나눕니다. 위치 유지를 켠 뒤에는 이 화면에서 끄지 않습니다.</p>
             <AppVersionLine />
             <RecoveryCodePanel />
-            {!state.shareSelfWithFamily && (
-              <button
-                type="button"
-                onClick={() => family.setShareSelf(true)}
-                className="mt-4 w-full rounded-2xl bg-slate-50 px-3 py-3 text-left text-xs font-bold text-slate-600"
-              >
-                내 위치를 가족에게 공유
-                {tracking.familyShareNote && <span className="mt-1 block font-semibold text-amber-700">{tracking.familyShareNote}</span>}
-              </button>
-            )}
-            <div className={state.shareSelfWithFamily ? 'mt-3' : ''}>
+            <div className="mt-3">
               <AlwaysAllowNotice
                 locationMode={state.permissions.locationMode}
                 keepAlive={state.backgroundKeepAlive}
@@ -1508,6 +1511,27 @@ export function FamilyMapScreen() {
             }}
           />
         )}
+        {shareAsk && (
+          <div className="absolute inset-0 z-[70] flex items-end bg-slate-900/40" role="dialog" aria-modal="true" aria-labelledby="share-consent-title">
+            <div className="w-full rounded-t-3xl bg-white px-5 pb-8 pt-5">
+              <h2 id="share-consent-title" className="text-lg font-black">위치 공유 허용</h2>
+              <p className="mt-2 text-sm font-semibold leading-6 text-slate-600">이 가족과 내 위치를 나눌까요? 허용하면 지금 바로 공유가 시작되고, 앱을 다시 열어도 유지됩니다. 나중에를 고르면 내 위치는 나가지 않습니다.</p>
+              <button
+                type="button"
+                onClick={() => {
+                  family.setShareSelf(true);
+                  setShareAsk(false);
+                }}
+                className="mt-5 w-full rounded-full bg-[#0084FF] py-3.5 text-base font-black text-white"
+              >
+                위치 공유 허용
+              </button>
+              <button type="button" onClick={() => setShareAsk(false)} className="mt-2 w-full py-3 text-sm font-bold text-slate-500">
+                나중에
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1647,7 +1671,6 @@ function ManagedMenu({
   photo,
   home,
   alertHint,
-  guardians,
   onProfile,
   onClose,
   onHome,
@@ -1657,13 +1680,11 @@ function ManagedMenu({
   onInvite,
   onSettings,
   onAlwaysGuide,
-  onToggleShare,
 }: {
   name: string;
   photo?: string;
   home: HomeZone | null;
   alertHint: string;
-  guardians: GuardianLink[];
   onProfile: () => void;
   onClose: () => void;
   onHome: () => void;
@@ -1673,7 +1694,6 @@ function ManagedMenu({
   onInvite: () => void;
   onSettings: () => void;
   onAlwaysGuide: () => void;
-  onToggleShare: (link: GuardianLink) => void;
 }) {
   return (
     <div className="absolute inset-0 z-50 flex flex-col bg-[#f2f4f7]">
@@ -1700,29 +1720,6 @@ function ManagedMenu({
           <MenuRow icon={<UserPlus className="h-4 w-4" />} label="초대 수락" hint="관리자에게 받은 코드" onClick={onInvite} />
           <MenuRow icon={<MapPin className="h-4 w-4" />} label="항상 허용 방법" hint="앱을 닫아도 위치를 보내기" onClick={onAlwaysGuide} />
         </div>
-        {guardians.length > 0 && (
-          <div className="mt-4 overflow-hidden rounded-2xl bg-white shadow-sm">
-            {guardians.map((link) => (
-              <button
-                key={link.id}
-                type="button"
-                onClick={() => onToggleShare(link)}
-                className="flex w-full items-center gap-3 border-t border-slate-100 px-4 py-3.5 text-left first:border-t-0"
-              >
-                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-700">
-                  <MapPin className="h-4 w-4" />
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm font-bold">{link.label}</span>
-                  <span className="block text-xs text-slate-400">위치 공유</span>
-                </span>
-                <span className={`text-xs font-bold ${link.share === 'allowed' ? 'text-[#0084FF]' : 'text-slate-400'}`}>
-                  {link.share === 'allowed' ? '공유 중' : '공유 안 함'}
-                </span>
-              </button>
-            ))}
-          </div>
-        )}
         <div className="mt-4 overflow-hidden rounded-2xl bg-white shadow-sm">
           <MenuRow icon={<Settings className="h-4 w-4" />} label="설정" hint="위치 권한" onClick={onSettings} />
         </div>
@@ -1736,8 +1733,6 @@ function AdminMenu({
   photo,
   home,
   alertHint,
-  shareSelf,
-  shareNote,
   onProfile,
   onClose,
   onHome,
@@ -1748,14 +1743,11 @@ function AdminMenu({
   onAlwaysGuide,
   onAcceptInvite,
   onLeaveFamily,
-  onToggleShare,
 }: {
   name: string;
   photo?: string;
   home: HomeZone | null;
   alertHint: string;
-  shareSelf: boolean;
-  shareNote: string | null;
   onProfile: () => void;
   onClose: () => void;
   onHome: () => void;
@@ -1766,7 +1758,6 @@ function AdminMenu({
   onAlwaysGuide: () => void;
   onAcceptInvite: () => void;
   onLeaveFamily: () => void;
-  onToggleShare: () => void;
 }) {
   return (
     <div className="absolute inset-0 z-50 flex flex-col bg-[#f2f4f7]">
@@ -1793,20 +1784,6 @@ function AdminMenu({
           <MenuRow icon={<MapPin className="h-4 w-4" />} label="항상 허용 방법" hint="앱을 닫아도 위치를 보내기" onClick={onAlwaysGuide} />
           <MenuRow icon={<UserPlus className="h-4 w-4" />} label="초대 수락" hint="가족에게 받은 코드" onClick={onAcceptInvite} />
         </div>
-        {!shareSelf && (
-          <div className="mt-4 overflow-hidden rounded-2xl bg-white shadow-sm">
-            <button type="button" onClick={onToggleShare} className="flex w-full items-center gap-3 px-4 py-3.5 text-left">
-              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-700">
-                <MapPin className="h-4 w-4" />
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="block text-sm font-bold">내 위치를 가족에게 공유</span>
-                <span className="block truncate text-xs text-slate-400">{shareNote || '아직 허용하지 않았습니다'}</span>
-              </span>
-              <span className="text-xs font-bold text-slate-400">허용</span>
-            </button>
-          </div>
-        )}
         <div className="mt-4 overflow-hidden rounded-2xl bg-white shadow-sm">
           <MenuRow icon={<Settings className="h-4 w-4" />} label="설정" hint="위치 권한" onClick={onSettings} />
           <MenuRow icon={<X className="h-4 w-4" />} label="가족 방 지우기" hint="이 폰에서 나가고 동기화를 멈춥니다" onClick={onLeaveFamily} />
@@ -2104,6 +2081,8 @@ function AdminInviteSheet({
   readKey,
   home,
   senderName,
+  sharing,
+  onAllowShare,
   onClose,
   onCreate,
 }: {
@@ -2112,11 +2091,14 @@ function AdminInviteSheet({
   readKey: string;
   home: HomeZone | null;
   senderName: string;
+  sharing: boolean;
+  onAllowShare: () => void;
   onClose: () => void;
   onCreate: (name: string) => void;
 }) {
   const [name, setName] = useState('');
   const [sentName, setSentName] = useState('');
+  const [declinedShare, setDeclinedShare] = useState(false);
   const [copied, setCopied] = useState('');
   const [token, setToken] = useState('');
   const syncReady = familySyncConfigured();
@@ -2161,9 +2143,33 @@ function AdminInviteSheet({
     );
   }
 
+  if (!sharing && !declinedShare) {
+    return (
+      <Sheet title="위치 공유 허용" onClose={onClose}>
+        <p className="text-sm leading-6 text-slate-600">
+          {sentName} 님과 내 위치를 나눌까요? 허용하면 지금 바로 공유가 시작되고, 앱을 다시 열어도 유지됩니다. 나중에를 고르면 내 위치는 나가지 않습니다.
+        </p>
+        <button
+          type="button"
+          onClick={onAllowShare}
+          className="mt-5 w-full rounded-full bg-[#0084FF] py-3.5 text-base font-black text-white"
+        >
+          위치 공유 허용
+        </button>
+        <button type="button" onClick={() => setDeclinedShare(true)} className="mt-2 w-full py-3 text-sm font-bold text-slate-500">
+          나중에
+        </button>
+      </Sheet>
+    );
+  }
+
   return (
     <Sheet title="2. 코드를 보내세요" onClose={onClose}>
-      <p className="text-sm leading-6 text-slate-500">{sentName} 님 폰에서 링크를 열고 가족으로 참여합니다. 수락 다음에 위치 공유를 따로 묻습니다. 전화번호로는 위치를 찾지 않습니다.</p>
+      <p className="text-sm leading-6 text-slate-500">
+        {sentName} 님 폰에서 링크를 열고 가족으로 참여합니다.
+        {sharing ? ' 내 위치는 이미 이 가족에게 나가고 있습니다.' : ' 내 위치는 아직 나가지 않습니다. 가족 목록에서 위치 공유를 허용할 수 있습니다.'}
+        {' '}전화번호로는 위치를 찾지 않습니다.
+      </p>
       <p className="mt-4 text-center text-4xl font-black tracking-[0.25em] text-[#0084FF]">{code}</p>
       {token && <InviteQrImage text={buildInviteLink(code, home, token, sentName, senderName)} />}
       {token && <p className="mt-2 text-center text-[11px] leading-5 text-slate-400">QR은 초대 링크와 같습니다. 위치를 읽는 키는 들어 있지 않고, 전화번호도 없습니다.</p>}
@@ -2222,6 +2228,7 @@ function ManagedInviteSheet({
   pending,
   pendingSyncToken,
   guardians,
+  alreadySharing,
   onClose,
   onAccept,
   onShare,
@@ -2229,9 +2236,10 @@ function ManagedInviteSheet({
   pending: string | null;
   pendingSyncToken: string | null;
   guardians: GuardianLink[];
+  alreadySharing: boolean;
   onClose: () => void;
   onAccept: (label: string, code: string, syncToken: string | null, rosterName: string | null, adminName: string | null) => void;
-  onShare: (code: string, share: 'allowed' | 'revoked') => void;
+  onShare: () => void;
 }) {
   const [code, setCode] = useState(pending ?? '');
   const [syncToken, setSyncToken] = useState(pendingSyncToken ?? '');
@@ -2291,6 +2299,10 @@ function ManagedInviteSheet({
             onClick={() => {
               const token = splitSyncToken(syncToken) ? syncToken : null;
               onAccept(label, code, token, rosterName.trim() || null, adminName.trim() || null);
+              if (alreadySharing) {
+                onClose();
+                return;
+              }
               setJoinedCode(code);
               setStep('share');
             }}
@@ -2301,14 +2313,14 @@ function ManagedInviteSheet({
         </>
       ) : (
         <>
-          <p className="text-sm leading-6 text-slate-500">
-            {label.trim() || '관리자'} 님에게 내 위치를 보낼까요? 허용하기 전에는 상대 지도에 표시되지 않습니다. 가족 목록에서 언제든 끌 수 있습니다.
+          <p className="text-sm leading-6 text-slate-600">
+            {label.trim() || '가족'} 님과 내 위치를 나눌까요? 허용하면 지금 바로 공유가 시작되고, 앱을 다시 열어도 유지됩니다. 나중에를 고르면 이 연결은 아직 내 위치를 받지 않습니다. 가족 목록에서 다시 허용할 수 있습니다.
           </p>
           <button
             type="button"
             onClick={() => {
               if (!joined) return;
-              onShare(joined.code, 'allowed');
+              onShare();
               onClose();
             }}
             disabled={!joined}
@@ -2316,7 +2328,7 @@ function ManagedInviteSheet({
           >
             위치 공유 허용
           </button>
-          <button type="button" onClick={onClose} className="mt-2 w-full py-2 text-sm font-bold text-slate-400">
+          <button type="button" onClick={onClose} className="mt-2 w-full py-3 text-sm font-bold text-slate-500">
             나중에
           </button>
         </>

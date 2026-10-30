@@ -10,6 +10,7 @@ import { hiddenKeysForMember, placeHidden } from '../../lib/familyRoom.mjs';
 import { bindPlaceToMember, placeIsSelf, placeMemberId } from '../../lib/placeBinding.mjs';
 import { hideLeftPublishers, sharedPlaceStopsReporting } from '../../lib/memberPresence.mjs';
 import { familyPinId, isMemberId, moveKeyed } from '../../lib/sharedIdentity.mjs';
+import { absorbPlaceholderMembers } from '../../lib/memberRoster.mjs';
 import { HISTORY_DAYS, JOURNEY_POINT_CAP, TRAIL_POINT_CAP, fixShowsRide, isWithinHistory, journeysWithinHistory, labelJourneyPlace, lastTravelAt, mergeJourneyLists, seoulDayKey, settleTrailPoint, stayLabelDwellMs, storedTrackAfterArchive, tracksWithinHistory, trimJourneyList, visitsWithinHistory, type JourneyRecord } from '../../lib/tracking.mjs';
 import type { DayStop } from '../../lib/tracking.mjs';
 import type { SharedPlace, SharedProfile } from '../../services/familyShare';
@@ -575,7 +576,7 @@ function load(): Session {
       : loaded.permissions.completed
         ? 'map'
         : (loaded.stage === 'mode' ? 'survey' : loaded.stage);
-    return archiveJourneys({
+    return collapseRoster(archiveJourneys({
       ...loaded,
       profile,
       phone: '',
@@ -585,7 +586,7 @@ function load(): Session {
       tracks: tracksWithinHistory(loaded.tracks, now),
       visits: visitsWithinHistory(loaded.visits, now),
       journeys: journeysWithinHistory(loaded.journeys ?? {}, now),
-    }, now);
+    }, now));
   } catch {
     return { ...fresh(), pendingSyncToken };
   }
@@ -607,6 +608,7 @@ type Action =
   | { type: 'save-phone'; phone: string }
   | { type: 'skip-phone' }
   | { type: 'finish-permissions'; permissions: PermissionState }
+  | { type: 'note-location'; locationMode: PermissionState['locationMode']; accuracy: PermissionState['accuracy'] }
   | { type: 'set-tab'; tab: FamilyTab }
   | { type: 'save-home'; home: HomeZone }
   | { type: 'clear-home' }
@@ -647,7 +649,31 @@ function notice(title: string, body: string): FamilyNotice {
   return { id: `n-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, title, body, at: Date.now(), read: false };
 }
 
+function collapseRoster(state: Session, priorNames: Record<string, string> = {}): Session {
+  const { members, moves } = absorbPlaceholderMembers(state.members, priorNames);
+  if (moves.length === 0) return state;
+  let tracks = state.tracks;
+  let visits = state.visits;
+  let journeys = state.journeys ?? {};
+  for (const move of moves) {
+    tracks = moveKeyed(tracks, move.from, move.to);
+    visits = moveKeyed(visits, move.from, move.to);
+    journeys = moveKeyed(journeys, move.from, move.to);
+  }
+  const moved = new Map(moves.map((move) => [move.from, move.to]));
+  const motionNotifyIds: string[] = [];
+  for (const id of state.motionNotifyIds || []) {
+    const next = moved.get(id) || id;
+    if (!motionNotifyIds.includes(next)) motionNotifyIds.push(next);
+  }
+  return { ...state, members, tracks, visits, journeys, motionNotifyIds };
+}
+
 function reducer(state: Session, action: Action): Session {
+  return collapseRoster(reduceSession(state, action));
+}
+
+function reduceSession(state: Session, action: Action): Session {
   switch (action.type) {
     case 'splash-done':
       if (!state.profile) return { ...state, stage: 'login' };
@@ -707,6 +733,13 @@ function reducer(state: Session, action: Action): Session {
         shareSelfWithFamily: true,
         guardians: state.guardians.map((link) => ({ ...link, share: 'allowed' as const })),
       };
+    case 'note-location': {
+      if (state.permissions.locationMode === action.locationMode && state.permissions.accuracy === action.accuracy) return state;
+      return {
+        ...state,
+        permissions: { ...state.permissions, locationMode: action.locationMode, accuracy: action.accuracy },
+      };
+    }
     case 'set-tab':
       return { ...state, tab: action.tab };
     case 'save-home': {
@@ -779,13 +812,16 @@ function reducer(state: Session, action: Action): Session {
         id: `g-${Date.now()}`,
         label,
         code,
-        share: 'accepted',
+        share: state.shareSelfWithFamily ? 'allowed' : 'accepted',
         leaveAlert,
         ...(syncToken ? { syncToken } : {}),
         ...(rosterName ? { rosterName } : {}),
         ...(adminName ? { adminName } : {}),
       };
-      const alertNote = leaveAlert ? ` 위치 공유를 허용한 뒤 집 반경 ${leaveAlert.radiusM}m를 나가면 가족 지도에 알림이 남습니다.` : '';
+      const alertNote = leaveAlert ? ` 집 반경 ${leaveAlert.radiusM}m를 나가면 가족 지도에 알림이 남습니다.` : '';
+      const sharingNote = state.shareSelfWithFamily
+        ? `내 위치 공유는 이미 켜져 있어 이 방에도 바로 나갑니다.${alertNote}`
+        : `내 위치는 아직 나가지 않습니다. 가족 목록에서 위치 공유를 허용하면 바로 시작되고, 앱을 다시 열어도 유지됩니다.${alertNote}`;
       return {
         ...state,
         mode: null,
@@ -793,7 +829,7 @@ function reducer(state: Session, action: Action): Session {
         pendingInvite: null,
         pendingLeaveAlert: null,
         pendingSyncToken: null,
-        notices: [notice('초대를 수락했습니다', `${label} 님의 가족 방에 참여했습니다. 위치를 보내려면 위치 공유를 따로 허용하세요.${alertNote}`), ...state.notices],
+        notices: [notice('초대를 수락했습니다', `${label} 님의 가족 방에 참여했습니다. ${sharingNote}`), ...state.notices],
       };
     }
     case 'set-guardian-share': {
@@ -809,6 +845,7 @@ function reducer(state: Session, action: Action): Session {
       return {
         ...state,
         guardians,
+        shareSelfWithFamily: action.share === 'allowed' ? true : state.shareSelfWithFamily,
         notices: [notice(action.share === 'allowed' ? '위치 공유를 허용했습니다' : '위치 공유를 껐습니다', body), ...state.notices],
       };
     }
@@ -843,10 +880,31 @@ function reducer(state: Session, action: Action): Session {
       if (riding) sample.staying = false;
       const settled = settleTrailPoint(state.tracks.self, sample, at);
       if (settled.decision === 'drop') {
-        if (settled.points === state.tracks.self) return archiveJourneys(state, at);
+        const nextLat = settled.lat;
+        const nextLng = settled.lng;
+        const pinMoved = !!self && nextLat != null && nextLng != null && (self.lat !== nextLat || self.lng !== nextLng);
+        const tracks = tracksWithinHistory(
+          settled.points === state.tracks.self ? state.tracks : { ...state.tracks, self: settled.points },
+          at,
+        );
+        if (!pinMoved && tracks === state.tracks) return archiveJourneys(state, at);
+        const keptPlace = pinMoved ? carryPlace(self, nextLat, nextLng) : self?.place;
         return archiveJourneys({
           ...state,
-          tracks: tracksWithinHistory({ ...state.tracks, self: settled.points }, at),
+          visits: visitsWithinHistory(state.visits, at),
+          tracks,
+          members: pinMoved
+            ? state.members.map((member) => (member.id === 'self'
+              ? {
+                  ...member,
+                  lat: nextLat,
+                  lng: nextLng,
+                  accuracyM: Math.max(1, Math.round(action.accuracyM)),
+                  updatedAt: at,
+                  ...(keptPlace ? { place: keptPlace } : { place: undefined }),
+                }
+              : member))
+            : state.members,
         }, at);
       }
       const tracks = tracksWithinHistory(
@@ -1026,9 +1084,17 @@ function reducer(state: Session, action: Action): Session {
         && !placeHidden(action.code, place, hidden)
       ));
       const current = state.members.filter((member) => member.id.startsWith(prefix));
-      const described = incoming
-        .map((place) => describeFamilyPlace(action.code, place, profiles, current))
-        .filter((item) => item.id && item.memberId);
+      const priorNames: Record<string, string> = {};
+      const byMember = new Map<string, ReturnType<typeof describeFamilyPlace>>();
+      for (const place of incoming) {
+        const item = describeFamilyPlace(action.code, place, profiles, current);
+        if (!item.id || !item.memberId) continue;
+        const prior = typeof place.priorName === 'string' ? place.priorName.trim() : '';
+        if (prior) priorNames[item.memberId] = prior;
+        const prev = byMember.get(item.memberId);
+        if (!prev || place.at >= prev.place.at) byMember.set(item.memberId, item);
+      }
+      const described = [...byMember.values()];
       const unchanged = current.length === described.length && described.every((item) => {
         const member = current.find((entry) => entry.id === item.id || (item.memberId && entry.publisherId === item.memberId));
         return !!member
@@ -1041,7 +1107,7 @@ function reducer(state: Session, action: Action): Session {
           && member.name === item.name
           && (member.photo || '') === (item.photo || '');
       });
-      if (unchanged) return state;
+      if (unchanged) return collapseRoster(state, priorNames);
       let tracks = tracksWithinHistory(state.tracks, now);
       let visits = visitsWithinHistory(state.visits, now);
       let journeys = state.journeys ?? {};
@@ -1079,6 +1145,7 @@ function reducer(state: Session, action: Action): Session {
                 battery: item.battery ?? entry.battery,
                 charging: item.charging ?? entry.charging,
                 updatedAt: place.at,
+                ...(item.name ? { name: item.name } : {}),
                 ...(item.memberId ? { publisherId: item.memberId } : {}),
                 ...(item.photo ? { photo: item.photo } : {}),
                 ...(keptPlace ? { place: keptPlace } : { place: undefined }),
@@ -1115,7 +1182,7 @@ function reducer(state: Session, action: Action): Session {
       for (const member of current) {
         if (!members.some((item) => item.id === member.id)) delete tracks[member.id];
       }
-      return archiveJourneys({ ...state, members, tracks, visits, journeys, trailDay: today }, now);
+      return collapseRoster(archiveJourneys({ ...state, members, tracks, visits, journeys, trailDay: today }, now), priorNames);
     }
     case 'apply-canonical-trails': {
       const selfId = state.profile?.id || '';
@@ -1347,6 +1414,7 @@ interface FamilyApi {
   savePhone: (phone: string) => void;
   skipPhone: () => void;
   finishPermissions: (permissions: PermissionState) => void;
+  noteLocation: (locationMode: PermissionState['locationMode'], accuracy: PermissionState['accuracy']) => void;
   setTab: (tab: FamilyTab) => void;
   saveHome: (home: HomeZone) => void;
   clearHome: () => void;
@@ -1425,6 +1493,7 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
     savePhone: (phone) => dispatch({ type: 'save-phone', phone }),
     skipPhone: () => dispatch({ type: 'skip-phone' }),
     finishPermissions: (permissions) => dispatch({ type: 'finish-permissions', permissions }),
+    noteLocation: (locationMode, accuracy) => dispatch({ type: 'note-location', locationMode, accuracy }),
     setTab: (tab) => dispatch({ type: 'set-tab', tab }),
     saveHome: (home) => dispatch({ type: 'save-home', home }),
     clearHome: () => dispatch({ type: 'clear-home' }),

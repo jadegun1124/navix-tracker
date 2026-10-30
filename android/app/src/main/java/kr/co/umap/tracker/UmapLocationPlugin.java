@@ -4,6 +4,7 @@ import android.annotation.SuppressLint;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.BatteryManager;
@@ -30,8 +31,9 @@ import org.json.JSONObject;
 /**
  * Location keep-alive plus the system prompts the in-app buttons ask for.
  * Nothing here runs until JavaScript calls it after the Korean explanation.
- * Background location is not granted in code: the call opens the system page
- * where the user chooses 항상 허용.
+ * Background location is not flipped in code. Android 11+ opens the location
+ * permission page. Android 10 may show the system background dialog from the
+ * blocking gate. The user chooses 항상 허용.
  */
 @CapacitorPlugin(
     name = "UmapLocation",
@@ -59,6 +61,9 @@ public class UmapLocationPlugin extends Plugin {
     private static final String MANAGE_APP_PERMISSION = "android.intent.action.MANAGE_APP_PERMISSION";
     private static final String MANAGE_APP_PERMISSIONS = "android.intent.action.MANAGE_APP_PERMISSIONS";
     private static final String LOCATION_GROUP = "android.permission-group.LOCATION";
+    private static final String GATE_PREFS = "umap_always_gate";
+    private static final String BACKGROUND_DIALOG_ASKED = "background_dialog_asked";
+    private static final String FINE_DIALOG_ASKED = "fine_dialog_asked";
 
     private PluginCall pendingAlways;
     private boolean leftForSettings;
@@ -196,6 +201,94 @@ public class UmapLocationPlugin extends Plugin {
         if (hasBackground()) location = "always";
         else if (hasForeground()) location = "while-using";
         result.put("location", location);
+        result.put("precise", hasFine());
+        result.put("background", hasBackground());
+        call.resolve(result);
+    }
+
+    /**
+     * Blocking-gate button. Mirrors alwaysAllowGateTarget in alwaysAllowGate.mjs.
+     * Android 10 asks with the system background dialog when it can still appear.
+     * Every other case opens the location permission page.
+     */
+    @PluginMethod
+    public void openAlwaysGate(PluginCall call) {
+        int sdk = Build.VERSION.SDK_INT;
+        boolean foreground = hasForeground();
+        boolean background = hasBackground();
+        boolean precise = hasFine();
+        if (background && precise) {
+            resolveGate(call, false, "none");
+            return;
+        }
+        if (sdk < Build.VERSION_CODES.Q) {
+            if (!precise && fineDialogAskable()) {
+                markFineDialogAsked();
+                requestPermissionForAlias("location", call, "gateForegroundCallback");
+                return;
+            }
+            wantOverlay = false;
+            openAlwaysLocation(call);
+            return;
+        }
+        if (sdk == Build.VERSION_CODES.Q && !background) {
+            if (!foreground && fineDialogAskable()) {
+                markFineDialogAsked();
+                requestPermissionForAlias("location", call, "gateForegroundCallback");
+                return;
+            }
+            if (foreground && backgroundDialogAskable()) {
+                markBackgroundDialogAsked();
+                requestPermissionForAlias("backgroundLocation", call, "gateBackgroundCallback");
+                return;
+            }
+        }
+        wantOverlay = false;
+        openAlwaysLocation(call);
+    }
+
+    @PermissionCallback
+    private void gateForegroundCallback(PluginCall call) {
+        if (Build.VERSION.SDK_INT == Build.VERSION_CODES.Q && hasForeground() && !hasBackground() && backgroundDialogAskable()) {
+            mainHandler.post(() -> {
+                try {
+                    if (call.isReleased()) return;
+                    if (Build.VERSION.SDK_INT != Build.VERSION_CODES.Q || !hasForeground() || hasBackground() || !backgroundDialogAskable()) {
+                        resolveGate(call, true, hasForeground() ? "foreground-dialog" : "none");
+                        return;
+                    }
+                    markBackgroundDialogAsked();
+                    requestPermissionForAlias("backgroundLocation", call, "gateBackgroundCallback");
+                } catch (RuntimeException ignored) {
+                    if (!call.isReleased()) resolveGate(call, false, "none");
+                }
+            });
+            return;
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && hasForeground() && !hasBackground()) {
+            wantOverlay = false;
+            openAlwaysLocation(call);
+            return;
+        }
+        resolveGate(call, true, hasForeground() ? "foreground-dialog" : "none");
+    }
+
+    @PermissionCallback
+    private void gateBackgroundCallback(PluginCall call) {
+        resolveGate(call, true, "background-dialog");
+    }
+
+    private void resolveGate(PluginCall call, boolean opened, String screen) {
+        String location = "denied";
+        if (hasBackground()) location = "always";
+        else if (hasForeground()) location = "while-using";
+        JSObject result = new JSObject();
+        result.put("location", location);
+        result.put("opened", opened);
+        result.put("native", true);
+        result.put("overlay", false);
+        result.put("screen", opened ? screen : "none");
+        result.put("precise", hasFine());
         call.resolve(result);
     }
 
@@ -279,6 +372,7 @@ public class UmapLocationPlugin extends Plugin {
     @Override
     protected void handleOnResume() {
         super.handleOnResume();
+        notifyResume();
         if (pendingOverlay != null && leftForOverlay) {
             long elapsed = SystemClock.uptimeMillis() - overlayOpenedAt;
             if (elapsed < BOUNCE_MS) {
@@ -478,12 +572,49 @@ public class UmapLocationPlugin extends Plugin {
     }
 
     private boolean hasForeground() {
-        return granted(android.Manifest.permission.ACCESS_FINE_LOCATION) || granted(android.Manifest.permission.ACCESS_COARSE_LOCATION);
+        return hasFine() || granted(android.Manifest.permission.ACCESS_COARSE_LOCATION);
+    }
+
+    private boolean hasFine() {
+        return granted(android.Manifest.permission.ACCESS_FINE_LOCATION);
     }
 
     private boolean hasBackground() {
         if (Build.VERSION.SDK_INT < 29) return hasForeground();
         return granted(android.Manifest.permission.ACCESS_BACKGROUND_LOCATION);
+    }
+
+    private SharedPreferences gatePrefs() {
+        return getContext().getSharedPreferences(GATE_PREFS, Context.MODE_PRIVATE);
+    }
+
+    private boolean backgroundDialogAskable() {
+        if (Build.VERSION.SDK_INT != Build.VERSION_CODES.Q) return false;
+        boolean asked = gatePrefs().getBoolean(BACKGROUND_DIALOG_ASKED, false);
+        if (!asked) return true;
+        return shouldShow(android.Manifest.permission.ACCESS_BACKGROUND_LOCATION);
+    }
+
+    private boolean fineDialogAskable() {
+        boolean asked = gatePrefs().getBoolean(FINE_DIALOG_ASKED, false);
+        if (!asked) return true;
+        return shouldShow(android.Manifest.permission.ACCESS_FINE_LOCATION);
+    }
+
+    private void markBackgroundDialogAsked() {
+        gatePrefs().edit().putBoolean(BACKGROUND_DIALOG_ASKED, true).apply();
+    }
+
+    private void markFineDialogAsked() {
+        gatePrefs().edit().putBoolean(FINE_DIALOG_ASKED, true).apply();
+    }
+
+    private void notifyResume() {
+        try {
+            notifyListeners("resume", new JSObject());
+        } catch (RuntimeException ignored) {
+            /* 화면이 아직 없어도 권한 확인은 이어 간다 */
+        }
     }
 
     private boolean canStart(Intent intent) {

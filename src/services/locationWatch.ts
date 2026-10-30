@@ -14,6 +14,7 @@ export function startLocationWatch(options: {
   let timer = 0;
   let last: { lat: number; lng: number; at: number } | null = null;
   let receivedAt = 0;
+  let coarseAt = 0;
 
   const handle = (position: GeolocationPosition) => {
     const speed = position.coords.speed;
@@ -25,6 +26,14 @@ export function startLocationWatch(options: {
       speedMps: typeof speed === 'number' ? speed : null,
     }, { precise: options.precise, now: Date.now() });
     if (!decision.ok) {
+      if (decision.reason === 'accuracy' && options.precise && Date.now() - coarseAt > 15_000) {
+        coarseAt = Date.now();
+        navigator.geolocation.getCurrentPosition(handle, () => {}, {
+          enableHighAccuracy: false,
+          maximumAge: 20_000,
+          timeout: 10_000,
+        });
+      }
       if (Date.now() - receivedAt > 20_000) options.onWaiting(decision.reason);
       return;
     }

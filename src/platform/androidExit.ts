@@ -10,6 +10,7 @@ let showToast: (text: string) => void = () => {};
 declare global {
   interface Window {
     __umapAndroidBack?: () => boolean;
+    __umapAlwaysAllowGate?: boolean;
     UmapAndroid?: { exitApp: () => void; appVersion?: () => string };
   }
 }
@@ -30,6 +31,7 @@ export function consumeAndroidBack(closer: Closer): () => void {
 }
 
 export function handleAndroidBack(): boolean {
+  if (window.__umapAlwaysAllowGate) return true;
   let consumed = false;
   for (let index = closers.length - 1; index >= 0; index -= 1) {
     if (closers[index]()) {

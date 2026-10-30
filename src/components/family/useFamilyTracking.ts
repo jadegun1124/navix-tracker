@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { hasLocation, haversineMeters } from '../../lib/geo';
 import { isSelfEchoPlace } from '../../lib/peerFamily.mjs';
 import { placePriorName } from '../../lib/placeAlias.mjs';
-import { buildDayRecord, liveMotionLabel, stayLabelPoint } from '../../lib/tracking.mjs';
+import { buildDayRecord, labelCoordinate, liveMotionLabel } from '../../lib/tracking.mjs';
 import type { AcceptedFix } from '../../lib/tracking.mjs';
 import { readSharedPlaces, publishSharedPlace, subscribeSharedPlaces, type SharedPlace } from '../../services/familyShare';
 import { familyEndpointAvailable, familySyncUrl, publishProfileRemote, publishTrailRemote, splitSyncToken, startManagedFamilySync, syncTokenFor } from '../../services/familySync';
@@ -34,6 +34,7 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
   const familyRef = useRef(family);
   const onFirstFixRef = useRef(onFirstFix);
   const centered = useRef(false);
+  const nativeFixAt = useRef(0);
   const sharedTokens = useRef<Record<string, string>>({});
   const adminShared = useRef(false);
   const nativeAdminShared = useRef(false);
@@ -140,7 +141,10 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
     return startLocationWatch({
       precise,
       onFix: apply,
-      onWaiting: (reason) => setWaiting(reason ? WAITING_KO[reason] ?? null : null),
+      onWaiting: (reason) => {
+        if (reason && Date.now() - nativeFixAt.current < 30_000) return;
+        setWaiting(reason ? WAITING_KO[reason] ?? null : null);
+      },
     });
   }, [appVisible, nativeKeeps, precise, trackingOn]);
 
@@ -149,6 +153,8 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
     let remove = () => {};
     void umapLocation.addListener('fix', (fix) => {
       const speed = typeof fix.speedMps === 'number' ? fix.speedMps : null;
+      nativeFixAt.current = Date.now();
+      setWaiting(null);
       familyRef.current.updateSelf(fix.lat, fix.lng, fix.accuracyM || 1, speed);
       if (!centered.current) {
         centered.current = true;
@@ -575,11 +581,14 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
         }, 60_000);
         return;
       }
-      const snapped = stayLabelPoint(current.tracks[pending.id], { lat: pending.lat, lng: pending.lng }, pending.moving)
-        || { lat: pending.lat, lng: pending.lng };
-      const key = placeGridKey(snapped.lat, snapped.lng);
+      const here = labelCoordinate(
+        current.tracks[pending.id],
+        { lat: pending.lat, lng: pending.lng, accuracyM: pending.accuracyM },
+        pending.moving,
+      ) || { lat: pending.lat, lng: pending.lng };
+      const key = placeGridKey(here.lat, here.lng);
       const id = pending.id;
-      if (home && id === 'self' && haversineMeters({ lat: snapped.lat, lng: snapped.lng }, home) <= home.radiusM) {
+      if (home && id === 'self' && haversineMeters(here, home) <= home.radiusM) {
         placeKeys.current[id] = key;
         const label = home.label || '우리 집';
         if (pending.place !== label) familyRef.current.setMemberPlace(id, label);
@@ -597,12 +606,12 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
         if (cleanPlace(pending.place) !== short) familyRef.current.setMemberPlace(id, short);
         else step();
       };
-      const cached = cachedAddress(snapped.lat, snapped.lng);
+      const cached = cachedAddress(here.lat, here.lng);
       if (cached) {
         apply(cached);
         return;
       }
-      void reverseGeocodeCached(snapped.lat, snapped.lng).then(apply);
+      void reverseGeocodeCached(here.lat, here.lng).then(apply);
     };
     step();
     return () => {

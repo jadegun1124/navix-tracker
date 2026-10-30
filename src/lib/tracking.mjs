@@ -50,7 +50,7 @@ export const FIX_PRECISE_ACCURACY_M = 80;
 export const FIX_APPROXIMATE_ACCURACY_M = 400;
 export const FIX_MAX_JUMP_MPS = 350;
 export const FIX_JUMP_WINDOW_MS = 180_000;
-/** A later fix worse than this does not move the pin or the line. */
+/** The drawn trail drops a point worse than this. The live pin still accepts it up to FIX_PRECISE_ACCURACY_M. */
 export const TRAIL_POOR_ACCURACY_M = 40;
 /** Reported speed under this, while still, is not a new vertex. */
 export const TRAIL_STAY_SPEED_MPS = 0.8;
@@ -630,7 +630,9 @@ function resolvedTrailDecision(points, point) {
  * Live pin and the coordinate published to the family.
  * Holds only inside the stay bubble. Bus, subway, and a sparse GPS jump past that
  * bubble move the pin even when the trail sampler still drops the vertex.
- * A dropped sample (poor accuracy, impossible jump) does not move the pin.
+ * A dropped sample that is only an indoor-quality reading (worse than the trail
+ * gate, still within FIX_PRECISE_ACCURACY_M) moves the pin. An impossible jump
+ * does not.
  */
 export function liveCoordinate(anchor, point) {
   if (!point || !Number.isFinite(point.lat) || !Number.isFinite(point.lng)) {
@@ -642,7 +644,13 @@ export function liveCoordinate(anchor, point) {
   if (!anchor || !Number.isFinite(anchor.lat) || !Number.isFinite(anchor.lng)) return point;
   const decision = trailDecision(anchor, point);
   if (decision === 'keep') return point;
-  if (decision === 'drop') return { ...point, lat: anchor.lat, lng: anchor.lng };
+  if (decision === 'drop') {
+    const accuracy = positiveMeters(point.accuracyM);
+    if (accuracy > TRAIL_POOR_ACCURACY_M && accuracy <= FIX_PRECISE_ACCURACY_M && !isImpossibleJump(anchor, point)) {
+      return point;
+    }
+    return { ...point, lat: anchor.lat, lng: anchor.lng };
+  }
   if (haversineMeters(anchor, point) <= staySnapGate(anchor, point)) {
     return { ...point, lat: anchor.lat, lng: anchor.lng };
   }
@@ -828,6 +836,28 @@ function stayCentroid(cluster) {
     speedMps: 0,
     staying: true,
   };
+}
+
+/**
+ * Place-name coordinate. A stay uses the latest fix accurate enough for the
+ * trail, not the average of the cluster and not a later indoor hop.
+ * While moving, the current pin is the coordinate.
+ */
+export function labelCoordinate(points, fallback, moving) {
+  const lat = Number(fallback?.lat);
+  const lng = Number(fallback?.lng);
+  const pin = Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : null;
+  if (moving === true) return pin;
+  const source = Array.isArray(points) ? points : [];
+  for (let index = source.length - 1; index >= 0; index -= 1) {
+    const point = source[index];
+    if (!point || !Number.isFinite(point.lat) || !Number.isFinite(point.lng)) continue;
+    if (point.stayEnd === true) return { lat: point.lat, lng: point.lng };
+    if (point.staying !== true && index === source.length - 1) break;
+    const accuracy = positiveMeters(point.accuracyM);
+    if (accuracy > 0 && accuracy <= TRAIL_POOR_ACCURACY_M) return { lat: point.lat, lng: point.lng };
+  }
+  return pin;
 }
 
 /** GPS jitter snaps to the stay-cluster centroid so a pin does not jump to the next POI. */
@@ -1312,7 +1342,6 @@ export function acceptFix(previous, reading, options = {}) {
     accuracy = maxAccuracy;
   }
   if (accuracy > maxAccuracy) return { ok: false, reason: 'accuracy' };
-  if (previous && accuracy > TRAIL_POOR_ACCURACY_M) return { ok: false, reason: 'accuracy' };
   if (previous && Number.isFinite(previous.at)) {
     const dtMs = at - previous.at;
     if (dtMs > 0 && dtMs <= FIX_JUMP_WINDOW_MS) {
