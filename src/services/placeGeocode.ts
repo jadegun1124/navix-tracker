@@ -1,5 +1,6 @@
 export {
   cachedAddress,
+  geocodeWasSettled,
   formatPrecisePlace,
   nominatimAddress,
   NOMINATIM_USER_AGENT,

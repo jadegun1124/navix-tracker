@@ -104,10 +104,20 @@ async function request(path: string, init: RequestInit): Promise<Response> {
   return fetch(`${base}${path}`, { ...init, signal: timeoutSignal(8000), cache: 'no-store' });
 }
 
-function classify(response: Response) {
-  if (response.ok) setPhase('live');
+async function noteStatus(response: Response): Promise<string> {
+  let error = '';
+  if (response.status === 401 || response.status === 403) {
+    try {
+      const body = await response.clone().json() as { error?: unknown };
+      if (body && typeof body.error === 'string') error = body.error;
+    } catch {
+      error = '';
+    }
+  }
+  if (response.ok || error === 'member') setPhase('live');
   else if (response.status === 401 || response.status === 403) setPhase('rejected');
   else setPhase('down');
+  return error;
 }
 
 let placeQueue: { code: string; token: string; body: Record<string, unknown>; profileKey: string } | null = null;
@@ -194,7 +204,7 @@ export async function publishChatRemote(
       headers: { 'content-type': 'application/json', 'x-umap-sync-key': syncToken },
       body: JSON.stringify({ id: message.id, from: message.from, to: message.to, text: message.text, at: message.at }),
     });
-    classify(response);
+    await noteStatus(response);
     if (response.ok) return 'ok';
     return 'local';
   } catch {
@@ -217,7 +227,7 @@ export async function fetchDirectChat(
       headers: { 'x-umap-sync-key': syncToken },
     });
     if (response.status === 404) return null;
-    classify(response);
+    await noteStatus(response);
     if (!response.ok) return null;
     return readChatMessages(await response.json());
   } catch {
@@ -238,7 +248,7 @@ export async function fetchMyDirectThreads(
       headers: { 'x-umap-sync-key': syncToken },
     });
     if (response.status === 404) return null;
-    classify(response);
+    await noteStatus(response);
     if (!response.ok) return null;
     const body: unknown = await response.json();
     if (!body || typeof body !== 'object' || !Array.isArray((body as { threads?: unknown }).threads)) return [];
@@ -303,7 +313,7 @@ export async function revokeFamilyPlace(link: {
   if (link.profileKey) headers['x-umap-profile-key'] = link.profileKey;
   try {
     const response = await request(`/v1/rooms/${link.code}/place`, { method: 'PUT', headers, body: JSON.stringify(body) });
-    classify(response);
+    await noteStatus(response);
   } catch {
     if (familySyncUrl()) setPhase('down');
   }
@@ -317,7 +327,7 @@ export async function deleteFamilyRoomRemote(code: string, writeKey: string, rea
       method: 'DELETE',
       headers: { 'x-umap-sync-key': token, 'x-umap-read-key': readKey },
     });
-    classify(response);
+    await noteStatus(response);
     return response.ok ? 'ok' : 'failed';
   } catch {
     if (familySyncUrl()) setPhase('down');
@@ -339,7 +349,7 @@ async function sendQueued(path: string, token: string, body: unknown, drop: () =
     return true;
   }
   const optionalMissing = optionalRouteMissing(path, response.status);
-  if (!optionalMissing) classify(response);
+  if (!optionalMissing) await noteStatus(response);
   if (response.ok || optionalMissing || response.status === 400 || response.status === 401 || response.status === 403 || response.status === 413) drop();
   return response.ok || optionalMissing;
 }
@@ -468,7 +478,10 @@ async function sealQueuedTrail(trail: { code: string; token: string; body: Recor
 
 async function revealPlace(place: SharedPlace): Promise<SharedPlace | null> {
   const seal = (place as SharedPlace & { seal?: unknown }).seal;
-  if (!seal) return typeof place.lat === 'number' && typeof place.lng === 'number' ? place : null;
+  if (!seal) {
+    if (typeof place.lat !== 'number' || typeof place.lng !== 'number') return null;
+    return { ...place, legacyClient: true };
+  }
   const record = typeof localStorage === 'undefined' ? null : familyKeyRecord(localStorage, place.code);
   if (!record) return null;
   const opened = await openJson(record.key, seal) as { lat?: unknown; lng?: unknown; accuracyM?: unknown } | null;
@@ -478,6 +491,7 @@ async function revealPlace(place: SharedPlace): Promise<SharedPlace | null> {
     lat: opened.lat,
     lng: opened.lng,
     accuracyM: typeof opened.accuracyM === 'number' ? opened.accuracyM : 0,
+    legacyClient: false,
   };
 }
 
@@ -774,7 +788,10 @@ export function startAdminRemoteSync(
           ...(self?.profileKey ? { 'x-umap-profile-key': self.profileKey } : {}),
         },
       });
-      classify(response);
+      const error = await noteStatus(response);
+      if (error === 'member' && self?.memberId && self.profileKey) {
+        await syncFamilyKeys(link.code, token, self.memberId, self.profileKey);
+      }
       if (response.ok) {
         const body: unknown = await response.json();
         if (self?.memberId && self.profileKey) await syncFamilyKeys(link.code, token, self.memberId, self.profileKey);
@@ -881,7 +898,10 @@ export function startManagedFamilySync(
           },
         });
         if (response.status === 404) continue;
-        classify(response);
+        const error = await noteStatus(response);
+        if (error === 'member' && self?.memberId && self.profileKey) {
+          await syncFamilyKeys(link.code, link.token, self.memberId, self.profileKey);
+        }
         if (!response.ok) {
           delay = 12000;
           continue;
@@ -973,7 +993,7 @@ export async function registerRoomPush(link: RoomPushLink): Promise<boolean> {
       headers,
       body: JSON.stringify({ endpoint, p256dh, auth, name }),
     });
-    classify(response);
+    await noteStatus(response);
     return response.ok;
   } catch {
     return false;

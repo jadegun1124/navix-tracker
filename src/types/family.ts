@@ -61,6 +61,8 @@ export interface Member {
   place?: string | null;
   inviteCode?: string;
   share: ShareState;
+  /** The other phone still publishes a clear location, so it has not updated to 1.36. */
+  needsAppUpdate?: boolean;
 }
 
 export interface LeaveAlert {

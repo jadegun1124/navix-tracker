@@ -9,10 +9,12 @@
 import { APP_VERSION_NAME } from './appRelease.mjs';
 
 const NOMINATIM_UA = `Kinnex/${APP_VERSION_NAME} (family location; https://github.com/jadegun1124/umap)`;
-const CACHE_KEY = 'umap_geocode_cache_v6';
+const CACHE_KEY = 'umap_geocode_cache_v7';
 const PLACE_LIMIT = 56;
 /** Farther than this, a place is not the nearest label. Inside a polygon, distance is 0. */
 export const NEAREST_PLACE_M = 80;
+/** A fix on or just outside an apartment polygon still uses the complex, not the next POI. */
+export const RESIDENTIAL_NEAR_M = 30;
 const NOMINATIM_GAP_MS = 1100;
 let nominatimNotBefore = 0;
 
@@ -252,14 +254,25 @@ export function choosePlaceLabel(candidates, point) {
     scored.push({
       label,
       inside,
+      residential: isResidentialPlace(candidate),
       areaM2: inside ? geometryAreaM2(geometry) : Infinity,
       distanceM: Number.isFinite(distanceM) ? distanceM : Infinity,
     });
+  }
+  const residentialInside = scored.filter((item) => item.inside && item.residential);
+  if (residentialInside.length) {
+    residentialInside.sort((left, right) => left.areaM2 - right.areaM2 || left.distanceM - right.distanceM);
+    return residentialInside[0].label;
   }
   const containing = scored.filter((item) => item.inside);
   if (containing.length) {
     containing.sort((left, right) => left.areaM2 - right.areaM2 || left.distanceM - right.distanceM);
     return containing[0].label;
+  }
+  const residentialNear = scored.filter((item) => item.residential && item.distanceM <= RESIDENTIAL_NEAR_M);
+  if (residentialNear.length) {
+    residentialNear.sort((left, right) => left.distanceM - right.distanceM || left.areaM2 - right.areaM2);
+    return residentialNear[0].label;
   }
   const near = scored.filter((item) => item.distanceM <= NEAREST_PLACE_M);
   if (!near.length) return '';
@@ -559,23 +572,38 @@ async function fetchVworld(fetchImpl, lat, lng, key) {
   } catch {
     picked = '';
   }
-  if (picked) return picked;
   const named = formatPrecisePlace({
     dong: parts.dong,
     building: building.building || parts.building,
     unit: building.unit || parts.unit,
     poi: '',
   });
-  if (named) return named;
-  return presentPlace(parts.text) || [parts.district, parts.dong].filter(Boolean).join(' ');
+  const label = picked || named || presentPlace(parts.text) || [parts.district, parts.dong].filter(Boolean).join(' ');
+  return { label, candidates: layer };
 }
 
 function nominatimCandidates(body, lat, lng) {
   const address = body && typeof body === 'object' ? body.address : null;
   const named = namedFromAddress(address, body && body.namedetails);
+  const geometry = body && body.geojson && geometryRings(body.geojson).length ? body.geojson : null;
   const candidates = [];
-  if (named.building) candidates.push({ name: named.building, kind: 'residential', lat, lng });
-  if (named.poi) candidates.push({ name: named.poi, kind: POI_NAME.test(named.poi) || !RESIDENTIAL_NAME.test(named.poi) ? 'poi' : 'residential', lat, lng });
+  if (named.building) {
+    candidates.push({
+      name: named.building,
+      kind: 'residential',
+      ...(geometry ? { geometry } : { lat, lng }),
+    });
+  }
+  if (named.poi) {
+    const kind = POI_NAME.test(named.poi) || !RESIDENTIAL_NAME.test(named.poi) ? 'poi' : 'residential';
+    // A reverse hit is one feature. Its polygon belongs to that feature, not to the query point.
+    const ownsGeometry = !named.building;
+    candidates.push({
+      name: named.poi,
+      kind,
+      ...(ownsGeometry && geometry ? { geometry } : { lat, lng }),
+    });
+  }
   return { label: nominatimAddress(body), candidates };
 }
 
@@ -586,6 +614,7 @@ async function fetchNominatim(fetchImpl, lat, lng) {
   url.searchParams.set('lon', String(lng));
   url.searchParams.set('zoom', '18');
   url.searchParams.set('namedetails', '1');
+  url.searchParams.set('polygon_geojson', '1');
   // 한국어는 쿼리로만 받는다. Accept-Language 헤더를 같이 보내면
   // 브라우저에서 Access-Control-Allow-Origin이 빠져 요청이 실패한다.
   url.searchParams.set('accept-language', 'ko');
@@ -652,14 +681,32 @@ function overpassCandidates(body, lat, lng) {
 }
 
 async function fetchOverpass(fetchImpl, lat, lng) {
-  const query = `[out:json][timeout:8];(way(around:120,${lat},${lng})["name"]["building"];way(around:120,${lat},${lng})["name"]["landuse"="residential"];relation(around:120,${lat},${lng})["name"]["landuse"="residential"];node(around:120,${lat},${lng})["name"];);out tags geom;`;
-  const response = await fetchImpl('https://overpass-api.de/api/interpreter', {
-    method: 'POST',
-    headers: { 'content-type': 'application/x-www-form-urlencoded;charset=UTF-8' },
-    body: `data=${encodeURIComponent(query)}`,
-    signal: timeoutSignal(8000),
-  });
-  return overpassCandidates(await readJson(response), lat, lng);
+  const query = `[out:json][timeout:12];(way(around:120,${lat},${lng})["name"]["building"];way(around:120,${lat},${lng})["name"]["landuse"="residential"];relation(around:120,${lat},${lng})["name"]["landuse"="residential"];node(around:80,${lat},${lng})["name"];);out tags geom;`;
+  const encoded = encodeURIComponent(query);
+  const urls = [
+    `https://overpass-api.de/api/interpreter?data=${encoded}`,
+    `https://overpass.kumi.systems/api/interpreter?data=${encoded}`,
+  ];
+  let last = null;
+  for (const url of urls) {
+    try {
+      const response = await fetchImpl(url, { signal: timeoutSignal(12000) });
+      const body = await readJson(response);
+      const candidates = overpassCandidates(body, lat, lng);
+      if (candidates.length || (response && response.ok !== false && body)) return candidates;
+      last = candidates;
+    } catch {
+      last = null;
+    }
+  }
+  if (last) return last;
+  throw new Error('overpass');
+}
+
+let lastGeocodeSettled = true;
+
+export function geocodeWasSettled() {
+  return lastGeocodeSettled;
 }
 
 export async function reverseGeocode(lat, lng, options = {}) {
@@ -670,12 +717,22 @@ export async function reverseGeocode(lat, lng, options = {}) {
   const point = { lat: Number(lat), lng: Number(lng) };
   const candidates = Array.isArray(options.candidates) ? [...options.candidates] : [];
   let coarse = '';
+  let residentialKnown = false;
+  const finish = (label, settled = true) => {
+    lastGeocodeSettled = settled && !(label && POI_NAME.test(label) && !residentialKnown);
+    return label ? presentPlace(label) : null;
+  };
   if (key) {
     try {
       const fromVworld = await fetchVworld(fetchImpl, lat, lng, key);
-      if (fromVworld && isPrecisePlace(fromVworld) && RESIDENTIAL_NAME.test(fromVworld)) return presentPlace(fromVworld);
-      if (fromVworld && isPrecisePlace(fromVworld)) candidates.push({ name: fromVworld, kind: 'poi', lat, lng });
-      else if (fromVworld) coarse = fromVworld;
+      candidates.push(...(fromVworld.candidates || []));
+      if (fromVworld.label && isPrecisePlace(fromVworld.label) && RESIDENTIAL_NAME.test(fromVworld.label)) {
+        const agreed = choosePlaceLabel(candidates, point);
+        residentialKnown = true;
+        if (agreed && RESIDENTIAL_NAME.test(agreed)) return finish(agreed, true);
+        return finish(fromVworld.label, true);
+      }
+      if (fromVworld.label && !isPrecisePlace(fromVworld.label)) coarse = fromVworld.label;
     } catch {
       /* Kakao·Nominatim으로 넘어간다 */
     }
@@ -683,7 +740,7 @@ export async function reverseGeocode(lat, lng, options = {}) {
   if (kakaoKey) {
     try {
       const fromKakao = await fetchKakao(fetchImpl, lat, lng, kakaoKey);
-      if (fromKakao && RESIDENTIAL_NAME.test(fromKakao)) return fromKakao;
+      if (fromKakao && RESIDENTIAL_NAME.test(fromKakao)) return finish(fromKakao, true);
       if (fromKakao) candidates.push({ name: fromKakao, kind: 'poi', lat, lng });
     } catch {
       /* Nominatim으로 넘어간다 */
@@ -693,24 +750,29 @@ export async function reverseGeocode(lat, lng, options = {}) {
     if (options.pace !== false) await paceNominatim();
     const fromNominatim = await fetchNominatim(fetchImpl, lat, lng);
     candidates.push(...fromNominatim.candidates);
+    if (candidates.some((item) => isResidentialPlace(item) && geometryRings(item.geometry).some((ring) => ring.length >= 3))) {
+      residentialKnown = true;
+    }
     try {
-      candidates.push(...await fetchOverpass(fetchImpl, lat, lng));
+      const area = await fetchOverpass(fetchImpl, lat, lng);
+      candidates.push(...area);
+      if (area.some((item) => isResidentialPlace(item))) residentialKnown = true;
     } catch {
       /* 동네 표기를 유지한다 */
     }
     const picked = choosePlaceLabel(candidates, point);
-    if (picked) return presentPlace(picked);
+    if (picked) return finish(picked);
     if (fromNominatim.label && isPrecisePlace(fromNominatim.label) && RESIDENTIAL_NAME.test(fromNominatim.label)) {
-      return presentPlace(fromNominatim.label);
+      return finish(fromNominatim.label, true);
     }
-    if (fromNominatim.label) return presentPlace(fromNominatim.label);
+    if (fromNominatim.label) return finish(fromNominatim.label);
   } catch {
     const picked = choosePlaceLabel(candidates, point);
-    if (picked) return presentPlace(picked);
+    if (picked) return finish(picked);
   }
   const leftover = choosePlaceLabel(candidates, point);
-  if (leftover) return presentPlace(leftover);
-  return coarse ? presentPlace(coarse) : null;
+  if (leftover) return finish(leftover);
+  return coarse ? finish(coarse) : finish('', false);
 }
 
 export async function reverseGeocodeCached(lat, lng, options = {}) {
@@ -722,6 +784,7 @@ export async function reverseGeocodeCached(lat, lng, options = {}) {
   }
   const label = await reverseGeocode(lat, lng, options);
   if (!label || label === '근처') return null;
+  if (!geocodeWasSettled()) return label;
   const cache = readCache();
   cache[key] = label;
   writeCache(cache);

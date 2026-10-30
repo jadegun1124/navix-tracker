@@ -16,7 +16,9 @@ import { ackFamilyAlert, isFamilyAlertAcked, publishFamilyAlert, readFamilyAlert
 import { readSharedPlaces, subscribeSharedPlaces } from '../../services/familyShare';
 import { openAccountSecrets } from '../../lib/familyVault.mjs';
 import { isMemberId } from '../../lib/sharedIdentity.mjs';
+import { Capacitor } from '@capacitor/core';
 import { abandonFamilySync, currentSyncPhase, deleteFamilyRoomRemote, familySyncConfigured, familySyncUrl, fetchMyDirectThreads, registerRoomPush, revokeFamilyPlace, rotateRemovedMember, splitSyncToken, startAdminRemoteSync, startSyncMonitor, subscribeSyncPhase, syncTokenFor, type SyncPhase } from '../../services/familySync';
+import { OLD_APP_PLACE_LABEL, syncBannerText } from '../../lib/syncBanner.mjs';
 import { consumePendingChat, listenChatOpen, overlayPermissionGranted, umapLocation, umapLocationNative } from '../../services/umapLocation';
 import { sounds } from '../../utils/audio';
 import { DEFAULT_CENTER, type GuardianLink, type HomeZone, type Member, type Session } from '../../types/family';
@@ -610,7 +612,7 @@ export function FamilyMapScreen() {
     return () => window.clearTimeout(timer);
   }, [detailOpen, detailPoints]);
   const missingSyncKey = state.guardians.some((link) => (link.share === 'allowed' || link.share === 'revoked') && !link.syncToken);
-  const syncBanner = syncBannerText(syncPhase, missingSyncKey);
+  const syncBanner = syncBannerText(syncPhase, missingSyncKey, Capacitor.isNativePlatform());
   const remoteLive = syncPhase === 'live';
 
   const focusMember = (member: Member, fitTrail: boolean) => {
@@ -1987,6 +1989,7 @@ function overviewLinesFor(
 }
 
 function personLive(member: Member, points: { lat: number; lng: number; at: number; speedMps?: number | null; stayEnd?: boolean }[] | undefined, now: number) {
+  if (member.id !== 'self' && member.needsAppUpdate) return OLD_APP_PLACE_LABEL;
   const presence = memberPresence(member, now);
   const stale = memberPresenceLabel(presence);
   if (stale) return stale;
@@ -2800,10 +2803,3 @@ function locationLabel(value: string): string {
   return '아직 없음';
 }
 
-function syncBannerText(phase: SyncPhase, missingSyncKey: boolean): string | null {
-  if (missingSyncKey) return '이 초대에 동기화 키가 없어 다른 폰으로 위치가 가지 않습니다. 관리자가 보낸 링크를 다시 열어 주세요. 이 브라우저 안에서는 그대로 공유됩니다.';
-  if (phase === 'off') return '위치 서버가 설정되지 않았습니다. 이 브라우저 안에서만 공유됩니다.';
-  if (phase === 'down') return '위치 서버에 연결하지 못했습니다. 이 브라우저 안에서만 공유됩니다.';
-  if (phase === 'rejected') return '동기화 키가 맞지 않습니다. 초대 링크를 다시 확인해 주세요. 이 브라우저 안에서만 공유됩니다.';
-  return null;
-}

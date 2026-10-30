@@ -246,6 +246,104 @@ test('an apartment polygon beats the fire station next door', async () => {
   assert.equal(labelCoordinate(closed, { ...fire, accuracyM: 55 }, false).lat, 37.6365);
 });
 
+test('a fix inside 하계1차청구아파트 near 노원소방서 keeps the complex and 동', async () => {
+  // Nominatim reverse on 2026-10-31 named this south-edge point 노원소방서.
+  // The point is inside the 하계청구아파트 landuse and outside the fire station.
+  const inside = { lat: 37.6386, lng: 127.0712 };
+  const fire = { lat: 37.6385019, lng: 127.070962 };
+  const complex = {
+    name: '하계1차청구아파트',
+    kind: 'residential',
+    geometry: {
+      type: 'Polygon',
+      coordinates: [[
+        [127.0706087, 37.6393963],
+        [127.0706822, 37.6392001],
+        [127.0709294, 37.6386864],
+        [127.071066, 37.638725],
+        [127.071409, 37.6379255],
+        [127.072104, 37.638076],
+        [127.072057, 37.638387],
+        [127.072393, 37.638424],
+        [127.072347, 37.638986],
+        [127.072739, 37.639082],
+        [127.072672, 37.639308],
+        [127.072283, 37.639768],
+        [127.072573, 37.639916],
+        [127.072204, 37.6406],
+        [127.070874, 37.640216],
+        [127.070751, 37.640169],
+        [127.0706087, 37.6393963],
+      ]],
+    },
+  };
+  const dong = {
+    name: '하계1차청구아파트',
+    unit: '103동',
+    kind: 'residential',
+    geometry: {
+      type: 'Polygon',
+      coordinates: [[
+        [127.07105, 37.63845],
+        [127.07135, 37.63845],
+        [127.07135, 37.63875],
+        [127.07105, 37.63875],
+        [127.07105, 37.63845],
+      ]],
+    },
+  };
+  const station = {
+    name: '노원소방서',
+    kind: 'poi',
+    geometry: {
+      type: 'Polygon',
+      coordinates: [[
+        [127.0708, 37.63842],
+        [127.07105, 37.63842],
+        [127.07105, 37.63858],
+        [127.0708, 37.63858],
+        [127.0708, 37.63842],
+      ]],
+    },
+  };
+  assert.equal(choosePlaceLabel([station, complex, dong], inside), '하계1차청구아파트 103동');
+  assert.equal(choosePlaceLabel([station, complex], inside), '하계1차청구아파트');
+  assert.equal(choosePlaceLabel([station, complex], fire), '노원소방서');
+
+  const fetchImpl = async (url) => {
+    const target = String(url);
+    if (target.includes('nominatim.openstreetmap.org')) {
+      return jsonResponse({
+        display_name: '노원소방서, 8, 한글비석로1길, 하계동, 하계1동, 노원구, 서울특별시, 01791, 대한민국',
+        address: { amenity: '노원소방서', suburb: '하계1동', borough: '노원구' },
+        namedetails: { name: '노원소방서' },
+        geojson: station.geometry,
+      });
+    }
+    if (target.includes('overpass')) {
+      return jsonResponse({
+        elements: [
+          { type: 'node', lat: fire.lat, lon: fire.lng, tags: { name: '노원소방서', amenity: 'fire_station' } },
+          {
+            type: 'way',
+            tags: { name: '하계1차청구아파트', landuse: 'residential', building: 'apartments' },
+            geometry: complex.geometry.coordinates[0].map(([lng, lat]) => ({ lat, lon: lng })),
+          },
+          {
+            type: 'way',
+            tags: { name: '하계1차청구아파트', building: 'apartments', ref: '103동' },
+            geometry: dong.geometry.coordinates[0].map(([lng, lat]) => ({ lat, lon: lng })),
+          },
+        ],
+      });
+    }
+    return jsonResponse({ response: { result: [{ text: '서울특별시 노원구 하계동' }] } });
+  };
+  const label = await reverseGeocode(inside.lat, inside.lng, { fetch: fetchImpl, key: '', pace: false });
+  assert.equal(label, '하계1차청구아파트 103동');
+  assert.equal(String(label).includes('소방서'), false);
+});
+
 test('family card status starts with the neighborhood, never 근처', () => {
   const line = (place, live) => [memberPlaceLabel({ place, located: true }), live].filter(Boolean).join(' · ');
   assert.equal(line('구리시 수택동', '지금'), '구리시 수택동 · 지금');

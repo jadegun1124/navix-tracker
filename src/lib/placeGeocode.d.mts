@@ -8,6 +8,9 @@ export function formatPrecisePlace(parts?: {
 }): string;
 
 export const NEAREST_PLACE_M: number;
+export const RESIDENTIAL_NEAR_M: number;
+
+export function geocodeWasSettled(): boolean;
 
 export function choosePlaceLabel(
   candidates: Array<Record<string, unknown>>,
