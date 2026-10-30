@@ -59,10 +59,12 @@ test('a newer explicit decline stays off when an older copy was sharing', () => 
   const older = { savedAt: 1, shareSelfWithFamily: true, guardians: [{ code: '10001', share: 'allowed' }] };
   const newer = { savedAt: 2, shareSelfWithFamily: false, guardians: [] };
   assert.equal(mergedShareSelf([older, newer], []), false);
-  assert.equal(mergePeerSessions([
+  const declined = mergePeerSessions([
     { ...older, stage: 'map', profile: { id: 'local-abc', name: '나' }, inviteCode: '10001', members: [], permissions: { completed: true } },
     { ...newer, stage: 'map', profile: { id: 'local-abc', name: '나' }, inviteCode: '10001', members: [], permissions: { completed: true } },
-  ]).shareSelfWithFamily, false);
+  ]);
+  assert.equal(declined.shareSelfWithFamily, false);
+  assert.equal(declined.guardians.some((link) => link.share === 'allowed'), false);
 });
 
 test('a newer copy of the same person replaces the older row', () => {

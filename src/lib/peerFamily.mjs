@@ -81,6 +81,9 @@ export function mergePeerSessions(snapshots) {
   const cleaned = withoutSelfEcho(members, profileId, inviteCode, profileName);
   const completed = ranked.some((session) => session.permissions && session.permissions.completed);
   const sharing = mergedShareSelf(ranked, guardians);
+  const sharedGuardians = sharing
+    ? guardians
+    : guardians.map((link) => (link.share === 'allowed' ? { ...link, share: 'accepted' } : link));
   const stage = !profile
     ? (base.stage === 'splash' ? 'splash' : 'login')
     : completed
@@ -90,7 +93,7 @@ export function mergePeerSessions(snapshots) {
     ...base,
     profile,
     members: cleaned,
-    guardians,
+    guardians: sharedGuardians,
     inviteCode,
     syncWriteKey: host.syncWriteKey || base.syncWriteKey,
     syncReadKey: host.syncReadKey || base.syncReadKey,
