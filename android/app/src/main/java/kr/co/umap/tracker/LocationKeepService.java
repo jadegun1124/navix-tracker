@@ -461,6 +461,7 @@ public class LocationKeepService {
         if (!precise && accuracy > 400f) return null;
         if (stableFix != null) {
             long dt = fixAt - stableFix.getTime();
+            if (dt < 0) return null;
             if (dt > 0 && dt <= 180_000) {
                 float speed = stableFix.distanceTo(location) / (dt / 1000f);
                 if (speed > 350f) return null;

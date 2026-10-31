@@ -384,6 +384,9 @@ test('stale cached fix is rejected and a fresh precise fix is kept', () => {
   const network = acceptFix({ lat: 37.6365, lng: 127.068, at: now - 4 * 60 * 60_000 }, { lat: 37.654, lng: 127.047, accuracy: 180, at: now }, { precise: false, now });
   assert.equal(network.ok, true);
   assert.equal(network.fix.accuracy, 180);
+  const cachedCell = acceptFix({ lat: 37.654, lng: 127.047, at: now }, { lat: 37.6365, lng: 127.068, accuracy: 180, at: now - 10_000 }, { precise: false, now });
+  assert.equal(cachedCell.ok, false);
+  assert.equal(cachedCell.reason, 'stale');
 });
 
 test('a single teleport is rejected and a later real move is not', () => {

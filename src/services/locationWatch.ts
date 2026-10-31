@@ -33,7 +33,7 @@ export function startLocationWatch(options: {
         navigator.geolocation.getCurrentPosition(
           (coarse) => accept(coarse, false),
           () => {},
-          { enableHighAccuracy: false, maximumAge: 20_000, timeout: 10_000 },
+          { enableHighAccuracy: false, maximumAge: 0, timeout: 10_000 },
         );
       }
       if (Date.now() - receivedAt > 20_000) options.onWaiting(decision.reason);

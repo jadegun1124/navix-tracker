@@ -1348,6 +1348,9 @@ export function acceptFix(previous, reading, options = {}) {
   if (accuracy > maxAccuracy) return { ok: false, reason: 'accuracy' };
   if (previous && Number.isFinite(previous.at)) {
     const dtMs = at - previous.at;
+    // A cached network fix can be older than the precise pin. Negative dt used
+    // to skip the jump check and replace that pin.
+    if (dtMs < 0) return { ok: false, reason: 'stale' };
     if (dtMs > 0 && dtMs <= FIX_JUMP_WINDOW_MS) {
       const speed = haversineMeters(previous, { lat, lng }) / (dtMs / 1000);
       if (speed > FIX_MAX_JUMP_MPS) return { ok: false, reason: 'jump' };
