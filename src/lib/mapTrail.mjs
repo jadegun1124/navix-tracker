@@ -1,4 +1,4 @@
-import { isImpossibleJump, liveMotionLabel, trailSegmentDashed } from './tracking.mjs';
+import { isImpossibleJump, liveMotionLabel, trailDrawDashed, trailSegmentDashed } from './tracking.mjs';
 
 /**
  * Main map draws the open segment only while the card still says 「지금」.
@@ -55,7 +55,8 @@ function solidRuns(points) {
   for (const point of Array.isArray(points) ? points : []) {
     if (!point || point.stayEnd || !Number.isFinite(point.lat) || !Number.isFinite(point.lng)) continue;
     const prev = run[run.length - 1];
-    if (prev && (isImpossibleJump(prev, point) || trailSegmentDashed(prev, point))) {
+    const prior = run[run.length - 2];
+    if (prev && (isImpossibleJump(prev, point) || trailDrawDashed(prev, point, prior))) {
       flush();
       run = [point];
       continue;
@@ -81,6 +82,7 @@ export function mainOverviewTrails({ points, motionPoints, pin, moving, located 
     moving,
     points: motionPoints ?? points,
     now,
+    pin,
   });
   if (label !== '지금') return [];
   const runs = solidRuns(points);
@@ -101,6 +103,6 @@ export function mainOverviewTrails({ points, motionPoints, pin, moving, located 
     speedMps: pin.speedMps,
     accuracyM: pin.accuracyM,
   };
-  if (trailSegmentDashed(tip, leg) || isImpossibleJump(tip, leg)) return runs;
+  if (trailDrawDashed(tip, leg, lastRun[lastRun.length - 2]) || isImpossibleJump(tip, leg)) return runs;
   return runs.slice(0, -1).concat([lastRun.concat([leg])]);
 }

@@ -9,6 +9,7 @@ import { backupFamilyAccount, cancelAccountBackup, deleteFamilyAccount, loadOwnD
 import { buildInviteLink, formatClock, hasLocation, haversineMeters, shouldAlertLeave } from '../../lib/geo';
 import { ALWAYS_GUIDE_DISMISSED_KEY, CHAT_NOTIFY_ASKED_KEY, KEEP_PERMISSION_ASKED_KEY, KEEP_START_ASKED_KEY, keepEntryPrompt, markSessionFlag, readSessionFlag } from '../../lib/systemSettings.mjs';
 import { familyMapShowsTrail, mainOverviewTrails, recordsDayTrails } from '../../lib/mapTrail.mjs';
+import { shouldAutoFitRecord } from '../../lib/recordMapFit.mjs';
 import { shouldDeleteCreatedRoom } from '../../lib/familyRoom.mjs';
 import { motionAlertCopy, motionNotifyNames, nextMotionAlert } from '../../lib/motionAlert.mjs';
 import { collapseDuplicateJourneys, collapseIndoorStayDisplay, displayCoordinate, historyDayKeys, historyDayLabel, lastTravelAt, liveMotionLabel, liveTrailDrawable, liveTrailPoints, MOTION_STILL_HOLD_MS, previewOpenJourney, seoulDayEndMs, seoulDayKey } from '../../lib/tracking.mjs';
@@ -509,6 +510,7 @@ export function FamilyMapScreen() {
         moving: member.moving,
         points: state.tracks[member.id],
         now,
+        pin: { lat: member.lat, lng: member.lng, at: member.updatedAt || now, accuracyM: member.accuracyM },
       }) === '머무름',
     });
     if (stable.lat === member.lat && stable.lng === member.lng) return member;
@@ -605,12 +607,29 @@ export function FamilyMapScreen() {
     return list.filter((visit) => seoulDayKey(visit.arrivedAt) === pathDay);
   }, [pathDay, selected, state.visits]);
   const unreadAlerts = state.notices.some((item) => !item.read);
+  const recordFitKey = detailOpen ? `${selected?.id ?? ''}:${pathDay}:${detailId ?? ''}` : '';
+  const fittedRecordKey = useRef('');
+  const recordViewLocked = useRef(false);
   useEffect(() => {
-    if (!detailOpen) return;
-    if (detailPoints.length === 0) return;
-    const timer = window.setTimeout(() => mapRef.current?.fit(detailPoints), 120);
+    recordViewLocked.current = false;
+    fittedRecordKey.current = '';
+  }, [recordFitKey]);
+  useEffect(() => {
+    const points = detailPoints;
+    if (!shouldAutoFitRecord({
+      recordKey: recordFitKey,
+      fittedKey: fittedRecordKey.current,
+      userAdjusted: recordViewLocked.current,
+      pointCount: points.length,
+    })) return;
+    const key = recordFitKey;
+    const timer = window.setTimeout(() => {
+      if (recordViewLocked.current || fittedRecordKey.current === key) return;
+      mapRef.current?.fit(points);
+      fittedRecordKey.current = key;
+    }, 120);
     return () => window.clearTimeout(timer);
-  }, [detailOpen, detailPoints]);
+  }, [detailPoints, recordFitKey]);
   const missingSyncKey = state.guardians.some((link) => (link.share === 'allowed' || link.share === 'revoked') && !link.syncToken);
   const syncBanner = syncBannerText(syncPhase, missingSyncKey, Capacitor.isNativePlatform());
   const remoteLive = syncPhase === 'live';
@@ -802,6 +821,9 @@ export function FamilyMapScreen() {
               selectMember(member);
             }}
             onClear={clearMemberFocus}
+            onUserView={() => {
+              recordViewLocked.current = true;
+            }}
             onMove={(next) => {
               if (!placingRef.current) return;
               setDraftHome((prev) => {
@@ -1970,6 +1992,7 @@ function overviewLinesFor(
     moving: member.moving,
     points: tracks[member.id],
     now,
+    pin: { lat: member.lat, lng: member.lng, at: member.updatedAt || now, accuracyM: member.accuracyM },
   }) === '머무름';
   const stable = displayCoordinate(points, {
     lat: member.lat,
@@ -1998,6 +2021,9 @@ function personLive(member: Member, points: { lat: number; lng: number; at: numb
     moving: member.moving,
     points,
     now,
+    pin: hasLocation(member)
+      ? { lat: member.lat, lng: member.lng, at: member.updatedAt || now, accuracyM: member.accuracyM }
+      : undefined,
   });
 }
 

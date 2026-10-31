@@ -87,6 +87,7 @@ export function liveMotionLabel(input: {
   moving: boolean | null | undefined;
   points?: TrailSample[] | null;
   now: number;
+  pin?: TrailSample | null;
 }): '' | '지금' | '머무름';
 export function trailMoveGate(last: TrailSample | null | undefined, point: TrailSample | null | undefined): number;
 export function isImpossibleJump(last: TrailSample | null | undefined, point: TrailSample | null | undefined): boolean;

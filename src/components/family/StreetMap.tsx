@@ -50,7 +50,9 @@ export const StreetMap = forwardRef<StreetMapHandle, {
   onSelect: (id: string) => void;
   onClear?: () => void;
   onMove?: (center: { lat: number; lng: number }) => void;
-}>(function StreetMap({ center, zoom, members, home, trails, trailColor, selectedId, solidOnly = false, onSelect, onClear, onMove }, ref) {
+  /** Pinch, drag, or the zoom buttons. Programmatic fit and playback pan do not call this. */
+  onUserView?: () => void;
+}>(function StreetMap({ center, zoom, members, home, trails, trailColor, selectedId, solidOnly = false, onSelect, onClear, onMove, onUserView }, ref) {
   const nodeRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
   const layersRef = useRef<L.LayerGroup | null>(null);
@@ -64,10 +66,12 @@ export const StreetMap = forwardRef<StreetMapHandle, {
   const onSelectRef = useRef(onSelect);
   const onClearRef = useRef(onClear);
   const onMoveRef = useRef(onMove);
+  const onUserViewRef = useRef(onUserView);
   useEffect(() => {
     onSelectRef.current = onSelect;
     onClearRef.current = onClear;
     onMoveRef.current = onMove;
+    onUserViewRef.current = onUserView;
   });
 
   useImperativeHandle(ref, () => ({
@@ -78,11 +82,13 @@ export const StreetMap = forwardRef<StreetMapHandle, {
       const map = mapRef.current;
       if (!map) return;
       map.setView([lat, lng], Math.min(19, Math.max(map.getZoom(), 17)), { animate: true });
+      onUserViewRef.current?.();
     },
     zoomBy(delta) {
       const map = mapRef.current;
       if (!map) return;
       map.setZoom(Math.min(19, Math.max(7, map.getZoom() + delta)));
+      onUserViewRef.current?.();
     },
     fit(points) {
       const map = mapRef.current;
@@ -139,6 +145,7 @@ export const StreetMap = forwardRef<StreetMapHandle, {
       const now = performance.now();
       if (now - playbackPanRef.current < 700) return;
       playbackPanRef.current = now;
+      // Follow the marker without changing the zoom the user chose.
       map.panTo([frame.lat, frame.lng], { animate: true, duration: 0.45, easeLinearity: 0.25 });
     },
   }));
@@ -170,6 +177,11 @@ export const StreetMap = forwardRef<StreetMapHandle, {
     });
     map.on('moveend', emitMove);
     map.on('click', () => onClearRef.current?.());
+    const noteUserView = (event: L.LeafletEvent) => {
+      if ((event as L.LeafletEvent & { originalEvent?: Event }).originalEvent) onUserViewRef.current?.();
+    };
+    map.on('zoomstart', noteUserView);
+    map.on('dragstart', noteUserView);
     setReady(true);
     const resize = () => map.invalidateSize();
     resize();
@@ -184,6 +196,8 @@ export const StreetMap = forwardRef<StreetMapHandle, {
       map.off('move');
       map.off('moveend');
       map.off('click');
+      map.off('zoomstart', noteUserView);
+      map.off('dragstart', noteUserView);
       playbackRef.current = null;
       map.remove();
       mapRef.current = null;
