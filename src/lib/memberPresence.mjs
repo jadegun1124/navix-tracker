@@ -22,7 +22,6 @@ export function relativePlaceAge(at, now) {
 }
 
 export function memberPresence(member, now) {
-  if (isSelfRow(member)) return { kind: 'live', ago: '' };
   const stamp = Number(member?.updatedAt);
   if (!Number.isFinite(stamp) || stamp <= 0) return { kind: 'unknown', ago: '' };
   const age = Number(now) - stamp;

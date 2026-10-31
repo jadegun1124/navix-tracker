@@ -8,6 +8,13 @@ export function formatPrecisePlace(parts?: {
 }): string;
 
 export const NEAREST_PLACE_M: number;
+export const RESIDENTIAL_NEAR_M: number;
+
+export function reverseGeocodeCached(
+  lat: number,
+  lng: number,
+  options?: { fetch?: typeof fetch; key?: string; pace?: boolean },
+): Promise<{ label: string | null; settled: boolean }>;
 
 export function choosePlaceLabel(
   candidates: Array<Record<string, unknown>>,
@@ -32,10 +39,5 @@ export function reverseGeocode(
   options?: { fetch?: typeof fetch; key?: string; pace?: boolean },
 ): Promise<string | null>;
 
-export function reverseGeocodeCached(
-  lat: number,
-  lng: number,
-  options?: { fetch?: typeof fetch; key?: string; pace?: boolean },
-): Promise<string | null>;
 
 export const NOMINATIM_USER_AGENT: string;

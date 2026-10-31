@@ -1098,6 +1098,7 @@ function reduceSession(state: Session, action: Action): Session {
                 charging,
                 updatedAt: place.at,
                 ...(keptPlace ? { place: keptPlace } : { place: undefined }),
+                needsAppUpdate: place.legacyClient === true,
               }, place)
             : item,
         ),
@@ -1147,7 +1148,8 @@ function reduceSession(state: Session, action: Action): Session {
           && member.battery === item.battery
           && member.charging === item.charging
           && member.name === item.name
-          && (member.photo || '') === (item.photo || '');
+          && (member.photo || '') === (item.photo || '')
+          && member.needsAppUpdate === (item.place.legacyClient === true);
       });
       if (unchanged) return collapseRoster(state, priorNames);
       let tracks = tracksWithinHistory(state.tracks, now);
@@ -1191,6 +1193,7 @@ function reduceSession(state: Session, action: Action): Session {
                 ...(item.memberId ? { publisherId: item.memberId } : {}),
                 ...(item.photo ? { photo: item.photo } : {}),
                 ...(keptPlace ? { place: keptPlace } : { place: undefined }),
+                needsAppUpdate: place.legacyClient === true,
               }
             : entry));
           continue;
@@ -1211,6 +1214,7 @@ function reduceSession(state: Session, action: Action): Session {
           ...(item.memberId ? { publisherId: item.memberId } : {}),
           ...(item.photo ? { photo: item.photo } : {}),
           ...(keptPlace ? { place: keptPlace } : {}),
+          needsAppUpdate: place.legacyClient === true,
         }];
         if (canonicalTrailAt(state, { publisherId: item.memberId }) === 0 && isWithinHistory(place.at, now)) {
           const settled = settleTrailPoint(tracks[item.id], { lat: place.lat, lng: place.lng, at: place.at, accuracyM: place.accuracyM }, now);

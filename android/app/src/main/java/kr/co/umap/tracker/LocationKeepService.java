@@ -43,8 +43,10 @@ import org.json.JSONObject;
  * Without that allowlist, Android 8+ may throttle a background app to a few
  * fixes an hour. The system location-in-use glyph is not an app notification.
  *
- * Thresholds match src/lib/tracking.mjs: drop fixes older than 30s, precise
- * accuracy above 80m, later fixes worse than 40m, jumps faster than 350 m/s.
+ * Thresholds match src/lib/tracking.mjs: drop fixes older than 30s and jumps
+ * faster than 350 m/s. A precise fix above 80m is kept when the last good
+ * fix is already 20s old, up to 400m, so a network fallback can leave a
+ * stale pin. A fresh precise fix still wins over a coarser one.
  * Coordinates are the real fix. The live pin's stay bubble is applied in JS.
  * Keep-alive is not a continuous GNSS stream. A walk requests GPS every
  * 2.5s once the step is clear (about 12m at walking pace, or a reported speed
@@ -453,11 +455,13 @@ public class LocationKeepService {
         if (now - fixAt > 30_000 || fixAt > now + 10_000) return null;
         boolean precise = config.optBoolean("precise", true);
         float accuracy = location.getAccuracy();
-        if (precise && accuracy > 80f) return null;
-        if (precise && accuracy > 40f && stableFix != null) return null;
+        if (accuracy <= 0f) return null;
+        boolean freshPrecise = stableFix != null && now - stableFix.getTime() < 20_000L;
+        if (precise && accuracy > 80f && (freshPrecise || accuracy > 400f)) return null;
         if (!precise && accuracy > 400f) return null;
         if (stableFix != null) {
             long dt = fixAt - stableFix.getTime();
+            if (dt < 0) return null;
             if (dt > 0 && dt <= 180_000) {
                 float speed = stableFix.distanceTo(location) / (dt / 1000f);
                 if (speed > 350f) return null;

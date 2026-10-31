@@ -29,7 +29,9 @@ test('after seven days the card is 연결 끊김', () => {
   const gone = { id: 'm-1', role: 'child', updatedAt: now - MEMBER_DISCONNECTED_MS };
   assert.equal(memberPresence(gone, now).kind, 'disconnected');
   assert.equal(memberPresenceLabel(memberPresence(gone, now)), '연결 끊김');
-  assert.equal(memberPresence({ id: 'self', role: 'self', updatedAt: now - MEMBER_DISCONNECTED_MS }, now).kind, 'live');
+  assert.equal(memberPresence({ id: 'self', role: 'self', updatedAt: now - 3 * 60 * 60_000 }, now).kind, 'stale');
+  assert.equal(memberPresenceLabel(memberPresence({ id: 'self', role: 'self', updatedAt: now - 3 * 60 * 60_000 }, now)), '마지막 위치 · 3시간 전');
+  assert.equal(memberPresence({ id: 'self', role: 'self', updatedAt: now - MEMBER_DISCONNECTED_MS }, now).kind, 'disconnected');
 });
 
 test('departed ids are member ids only', () => {

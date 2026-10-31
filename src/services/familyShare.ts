@@ -16,6 +16,8 @@ export interface SharedPlace {
   memberId?: string;
   /** Name this phone published before the current one. */
   priorName?: string;
+  /** True when this fix arrived without an end-to-end seal. */
+  legacyClient?: boolean;
 }
 
 export interface SharedProfile {

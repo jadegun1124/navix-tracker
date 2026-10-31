@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { hasLocation, haversineMeters } from '../../lib/geo';
 import { isSelfEchoPlace } from '../../lib/peerFamily.mjs';
 import { placePriorName } from '../../lib/placeAlias.mjs';
-import { buildDayRecord, labelCoordinate, liveMotionLabel } from '../../lib/tracking.mjs';
+import { buildDayRecord, liveMotionLabel } from '../../lib/tracking.mjs';
 import type { AcceptedFix } from '../../lib/tracking.mjs';
 import { readSharedPlaces, publishSharedPlace, subscribeSharedPlaces, type SharedPlace } from '../../services/familyShare';
 import { bytesToBase64Url } from '../../lib/familySeal.mjs';
@@ -532,8 +532,8 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
       familyRef.current.setVisitLabel(next.memberId, next.id, cached);
       return;
     }
-    void reverseGeocodeCached(next.lat, next.lng).then((label) => {
-      if (!cancel && label) familyRef.current.setVisitLabel(next.memberId, next.id, label);
+    void reverseGeocodeCached(next.lat, next.lng).then((found) => {
+      if (!cancel && found.label) familyRef.current.setVisitLabel(next.memberId, next.id, found.label);
     });
     return () => {
       cancel = true;
@@ -565,8 +565,8 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
       familyRef.current.setJourneyLabel(next.memberId, next.id, next.which, cached, next.lat, next.lng);
       return;
     }
-    void reverseGeocodeCached(next.lat, next.lng).then((label) => {
-      if (!cancel && label) familyRef.current.setJourneyLabel(next.memberId, next.id, next.which, label, next.lat, next.lng);
+    void reverseGeocodeCached(next.lat, next.lng).then((found) => {
+      if (!cancel && found.label) familyRef.current.setJourneyLabel(next.memberId, next.id, next.which, found.label, next.lat, next.lng);
     });
     return () => {
       cancel = true;
@@ -606,11 +606,7 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
         }, 60_000);
         return;
       }
-      const here = labelCoordinate(
-        current.tracks[pending.id],
-        { lat: pending.lat, lng: pending.lng, accuracyM: pending.accuracyM },
-        pending.moving,
-      ) || { lat: pending.lat, lng: pending.lng };
+      const here = { lat: pending.lat, lng: pending.lng };
       const key = placeGridKey(here.lat, here.lng);
       const id = pending.id;
       if (home && id === 'self' && haversineMeters(here, home) <= home.radiusM) {
@@ -620,23 +616,23 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
         else step();
         return;
       }
-      const apply = (label: string | null) => {
+      const apply = (label: string | null, settled: boolean) => {
         if (cancel) return;
         const short = label ? presentPlace(label) : '';
         if (!short) {
           step();
           return;
         }
-        placeKeys.current[id] = key;
+        if (settled) placeKeys.current[id] = key;
         if (cleanPlace(pending.place) !== short) familyRef.current.setMemberPlace(id, short);
         else step();
       };
       const cached = cachedAddress(here.lat, here.lng);
       if (cached) {
-        apply(cached);
+        apply(cached, true);
         return;
       }
-      void reverseGeocodeCached(here.lat, here.lng).then(apply);
+      void reverseGeocodeCached(here.lat, here.lng).then((found) => apply(found.label, found.settled));
     };
     step();
     return () => {

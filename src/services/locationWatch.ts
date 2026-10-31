@@ -16,7 +16,7 @@ export function startLocationWatch(options: {
   let receivedAt = 0;
   let coarseAt = 0;
 
-  const handle = (position: GeolocationPosition) => {
+  const accept = (position: GeolocationPosition, precise: boolean) => {
     const speed = position.coords.speed;
     const decision = acceptFix(last, {
       lat: position.coords.latitude,
@@ -24,15 +24,17 @@ export function startLocationWatch(options: {
       accuracy: position.coords.accuracy,
       at: position.timestamp,
       speedMps: typeof speed === 'number' ? speed : null,
-    }, { precise: options.precise, now: Date.now() });
+    }, { precise, now: Date.now() });
     if (!decision.ok) {
-      if (decision.reason === 'accuracy' && options.precise && Date.now() - coarseAt > 15_000) {
+      // A precise watch above 80m used to request a network fix and then
+      // reject it with the same 80m gate, so the morning pin never moved.
+      if (precise && decision.reason === 'accuracy' && Date.now() - coarseAt > 15_000) {
         coarseAt = Date.now();
-        navigator.geolocation.getCurrentPosition(handle, () => {}, {
-          enableHighAccuracy: false,
-          maximumAge: 20_000,
-          timeout: 10_000,
-        });
+        navigator.geolocation.getCurrentPosition(
+          (coarse) => accept(coarse, false),
+          () => {},
+          { enableHighAccuracy: false, maximumAge: 0, timeout: 10_000 },
+        );
       }
       if (Date.now() - receivedAt > 20_000) options.onWaiting(decision.reason);
       return;
@@ -42,6 +44,8 @@ export function startLocationWatch(options: {
     options.onWaiting(null);
     options.onFix(decision.fix);
   };
+
+  const handle = (position: GeolocationPosition) => accept(position, options.precise);
 
   const once = () => {
     if (stopped) return;
