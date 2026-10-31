@@ -522,8 +522,11 @@ export function trailDecision(last, point) {
   if (!point || !Number.isFinite(point.lat) || !Number.isFinite(point.lng) || !Number.isFinite(point.at)) return 'drop';
   if (!last) return 'keep';
   const accuracy = positiveMeters(point.accuracyM);
-  if (accuracy > TRAIL_POOR_ACCURACY_M) return 'drop';
   const moved = haversineMeters(last, point);
+  if (accuracy > FIX_APPROXIMATE_ACCURACY_M) return 'drop';
+  // 40–400m is usable when the step is farther than the error. A 55m hop of
+  // 70m is still courtyard noise. A neighborhood move is a vertex.
+  if (accuracy > TRAIL_POOR_ACCURACY_M && !(Number.isFinite(moved) && moved >= Math.max(TRAIL_STILL_CONFIRM_M, accuracy))) return 'drop';
   const dt = point.at - last.at;
   if (!Number.isFinite(moved) || !Number.isFinite(dt) || dt < 0) return 'drop';
   if (moved === 0 && dt === 0) return 'drop';
@@ -646,8 +649,9 @@ export function liveCoordinate(anchor, point) {
   if (decision === 'keep') return point;
   if (decision === 'drop') {
     const accuracy = positiveMeters(point.accuracyM);
-    if (accuracy > TRAIL_POOR_ACCURACY_M && accuracy <= FIX_PRECISE_ACCURACY_M && !isImpossibleJump(anchor, point)) {
-      return point;
+    if (accuracy > TRAIL_POOR_ACCURACY_M && accuracy <= FIX_APPROXIMATE_ACCURACY_M && !isImpossibleJump(anchor, point)) {
+      const moved = haversineMeters(anchor, point);
+      if (accuracy <= FIX_PRECISE_ACCURACY_M || moved >= Math.max(TRAIL_STILL_CONFIRM_M, accuracy)) return point;
     }
     return { ...point, lat: anchor.lat, lng: anchor.lng };
   }

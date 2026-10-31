@@ -347,6 +347,11 @@ test('a short step inside the walking gate is not a vertex, and a poor fix is dr
   assert.equal(trailDecision(origin, indoor), 'drop');
   assert.equal(liveCoordinate(origin, indoor).lat, indoor.lat);
   assert.equal(liveCoordinate(origin, { ...indoor, accuracyM: 120 }).lat, origin.lat);
+  const relocated = { ...offset(origin, 1000, 0, t + 4 * 60_000), accuracyM: 55, speedMps: 1.4, staying: false };
+  assert.equal(trailDecision(origin, relocated), 'keep');
+  const coarseMove = { ...offset(origin, 1000, 0, t + 4 * 60_000), accuracyM: 180, speedMps: null, staying: false };
+  assert.equal(liveCoordinate(origin, coarseMove).lat, coarseMove.lat);
+  assert.equal(trailDecision(origin, coarseMove), 'keep');
   const settled = settleTrailPoint([origin], indoor, indoor.at);
   assert.equal(settled.decision, 'drop');
   assert.equal(settled.lat, indoor.lat);
@@ -376,6 +381,9 @@ test('stale cached fix is rejected and a fresh precise fix is kept', () => {
   const laterPoor = acceptFix({ lat: 37.5, lng: 127, at: now - 5_000 }, { lat: 37.5004, lng: 127, accuracy: 120, at: now }, { precise: true, now });
   assert.equal(laterPoor.ok, false);
   assert.equal(laterPoor.reason, 'accuracy');
+  const network = acceptFix({ lat: 37.6365, lng: 127.068, at: now - 4 * 60 * 60_000 }, { lat: 37.654, lng: 127.047, accuracy: 180, at: now }, { precise: false, now });
+  assert.equal(network.ok, true);
+  assert.equal(network.fix.accuracy, 180);
 });
 
 test('a single teleport is rejected and a later real move is not', () => {
