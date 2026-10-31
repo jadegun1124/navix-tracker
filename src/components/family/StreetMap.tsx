@@ -4,7 +4,7 @@ import 'leaflet/dist/leaflet.css';
 import { noteDiag } from '../../lib/diagLog.mjs';
 import { hasLocation } from '../../lib/geo';
 import { memberIsStale, memberPresence } from '../../lib/memberPresence.mjs';
-import { trailDrawParts } from '../../lib/tracking.mjs';
+import { isImpossibleJump, trailDrawParts } from '../../lib/tracking.mjs';
 import { VWORLD_ATTRIBUTION, vworldApiKey, vworldBaseTileUrl } from '../../services/vworld';
 import type { HomeZone, Member, TrackPoint } from '../../types/family';
 
@@ -306,7 +306,15 @@ export const StreetMap = forwardRef<StreetMapHandle, {
     let pointCount = 0;
     for (const trail of trails) {
       if (!trail || trail.length < 2) continue;
-      const parts = trailDrawParts(trail).filter((part) => part.points.length >= 2 && !(solidOnly && part.dashed));
+      const trailEnd = trail[trail.length - 1];
+      const parts = trailDrawParts(trail).flatMap((part) => {
+        if (part.points.length < 2) return [];
+        if (!(solidOnly && part.dashed)) return [part];
+        const last = part.points[part.points.length - 1];
+        const reachesPin = last === trailEnd || (last.lat === trailEnd?.lat && last.lng === trailEnd?.lng && last.at === trailEnd?.at);
+        if (!reachesPin || isImpossibleJump(part.points[0], last)) return [];
+        return [{ ...part, dashed: false }];
+      });
       if (parts.length === 0) continue;
       for (const part of parts) {
         pointCount += part.points.length;

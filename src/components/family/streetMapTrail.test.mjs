@@ -178,5 +178,50 @@ test('the main map polyline grows as a foreground walk streams in', async () => 
     return Number(pairs[pairs.length - 1].split(',')[1]);
   };
   assert.ok(trailCount(grownText) >= 2 && lastLng(grownText) > lastLng(earlyText), `${earlyText} -> ${grownText}`);
+
+  let networkLat = moreFixes[moreFixes.length - 1].lat;
+  const networkLng = moreFixes[moreFixes.length - 1].lng;
+  let networkPoints = morePoints;
+  const networkStart = moreFixes[moreFixes.length - 1].at + 8_000;
+  const accuracies = [60, 90, 120, 150, 80];
+  for (let index = 0; index < 20; index += 1) {
+    networkLat += 12 / 111_320;
+    const sample = {
+      lat: networkLat,
+      lng: networkLng,
+      at: networkStart + index * 8_000,
+      accuracyM: accuracies[index % accuracies.length],
+      speedMps: 0,
+      staying: true,
+    };
+    networkPoints = settleTrailPoint(networkPoints, sample, sample.at).points;
+  }
+  const networkNow = networkStart + 19 * 8_000 + 500;
+  const networkMember = {
+    ...laterMember,
+    lat: networkLat,
+    lng: networkLng,
+    updatedAt: networkNow,
+    accuracyM: 120,
+    moving: false,
+  };
+  const networkLine = memberLiveLines(networkMember, { self: networkPoints }, networkNow);
+  assert.equal(networkLine.reason, 'draw');
+  await act(async () => {
+    root.render(React.createElement(bundled.StreetMap, {
+      ref: mapRef,
+      center: { lat: networkMember.lat, lng: networkMember.lng },
+      zoom: 16,
+      members: [],
+      home: null,
+      trails: networkLine.lines,
+      trailColor: '#0084FF',
+      solidOnly: true,
+      onSelect: () => {},
+    }));
+  });
+  const drawnTip = (mapNode?.dataset?.trail || '').split(/[; ]/).filter((item) => item.includes(',')).pop();
+  const tipLat = Number(String(drawnTip).split(',')[0]);
+  assert.ok(Math.abs(tipLat - networkMember.lat) < 0.0002, `${drawnTip} vs ${networkMember.lat}`);
   root.unmount();
 });

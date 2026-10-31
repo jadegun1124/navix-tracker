@@ -461,9 +461,14 @@ export function liveMotionLabel({ located, moving, points, now, pin }) {
   if (movedAt != null && now >= movedAt && now - movedAt < dwell) return '지금';
   const drawn = drawnPoints(points);
   const end = drawn[drawn.length - 1];
-  // Sparse vertices are a minute apart. The pin can already be further along
-  // that walk while the next vertex is still inside the accuracy gate.
-  if (pin && end && Number.isFinite(pin.at) && pin.at <= now && now - pin.at < dwell && travelStep(end, pin)) return '지금';
+  // The motion sensor often stays still while a network fix keeps moving the pin.
+  // A pin that has left the last vertex is not 「머무름」, even when the chord is
+  // slower than a fresh 2.5s step or the sensor flag is still false.
+  if (pin && end && Number.isFinite(pin.at) && now >= pin.at && now - pin.at < 10 * 60 * 1000) {
+    const pace = stepPace(end, pin);
+    if (pace && pace.moved >= 80 && pace.speed >= 0.2 && pace.speed <= 45) return '지금';
+    if (now - pin.at < dwell && travelStep(end, pin)) return '지금';
+  }
   if (moving === true && movedAt == null) return '지금';
   if (moving === false) return '머무름';
   if (!end) return '지금';
