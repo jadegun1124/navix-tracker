@@ -601,6 +601,8 @@ public class LocationKeepService {
             if (location.hasSpeed() && location.getSpeed() >= 0f && location.getSpeed() < 400f) fix.put("speedMps", location.getSpeed());
             else fix.put("speedMps", JSONObject.NULL);
             fix.put("at", fixAt);
+            String provider = location.getProvider();
+            fix.put("provider", provider == null ? "" : provider);
             current.onFix(fix);
         } catch (Exception ignored) {
             /* 화면 브리지가 없어도 서버 전송은 계속한다 */

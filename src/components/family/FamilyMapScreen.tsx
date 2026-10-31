@@ -8,7 +8,8 @@ import { ACCOUNT_LINKED_OTHER_MESSAGE, ACCOUNT_UNLINKED_MESSAGE, linkedAccountWo
 import { backupFamilyAccount, cancelAccountBackup, deleteFamilyAccount, loadOwnDisclosures, loadOwnHandling, mintFamilyInvite, persistAccountResult, redeemFamilyInvite, type AccountSnapshot, type DisclosureRecord, type HandlingEvent } from '../../services/familyAccount';
 import { buildInviteLink, formatClock, hasLocation, haversineMeters, shouldAlertLeave } from '../../lib/geo';
 import { ALWAYS_GUIDE_DISMISSED_KEY, CHAT_NOTIFY_ASKED_KEY, KEEP_PERMISSION_ASKED_KEY, KEEP_START_ASKED_KEY, keepEntryPrompt, markSessionFlag, readSessionFlag } from '../../lib/systemSettings.mjs';
-import { familyMapShowsTrail, mainOverviewTrails, recordsDayTrails } from '../../lib/mapTrail.mjs';
+import { familyMapShowsTrail, memberLiveLines, recordsDayTrails } from '../../lib/mapTrail.mjs';
+import { noteDiag } from '../../lib/diagLog.mjs';
 import { shouldAutoFitRecord } from '../../lib/recordMapFit.mjs';
 import { shouldDeleteCreatedRoom } from '../../lib/familyRoom.mjs';
 import { motionAlertCopy, motionNotifyNames, nextMotionAlert } from '../../lib/motionAlert.mjs';
@@ -602,6 +603,20 @@ export function FamilyMapScreen() {
     }
     return lines;
   }, [dayJourneys, detailOpen, detailPoints, liveDay, now, pathDay, selected, showPath, state.members, state.tracks, viewingRecords]);
+  useEffect(() => {
+    if (viewingRecords) return;
+    for (const member of state.members) {
+      const report = memberLiveLines(member, state.tracks, now, liveDay);
+      noteDiag({
+        kind: 'trail',
+        member: member.id === 'self' ? 'self' : 'family',
+        reason: report.reason,
+        stored: report.stored,
+        live: report.live,
+        segments: report.lines.length,
+      });
+    }
+  }, [liveDay, now, state.members, state.tracks, viewingRecords]);
   const dayVisits = useMemo(() => {
     const list = selected ? state.visits[selected.id] ?? [] : [];
     return list.filter((visit) => seoulDayKey(visit.arrivedAt) === pathDay);
@@ -1345,6 +1360,7 @@ export function FamilyMapScreen() {
             <AppVersionLine />
             <RecoveryCodePanel />
             <DisclosureLogPanel />
+            <DiagSendButton />
             <LocationConsentRow />
             <button
               type="button"
@@ -1406,6 +1422,7 @@ export function FamilyMapScreen() {
             <AppVersionLine />
             <RecoveryCodePanel />
             <DisclosureLogPanel />
+            <DiagSendButton />
             <LocationConsentRow />
             <div className="mt-3">
               <AlwaysAllowNotice
@@ -1982,33 +1999,7 @@ function overviewLinesFor(
   now: number,
   liveDay: string,
 ) {
-  if (member.role === 'guardian' || !hasLocation(member)) return [];
-  if (memberIsStale(memberPresence(member, now))) return [];
-  if (member.id !== 'self' && member.share !== 'allowed' && member.role !== 'admin-share') return [];
-  const today = (tracks[member.id] ?? []).filter((point) => seoulDayKey(point.at) === liveDay);
-  const points = liveTrailPoints(today, now);
-  const staying = liveMotionLabel({
-    located: true,
-    moving: member.moving,
-    points: tracks[member.id],
-    now,
-    pin: { lat: member.lat, lng: member.lng, at: member.updatedAt || now, accuracyM: member.accuracyM },
-  }) === '머무름';
-  const stable = displayCoordinate(points, {
-    lat: member.lat,
-    lng: member.lng,
-    at: member.updatedAt || now,
-    accuracyM: member.accuracyM,
-    staying,
-  });
-  return mainOverviewTrails({
-    points,
-    motionPoints: tracks[member.id],
-    pin: { lat: stable.lat, lng: stable.lng, at: member.updatedAt || now, accuracyM: member.accuracyM },
-    moving: member.moving,
-    located: true,
-    now,
-  });
+  return memberLiveLines(member, tracks, now, liveDay).lines;
 }
 
 function personLive(member: Member, points: { lat: number; lng: number; at: number; speedMps?: number | null; stayEnd?: boolean }[] | undefined, now: number) {
@@ -2578,6 +2569,40 @@ function LocationConsentRow() {
 
 function AppVersionLine() {
   return <p className="mt-2 text-xs font-semibold text-slate-500">{currentAppVersionLabel()}</p>;
+}
+
+function DiagSendButton() {
+  const [busy, setBusy] = useState(false);
+  const [code, setCode] = useState('');
+  const [note, setNote] = useState('');
+  return (
+    <div className="mt-4 rounded-2xl bg-slate-50 px-3 py-3">
+      <p className="text-sm font-black text-slate-900">진단 기록 보내기</p>
+      <p className="mt-1 text-xs font-semibold leading-5 text-slate-500">최근 2시간의 위치·궤적 판단을 이 계정으로 올립니다. 좌표가 포함되고 7일 뒤 지워집니다.</p>
+      <button
+        type="button"
+        disabled={busy}
+        onClick={() => {
+          setBusy(true);
+          setNote('');
+          void import('../../services/familyAccount').then(({ uploadDiagReport }) => uploadDiagReport()).then((result) => {
+            if (result.ok && result.id) {
+              setCode(result.id);
+              setNote('이 코드를 개발자에게 보내 주세요.');
+              return;
+            }
+            setCode('');
+            setNote(result.message || '올리지 못했습니다.');
+          }).finally(() => setBusy(false));
+        }}
+        className="mt-2 w-full rounded-full bg-slate-900 py-3 text-sm font-bold text-white disabled:opacity-60"
+      >
+        {busy ? '올리는 중…' : '진단 기록 보내기'}
+      </button>
+      {code && <p className="mt-2 select-all break-all text-sm font-black text-slate-900">{code}</p>}
+      {note && <p className="mt-1 text-xs font-semibold leading-5 text-slate-600">{note}</p>}
+    </div>
+  );
 }
 
 const DISCLOSURE_LABEL: Record<DisclosureRecord['categories'][number], string> = {

@@ -12,6 +12,7 @@ import { bindPlaceToMember, placeIsSelf, placeMemberId } from '../../lib/placeBi
 import { hideLeftPublishers, sharedPlaceStopsReporting } from '../../lib/memberPresence.mjs';
 import { familyPinId, isMemberId, moveKeyed } from '../../lib/sharedIdentity.mjs';
 import { absorbPlaceholderMembers } from '../../lib/memberRoster.mjs';
+import { noteDiag } from '../../lib/diagLog.mjs';
 import { HISTORY_DAYS, JOURNEY_POINT_CAP, TRAIL_POINT_CAP, fixShowsRide, isWithinHistory, journeysWithinHistory, labelJourneyPlace, lastTravelAt, mergeJourneyLists, seoulDayKey, settleTrailPoint, stayLabelDwellMs, storedTrackAfterArchive, tracksWithinHistory, trimJourneyList, visitsWithinHistory, type JourneyRecord } from '../../lib/tracking.mjs';
 import type { DayStop } from '../../lib/tracking.mjs';
 import type { SharedPlace, SharedProfile } from '../../services/familyShare';
@@ -921,6 +922,16 @@ function reduceSession(state: Session, action: Action): Session {
       const riding = fixShowsRide(state.tracks.self, sample);
       if (riding) sample.staying = false;
       const settled = settleTrailPoint(state.tracks.self, sample, at);
+      noteDiag({
+        kind: 'filter',
+        member: 'self',
+        decision: settled.decision,
+        accuracy: action.accuracyM,
+        speed: speed ?? 0,
+        lat: action.lat,
+        lng: action.lng,
+        stored: settled.points.length,
+      });
       if (settled.decision === 'drop') {
         const nextLat = settled.lat;
         const nextLng = settled.lng;
@@ -1077,6 +1088,15 @@ function reduceSession(state: Session, action: Action): Session {
         at: place.at,
         accuracyM: place.accuracyM,
       }, now);
+      noteDiag({
+        kind: 'filter',
+        member: 'family',
+        decision: settled.decision,
+        accuracy: place.accuracyM || 0,
+        lat: place.lat,
+        lng: place.lng,
+        stored: settled.points.length,
+      });
       const tracks = isWithinHistory(place.at, now)
         ? { ...keptTracks, [member.id]: settled.points }
         : keptTracks;
@@ -1175,7 +1195,18 @@ function reduceSession(state: Session, action: Action): Session {
           const settled = canonicalTrailAt(state, { publisherId: item.memberId }) > 0 || !isWithinHistory(place.at, now)
             ? null
             : settleTrailPoint(tracks[roster.id], { lat: place.lat, lng: place.lng, at: place.at, accuracyM: place.accuracyM }, now);
-          if (settled) tracks = { ...tracks, [roster.id]: settled.points };
+          if (settled) {
+            noteDiag({
+              kind: 'filter',
+              member: 'family',
+              decision: settled.decision,
+              accuracy: place.accuracyM || 0,
+              lat: place.lat,
+              lng: place.lng,
+              stored: settled.points.length,
+            });
+            tracks = { ...tracks, [roster.id]: settled.points };
+          }
           const lat = settled && settled.decision === 'drop' && hasLocation(roster) ? roster.lat : (settled?.lat ?? place.lat);
           const lng = settled && settled.decision === 'drop' && hasLocation(roster) ? roster.lng : (settled?.lng ?? place.lng);
           const keptPlace = carryPlace(roster, lat, lng);
@@ -1218,6 +1249,15 @@ function reduceSession(state: Session, action: Action): Session {
         }];
         if (canonicalTrailAt(state, { publisherId: item.memberId }) === 0 && isWithinHistory(place.at, now)) {
           const settled = settleTrailPoint(tracks[item.id], { lat: place.lat, lng: place.lng, at: place.at, accuracyM: place.accuracyM }, now);
+          noteDiag({
+            kind: 'filter',
+            member: 'family',
+            decision: settled.decision,
+            accuracy: place.accuracyM || 0,
+            lat: place.lat,
+            lng: place.lng,
+            stored: settled.points.length,
+          });
           tracks = { ...tracks, [item.id]: settled.points };
           const pinned = members[members.length - 1];
           if (pinned && settled.decision !== 'keep' && settled.lat != null && settled.lng != null) {

@@ -12,6 +12,27 @@ export function recordsDayTrails(input: {
   liveDrawable?: boolean;
 }): { lat: number; lng: number; at: number }[][];
 
+export function memberLiveLines(
+  member: {
+    id?: string;
+    role?: string;
+    share?: string;
+    lat?: number | null;
+    lng?: number | null;
+    updatedAt?: number;
+    accuracyM?: number;
+    moving?: boolean | null;
+  } | null | undefined,
+  tracks: Record<string, { lat: number; lng: number; at: number; speedMps?: number | null; accuracyM?: number; staying?: boolean; stayEnd?: boolean }[] | undefined> | null | undefined,
+  now: number,
+  liveDay?: string,
+): {
+  lines: { lat: number; lng: number; at: number }[][];
+  reason: string;
+  stored: number;
+  live: number;
+};
+
 export function mainOverviewTrails(input: {
   points?: { lat: number; lng: number; at: number; speedMps?: number | null; accuracyM?: number; stayEnd?: boolean }[] | null;
   motionPoints?: { lat: number; lng: number; at: number; speedMps?: number | null; accuracyM?: number; stayEnd?: boolean }[] | null;

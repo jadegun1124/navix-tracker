@@ -1,4 +1,5 @@
 import { acceptFix, type AcceptedFix } from '../lib/tracking.mjs';
+import { appInForeground, fixChannelSource, noteDiag } from '../lib/diagLog.mjs';
 
 export function startLocationWatch(options: {
   precise: boolean;
@@ -25,6 +26,18 @@ export function startLocationWatch(options: {
       at: position.timestamp,
       speedMps: typeof speed === 'number' ? speed : null,
     }, { precise, now: Date.now() });
+    noteDiag({
+      kind: 'fix',
+      channel: 'js',
+      source: fixChannelSource('js', '', precise),
+      fg: appInForeground(),
+      accuracy: position.coords.accuracy,
+      speed: typeof speed === 'number' ? speed : 0,
+      lat: position.coords.latitude,
+      lng: position.coords.longitude,
+      ok: decision.ok,
+      reason: decision.ok ? 'accepted' : decision.reason,
+    });
     if (!decision.ok) {
       // A precise watch above 80m used to request a network fix and then
       // reject it with the same 80m gate, so the morning pin never moved.

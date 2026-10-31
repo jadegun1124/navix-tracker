@@ -1,4 +1,5 @@
-import { isImpossibleJump, liveMotionLabel, trailDrawDashed, trailSegmentDashed } from './tracking.mjs';
+import { memberIsStale, memberPresence } from './memberPresence.mjs';
+import { displayCoordinate, isImpossibleJump, liveMotionLabel, liveTrailPoints, seoulDayKey, trailDrawDashed, trailSegmentDashed } from './tracking.mjs';
 
 /**
  * Main map draws the open segment only while the card still says 「지금」.
@@ -76,6 +77,56 @@ function solidRuns(points) {
  * connector, and it does not erase the solid run already drawn. The line
  * stays until the next sample can join the pin.
  */
+function located(member) {
+  return !!member && Number.isFinite(member.lat) && Number.isFinite(member.lng);
+}
+
+/**
+ * Polylines the main map draws for one member, plus why the list is empty.
+ * The screen and the diagnostic log share this so a phone report matches the layer.
+ */
+export function memberLiveLines(member, tracks, now, liveDay = seoulDayKey(now)) {
+  const storedToday = (tracks?.[member?.id] ?? []).filter((point) => point && seoulDayKey(point.at) === liveDay);
+  if (!member || member.role === 'guardian' || !located(member)) {
+    return { lines: [], reason: 'no-pin', stored: storedToday.length, live: 0 };
+  }
+  if (memberIsStale(memberPresence(member, now))) {
+    return { lines: [], reason: 'stale', stored: storedToday.length, live: 0 };
+  }
+  if (member.id !== 'self' && member.share !== 'allowed' && member.role !== 'admin-share') {
+    return { lines: [], reason: 'share', stored: storedToday.length, live: 0 };
+  }
+  const points = liveTrailPoints(storedToday, now);
+  const pin = { lat: member.lat, lng: member.lng, at: member.updatedAt || now, accuracyM: member.accuracyM };
+  const staying = liveMotionLabel({
+    located: true,
+    moving: member.moving,
+    points: tracks?.[member.id],
+    now,
+    pin,
+  }) === '머무름';
+  const stable = displayCoordinate(points, { ...pin, staying });
+  const lines = mainOverviewTrails({
+    points,
+    motionPoints: tracks?.[member.id],
+    pin: { ...pin, lat: stable.lat, lng: stable.lng },
+    moving: member.moving,
+    located: true,
+    now,
+  });
+  if (lines.length === 0) {
+    const label = liveMotionLabel({
+      located: true,
+      moving: member.moving,
+      points: tracks?.[member.id],
+      now,
+      pin,
+    });
+    return { lines: [], reason: label === '지금' ? 'no-solid' : `label:${label || 'empty'}`, stored: storedToday.length, live: points.length };
+  }
+  return { lines, reason: 'draw', stored: storedToday.length, live: points.length };
+}
+
 export function mainOverviewTrails({ points, motionPoints, pin, moving, located = true, now }) {
   const label = liveMotionLabel({
     located: located !== false,
