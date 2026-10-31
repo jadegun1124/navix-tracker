@@ -330,6 +330,14 @@ test('a walk keeps 지금 through sensor gaps and a peer trail uses the same dwe
   assert.equal(lastTravelWasRide(walk), false);
   assert.equal(stayLabelDwellMs(walk), WALK_STAY_LABEL_MS);
   assert.equal(liveMotionLabel({ located: true, moving: false, points: walk, now: end + 60_000 }), '머무름');
+  const stillWalking = offset(walk[walk.length - 1], 0, 300, end + 8 * 60_000);
+  assert.equal(liveMotionLabel({
+    located: true,
+    moving: false,
+    points: walk,
+    now: end + 8 * 60_000 + 1_000,
+    pin: { ...stillWalking, accuracyM: 120, speedMps: 0, staying: true },
+  }), '지금');
   const walkedOn = offset(walk[walk.length - 1], 0, 40, end + 50_000);
   assert.equal(liveMotionLabel({
     located: true,

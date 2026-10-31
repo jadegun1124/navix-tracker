@@ -1,3 +1,4 @@
+import { noteDiag } from '../lib/diagLog.mjs';
 import { openJson, sealJson, mintFamilyKey, unwrapFamilyKey, wrapFamilyKey } from '../lib/familySeal.mjs';
 import { ensureDevice, familyKeyRecord, rememberFamilyKey } from '../lib/familyVault.mjs';
 import { rememberPlaceName } from '../lib/placeAlias.mjs';
@@ -344,6 +345,8 @@ async function sendQueued(path: string, token: string, body: unknown, drop: () =
     headers,
     body: JSON.stringify(body),
   });
+  const sealed = !!body && typeof body === 'object' && 'seal' in (body as object) && !!(body as { seal?: unknown }).seal;
+  noteDiag({ kind: 'http', dir: 'upload', path, status: response.status, ok: response.ok, sealed });
   if (epoch !== syncEpoch) {
     drop();
     return true;
@@ -903,10 +906,15 @@ export function startManagedFamilySync(
           await syncFamilyKeys(link.code, link.token, self.memberId, self.profileKey);
         }
         if (!response.ok) {
+          noteDiag({ kind: 'http', dir: 'download', path: `/v1/rooms/${link.code}/family`, status: response.status, ok: false, places: 0 });
           delay = 12000;
           continue;
         }
         const body: unknown = await response.json();
+        const placeCount = body && typeof body === 'object' && Array.isArray((body as { places?: unknown }).places)
+          ? (body as { places: unknown[] }).places.length
+          : 0;
+        noteDiag({ kind: 'http', dir: 'download', path: `/v1/rooms/${link.code}/family`, status: response.status, ok: true, places: placeCount });
         if (self?.memberId && self.profileKey) await syncFamilyKeys(link.code, link.token, self.memberId, self.profileKey);
         const raw = body && typeof body === 'object' && Array.isArray((body as { places?: unknown[] }).places) ? (body as { places: unknown[] }).places : [];
         const places: SharedPlace[] = [];

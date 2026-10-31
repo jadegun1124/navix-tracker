@@ -6,6 +6,7 @@ export interface UmapFix {
   accuracyM: number;
   speedMps: number | null;
   at: number;
+  provider?: string;
 }
 
 export interface KeepAliveTarget {

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { fixChannelSource, noteDiag } from '../../lib/diagLog.mjs';
 import { hasLocation, haversineMeters } from '../../lib/geo';
 import { isSelfEchoPlace } from '../../lib/peerFamily.mjs';
 import { placePriorName } from '../../lib/placeAlias.mjs';
@@ -155,6 +156,18 @@ export function useFamilyTracking(onFirstFix: (lat: number, lng: number) => void
     let remove = () => {};
     void umapLocation.addListener('fix', (fix) => {
       const speed = typeof fix.speedMps === 'number' ? fix.speedMps : null;
+      noteDiag({
+        kind: 'fix',
+        channel: 'native',
+        source: fixChannelSource('native', fix.provider, true),
+        fg: document.visibilityState !== 'hidden',
+        accuracy: fix.accuracyM || 0,
+        speed: speed ?? 0,
+        lat: fix.lat,
+        lng: fix.lng,
+        ok: true,
+        reason: 'accepted',
+      });
       nativeFixAt.current = Date.now();
       setWaiting(null);
       familyRef.current.updateSelf(fix.lat, fix.lng, fix.accuracyM || 1, speed);

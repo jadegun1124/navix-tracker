@@ -18,6 +18,7 @@ test('logout clears the sealed session before the next persist', () => {
   const dispatchAt = logout.indexOf("dispatch({ type: 'logout' })");
   assert.ok(cancelAt >= 0 && clearAt > cancelAt && dispatchAt > clearAt);
   assert.match(logout, /logoutLocalAccount\(/);
+  assert.match(logout, /clearDiag\(\)/);
 });
 
 test('a late seal restore cannot write after logout', () => {
@@ -29,4 +30,5 @@ test('a late seal restore cannot write after logout', () => {
   assert.match(source, /function cancelDeviceSealRestore\(\)/);
   const withdraw = sliceBetween('withdraw: () => {', 'clearFamilyRoom:');
   assert.match(withdraw, /cancelDeviceSealRestore\(\)/);
+  assert.match(withdraw, /clearDiag\(\)/);
 });

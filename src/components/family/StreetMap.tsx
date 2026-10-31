@@ -1,9 +1,10 @@
 import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import { noteDiag } from '../../lib/diagLog.mjs';
 import { hasLocation } from '../../lib/geo';
 import { memberIsStale, memberPresence } from '../../lib/memberPresence.mjs';
-import { trailDrawParts } from '../../lib/tracking.mjs';
+import { isImpossibleJump, trailDrawParts } from '../../lib/tracking.mjs';
 import { VWORLD_ATTRIBUTION, vworldApiKey, vworldBaseTileUrl } from '../../services/vworld';
 import type { HomeZone, Member, TrackPoint } from '../../types/family';
 
@@ -301,11 +302,23 @@ export const StreetMap = forwardRef<StreetMapHandle, {
     if (!ready || !trailGroup) return;
     trailGroup.clearLayers();
     const stroke = { smoothFactor: 0, lineCap: 'round' as const, lineJoin: 'round' as const };
+    const drawn: string[] = [];
+    let pointCount = 0;
     for (const trail of trails) {
       if (!trail || trail.length < 2) continue;
-      const parts = trailDrawParts(trail).filter((part) => part.points.length >= 2 && !(solidOnly && part.dashed));
+      const trailEnd = trail[trail.length - 1];
+      const parts = trailDrawParts(trail).flatMap((part) => {
+        if (part.points.length < 2) return [];
+        if (!(solidOnly && part.dashed)) return [part];
+        const last = part.points[part.points.length - 1];
+        const reachesPin = last === trailEnd || (last.lat === trailEnd?.lat && last.lng === trailEnd?.lng && last.at === trailEnd?.at);
+        if (!reachesPin || isImpossibleJump(part.points[0], last)) return [];
+        return [{ ...part, dashed: false }];
+      });
       if (parts.length === 0) continue;
       for (const part of parts) {
+        pointCount += part.points.length;
+        drawn.push(part.points.map((point) => `${point.lat.toFixed(5)},${point.lng.toFixed(5)}`).join(' '));
         const latlngs = part.points.map((point) => [point.lat, point.lng] as [number, number]);
         const dashed = part.dashed;
         L.polyline(latlngs, {
@@ -343,6 +356,8 @@ export const StreetMap = forwardRef<StreetMapHandle, {
         }).addTo(trailGroup);
       }
     }
+    if (nodeRef.current) nodeRef.current.dataset.trail = drawn.join(';');
+    noteDiag({ kind: 'render', points: pointCount, segments: drawn.length, solid: solidOnly });
   }, [ready, solidOnly, trails, trailColor]);
 
   const missingKey = !key;

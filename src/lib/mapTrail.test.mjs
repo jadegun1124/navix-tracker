@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { familyMapShowsTrail, mainOverviewTrails, recordsDayTrails } from './mapTrail.mjs';
+import { familyMapShowsTrail, memberLiveLines, mainOverviewTrails, recordsDayTrails } from './mapTrail.mjs';
 import { liveTrailDrawable, liveTrailPoints, settleTrailPoint, trailDrawParts, trailSegmentDashed, WALK_STAY_LABEL_MS } from './tracking.mjs';
 
 const self = { id: 'self', share: 'allowed', role: 'self' };
@@ -231,6 +231,67 @@ test('a mixed 15–150m walk draws a main-map line for self and for a family mem
   }
   const self = ingestMixedWalk('self');
   assert.ok(self.points.filter((point) => point && !point.stayEnd).length >= 2);
+});
+
+test('a gps walk then network fixes still ends on the live pin for self and a family member', () => {
+  function north(lat, meters) {
+    return lat + meters / 111_320;
+  }
+  function gap(line, pin) {
+    const tip = line[line.length - 1];
+    const radius = 6_371_000;
+    const p1 = (tip.lat * Math.PI) / 180;
+    const p2 = (pin.lat * Math.PI) / 180;
+    const dLat = p2 - p1;
+    const dLng = ((pin.lng - tip.lng) * Math.PI) / 180;
+    const h = Math.sin(dLat / 2) ** 2 + Math.cos(p1) * Math.cos(p2) * Math.sin(dLng / 2) ** 2;
+    return 2 * radius * Math.asin(Math.min(1, Math.sqrt(h)));
+  }
+  const accuracies = [60, 90, 120, 150, 80];
+  function stream(kind) {
+    const t0 = Date.UTC(2026, 9, 31, 5, 40, 0);
+    let lat = 37.578;
+    const lng = 127.032;
+    let points = [];
+    for (let index = 0; index < 36; index += 1) {
+      const sample = { lat, lng, at: t0 + index * 2_500, accuracyM: 12, speedMps: 1.4, staying: false };
+      points = settleTrailPoint(points, sample, sample.at).points;
+      lat = north(lat, 3.5);
+    }
+    const networkAt = t0 + 36 * 2_500;
+    for (let index = 0; index < 30; index += 1) {
+      const sample = {
+        lat,
+        lng,
+        at: networkAt + index * 8_000,
+        accuracyM: accuracies[index % accuracies.length],
+        ...(kind === 'self' ? { speedMps: 0, staying: true } : {}),
+      };
+      const settled = settleTrailPoint(points, sample, sample.at);
+      points = settled.points;
+      lat = north(lat, 12);
+    }
+    const at = networkAt + 29 * 8_000;
+    const member = {
+      id: kind,
+      role: kind === 'self' ? 'self' : 'admin-share',
+      share: 'allowed',
+      lat,
+      lng,
+      updatedAt: at,
+      accuracyM: 120,
+      moving: kind === 'self' ? false : null,
+    };
+    return { member, points, now: at + 500 };
+  }
+  for (const kind of ['self', 'family']) {
+    const { member, points, now } = stream(kind);
+    const drawn = memberLiveLines(member, { [kind]: points }, now);
+    assert.equal(drawn.reason, 'draw', `${kind} ${drawn.reason}`);
+    const line = drawn.lines[drawn.lines.length - 1];
+    assert.ok(line && line.length >= 2, kind);
+    assert.ok(gap(line, member) < 20, `${kind} pin gap ${line ? Math.round(gap(line, member)) : 'none'}`);
+  }
 });
 
 test('records include archived journeys even when the live segment is gone', () => {

@@ -5,6 +5,7 @@
 import { isSeal, isVault } from '../src/lib/familySeal.mjs';
 import { NAVER_REDIRECT, allowedNaverRedirect } from '../src/lib/naverAuth.mjs';
 import { listDisclosures, purgeExpiredDisclosureIndex, purgeExpiredDisclosures } from './disclosure.mjs';
+import { forgetDiagReports, purgeDiagReports, putDiagReport, readDiagReport } from './diag.mjs';
 import { listHandling, recordHandling } from './handling.mjs';
 import { mintInvite, redeemInvite } from './invite.mjs';
 
@@ -1039,6 +1040,7 @@ export async function deleteAccount(store, accountKey, options = {}) {
   await leaveFamilyRooms(record, options.forgetMember);
   await bestEffortProviderUnlink(record, options);
   await purgeExpiredDisclosures(store, record.id, options.now || Date.now());
+  await forgetDiagReports(store, record.id);
   await eraseRecord(store, record);
   return { ok: true };
 }
@@ -1060,9 +1062,18 @@ export function accountError(code) {
 export async function parseAccountOperation(request) {
   const url = new URL(request.url);
   const path = url.pathname.replace(/\/+$/, '') || '/';
-  if (!path.startsWith('/v1/account') && !path.startsWith('/v1/invites')) return null;
+  if (!path.startsWith('/v1/account') && !path.startsWith('/v1/invites') && !path.startsWith('/v1/diag')) return null;
 
   const accountKey = request.headers.get('x-umap-account-key') || '';
+
+  const diagGet = path.match(/^\/v1\/diag\/([A-Za-z0-9_-]{16,64})$/);
+  if (diagGet) {
+    if (request.method !== 'GET') return json({ error: 'method' }, 405);
+    return { kind: 'account-diag-get', id: diagGet[1] };
+  }
+  if (path === '/v1/diag') {
+    if (request.method !== 'POST') return json({ error: 'method' }, 405);
+  }
 
   if (path === '/v1/account/disclosures' || path === '/v1/account/handling') {
     if (request.method === 'GET') {
@@ -1097,6 +1108,10 @@ export async function parseAccountOperation(request) {
         return json({ error: 'json' }, 400);
       }
     }
+  }
+
+  if (request.method === 'POST' && path === '/v1/diag') {
+    return { kind: 'account-diag-put', accountKey, events: value.events };
   }
 
   if (request.method === 'POST' && path === '/v1/invites') {
@@ -1163,7 +1178,9 @@ export async function parseAccountOperation(request) {
 }
 
 export async function handleAccountOperation(store, op, options = {}) {
-  await purgeExpiredDisclosureIndex(store, options.now || Date.now());
+  const now = options.now || Date.now();
+  await purgeExpiredDisclosureIndex(store, now);
+  await purgeDiagReports(store, now).catch(() => undefined);
   if (op.kind === 'account-disclosure-purge') return json({ ok: true });
   if (op.kind === 'account-get') {
     const result = await readAccount(store, op.accountKey);
@@ -1238,6 +1255,22 @@ export async function handleAccountOperation(store, op, options = {}) {
     if (redeemed.error === 'expired') return json({ error: 'expired', message: '초대 링크가 만료되었습니다. 새 초대를 받아 주세요.' }, 410);
     if (redeemed.error) return json({ error: 'invite', message: '초대 링크를 확인하지 못했습니다. 한 번 쓴 링크는 다시 열 수 없습니다.' }, 404);
     return json({ ok: true, code: redeemed.code, syncToken: redeemed.syncToken });
+  }
+  if (op.kind === 'account-diag-put') {
+    const record = await findBySession(store, op.accountKey);
+    if (!record) return accountError('account');
+    const saved = await putDiagReport(store, {
+      accountId: record.id,
+      memberId: record.memberId,
+      events: op.events,
+    }, now);
+    if (saved.error) return json({ error: saved.error }, 400);
+    return json({ ok: true, id: saved.id, exp: saved.exp, count: saved.count });
+  }
+  if (op.kind === 'account-diag-get') {
+    const report = await readDiagReport(store, op.id, now);
+    if (!report) return json({ error: 'missing' }, 404);
+    return json({ ok: true, id: report.id, exp: report.exp, events: report.events });
   }
   if (op.kind === 'account-disclosures') {
     const record = await findBySession(store, op.accountKey);

@@ -1,4 +1,5 @@
-import { isImpossibleJump, liveMotionLabel, trailDrawDashed, trailSegmentDashed } from './tracking.mjs';
+import { memberIsStale, memberPresence } from './memberPresence.mjs';
+import { isImpossibleJump, liveMotionLabel, liveTrailPoints, seoulDayKey, trailDrawDashed, trailSegmentDashed } from './tracking.mjs';
 
 /**
  * Main map draws the open segment only while the card still says 「지금」.
@@ -76,6 +77,48 @@ function solidRuns(points) {
  * connector, and it does not erase the solid run already drawn. The line
  * stays until the next sample can join the pin.
  */
+function located(member) {
+  return !!member && Number.isFinite(member.lat) && Number.isFinite(member.lng);
+}
+
+/**
+ * Polylines the main map draws for one member, plus why the list is empty.
+ * The screen and the diagnostic log share this so a phone report matches the layer.
+ */
+export function memberLiveLines(member, tracks, now, liveDay = seoulDayKey(now)) {
+  const storedToday = (tracks?.[member?.id] ?? []).filter((point) => point && seoulDayKey(point.at) === liveDay);
+  if (!member || member.role === 'guardian' || !located(member)) {
+    return { lines: [], reason: 'no-pin', stored: storedToday.length, live: 0 };
+  }
+  if (memberIsStale(memberPresence(member, now))) {
+    return { lines: [], reason: 'stale', stored: storedToday.length, live: 0 };
+  }
+  if (member.id !== 'self' && member.share !== 'allowed' && member.role !== 'admin-share') {
+    return { lines: [], reason: 'share', stored: storedToday.length, live: 0 };
+  }
+  const points = liveTrailPoints(storedToday, now);
+  const pin = { lat: member.lat, lng: member.lng, at: member.updatedAt || now, accuracyM: member.accuracyM };
+  const lines = mainOverviewTrails({
+    points,
+    motionPoints: tracks?.[member.id],
+    pin,
+    moving: member.moving,
+    located: true,
+    now,
+  });
+  if (lines.length === 0) {
+    const label = liveMotionLabel({
+      located: true,
+      moving: member.moving,
+      points: tracks?.[member.id],
+      now,
+      pin,
+    });
+    return { lines: [], reason: label === '지금' ? 'no-solid' : `label:${label || 'empty'}`, stored: storedToday.length, live: points.length };
+  }
+  return { lines, reason: 'draw', stored: storedToday.length, live: points.length };
+}
+
 export function mainOverviewTrails({ points, motionPoints, pin, moving, located = true, now }) {
   const label = liveMotionLabel({
     located: located !== false,
@@ -86,23 +129,50 @@ export function mainOverviewTrails({ points, motionPoints, pin, moving, located 
   });
   if (label !== '지금') return [];
   const runs = solidRuns(points);
-  if (runs.length === 0) return [];
   if (!pin || !Number.isFinite(pin.lat) || !Number.isFinite(pin.lng)) return runs;
-  const lastRun = runs[runs.length - 1];
-  const tip = lastRun[lastRun.length - 1];
-  const away = meters(tip, pin);
-  if (away <= OVERVIEW_PIN_M) {
-    if (away === 0) return runs;
-    const snapped = lastRun.slice(0, -1).concat([{ ...tip, lat: pin.lat, lng: pin.lng }]);
-    return runs.slice(0, -1).concat([snapped]);
-  }
+  if (pinRepeatsRejectedHole(points, pin)) return runs;
+  const anchor = runs.length > 0 ? runs[runs.length - 1][runs[runs.length - 1].length - 1] : lastDrawn(points);
+  if (!anchor) return runs;
   const leg = {
     lat: pin.lat,
     lng: pin.lng,
-    at: Number.isFinite(pin.at) ? pin.at : tip.at,
+    at: Number.isFinite(pin.at) ? pin.at : anchor.at,
     speedMps: pin.speedMps,
     accuracyM: pin.accuracyM,
   };
-  if (trailDrawDashed(tip, leg, lastRun[lastRun.length - 2]) || isImpossibleJump(tip, leg)) return runs;
+  if (isImpossibleJump(anchor, leg)) return runs;
+  const away = meters(anchor, pin);
+  if (away === 0) return runs;
+  if (runs.length === 0) return away >= 15 ? [[anchor, leg]] : [];
+  const lastRun = runs[runs.length - 1];
+  if (away <= OVERVIEW_PIN_M) {
+    const snapped = lastRun.slice(0, -1).concat([{ ...lastRun[lastRun.length - 1], lat: pin.lat, lng: pin.lng }]);
+    return runs.slice(0, -1).concat([snapped]);
+  }
   return runs.slice(0, -1).concat([lastRun.concat([leg])]);
+}
+
+function lastDrawn(points) {
+  const list = Array.isArray(points) ? points : [];
+  for (let index = list.length - 1; index >= 0; index -= 1) {
+    const point = list[index];
+    if (point && !point.stayEnd && Number.isFinite(point.lat) && Number.isFinite(point.lng)) return point;
+  }
+  return null;
+}
+
+/** A precise GPS hole already removed from the solid run must not be drawn back as the pin. */
+function pinRepeatsRejectedHole(points, pin) {
+  let prev = null;
+  let prior = null;
+  for (const point of Array.isArray(points) ? points : []) {
+    if (!point || point.stayEnd || !Number.isFinite(point.lat) || !Number.isFinite(point.lng)) continue;
+    if (prev && (trailDrawDashed(prev, point, prior) || isImpossibleJump(prev, point))) {
+      const sameTime = !Number.isFinite(pin.at) || !Number.isFinite(point.at) || Math.abs(pin.at - point.at) < 5_000;
+      if (sameTime && meters(point, pin) < 3) return true;
+    }
+    prior = prev;
+    prev = point;
+  }
+  return false;
 }
