@@ -454,15 +454,18 @@ export function stayLabelDwellMs(points) {
  * 「머무름」 only after that dwell. moving === false does not flip the label
  * during that window. Peers leave moving null; the same trail dwell decides their card.
  */
-export function liveMotionLabel({ located, moving, points, now }) {
+export function liveMotionLabel({ located, moving, points, now, pin }) {
   if (!located || !Number.isFinite(now)) return '';
   const dwell = stayLabelDwellMs(points);
   const movedAt = lastTravelAt(points);
   if (movedAt != null && now >= movedAt && now - movedAt < dwell) return '지금';
-  if (moving === true && movedAt == null) return '지금';
-  if (moving === false) return '머무름';
   const drawn = drawnPoints(points);
   const end = drawn[drawn.length - 1];
+  // Sparse vertices are a minute apart. The pin can already be further along
+  // that walk while the next vertex is still inside the accuracy gate.
+  if (pin && end && Number.isFinite(pin.at) && pin.at <= now && now - pin.at < dwell && travelStep(end, pin)) return '지금';
+  if (moving === true && movedAt == null) return '지금';
+  if (moving === false) return '머무름';
   if (!end) return '지금';
   if (now >= end.at && now - end.at < dwell) return '지금';
   return '머무름';
@@ -1015,9 +1018,17 @@ function roundWalk(points) {
 }
 
 /**
+ * Longest calm-walk chord that is still one kept step, not a whole trip.
+ * Network fixes are stored only after they clear the accuracy gate, so the
+ * vertex spacing is often one or two minutes.
+ */
+const TRAIL_WALK_CHORD_M = 280;
+
+/**
  * True when the straight segment between two kept samples is a hole, not a walked step.
  * Continuous vertices are a few meters apart and are not dashed.
  * A long chord with time enough to have sampled the middle is dashed as-is.
+ * Drawing may still keep a calm walk when that spacing is the trail itself.
  */
 export function trailSegmentDashed(start, end) {
   if (!start || !end) return false;
@@ -1025,6 +1036,29 @@ export function trailSegmentDashed(start, end) {
   if (!Number.isFinite(moved) || moved < TRAIL_GAP_M) return false;
   const dt = Number(end.at) - Number(start.at);
   return !Number.isFinite(dt) || dt >= TRAIL_GAP_MS;
+}
+
+/**
+ * A dashed gap the main line should still paint.
+ * Sparse and coarse walks have no denser sample: the chord is the step.
+ * The same pace after a few-meter GPS fix is a hole in a dense trail, and stays dashed.
+ */
+export function trailDrawDashed(start, end, prior) {
+  if (!trailSegmentDashed(start, end)) return false;
+  if (start?.staying === true || end?.staying === true) return true;
+  const moved = haversineMeters(start, end);
+  const dt = Number(end.at) - Number(start.at);
+  if (!Number.isFinite(moved) || !Number.isFinite(dt) || dt <= 0) return true;
+  const pace = moved / (dt / 1000);
+  if (moved > TRAIL_WALK_CHORD_M || pace < 0.7 || pace > 2.8) return true;
+  if (prior && !prior.stayEnd && Number.isFinite(prior.lat) && Number.isFinite(prior.lng)) {
+    const prevMoved = haversineMeters(prior, start);
+    const prevDt = Number(start.at) - Number(prior.at);
+    if (Number.isFinite(prevMoved) && prevMoved < TRAIL_GAP_M && Number.isFinite(prevDt) && prevDt > 0 && prevDt < TRAIL_GAP_MS && moved > prevMoved * 3) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -1046,7 +1080,7 @@ export function trailDrawParts(points) {
     if (isImpossibleJump(prev, next)) {
       flushRun();
       run = [next];
-    } else if (trailSegmentDashed(prev, next)) {
+    } else if (trailDrawDashed(prev, next, sampled[index - 2])) {
       flushRun();
       parts.push({ points: [prev, next], dashed: true });
       run = [next];
@@ -1656,10 +1690,10 @@ function stableJourneyId(startedAt, lat, lng) {
 }
 
 /** A dashed hole while actually riding stays with the trip. A stay-to-stay hole does not. */
-function isSlowGap(prev, point) {
+function isSlowGap(prev, point, prior) {
   if (!prev || !point || prev.stayEnd || point.stayEnd) return false;
   if (isImpossibleJump(prev, point)) return true;
-  if (!trailSegmentDashed(prev, point)) return false;
+  if (!trailDrawDashed(prev, point, prior)) return false;
   if (isRideStep(prev, point)) return false;
   const pace = stepPace(prev, point);
   if (pace && pace.speed >= TRAIL_RIDE_MIN_MPS) return false;
@@ -1885,13 +1919,22 @@ function openLine(points) {
     const last = cleaned[end - 1];
     if (!last || last.stayEnd) break;
     let prev = null;
+    let prevIndex = -1;
     for (let index = end - 2; index >= 0; index -= 1) {
       if (cleaned[index] && !cleaned[index].stayEnd) {
         prev = cleaned[index];
+        prevIndex = index;
         break;
       }
     }
-    if (!prev || !isSlowGap(prev, last)) break;
+    let prior = null;
+    for (let index = prevIndex - 1; index >= 0; index -= 1) {
+      if (cleaned[index] && !cleaned[index].stayEnd) {
+        prior = cleaned[index];
+        break;
+      }
+    }
+    if (!prev || !isSlowGap(prev, last, prior)) break;
     end -= 1;
   }
   const trimmed = end === cleaned.length ? cleaned : cleaned.slice(0, end);
@@ -2085,7 +2128,7 @@ export function playbackAnchor(points, ratio) {
   for (let index = 1; index < list.length; index += 1) {
     const prev = run[run.length - 1];
     const point = list[index];
-    if (trailSegmentDashed(prev, point) || isImpossibleJump(prev, point)) {
+    if (trailDrawDashed(prev, point, run[run.length - 2]) || isImpossibleJump(prev, point)) {
       if (run.length >= 2) runs.push(run);
       run = [point];
     } else {

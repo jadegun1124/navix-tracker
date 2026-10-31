@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { familyMapShowsTrail, mainOverviewTrails, recordsDayTrails } from './mapTrail.mjs';
-import { liveTrailDrawable, trailSegmentDashed, WALK_STAY_LABEL_MS } from './tracking.mjs';
+import { liveTrailDrawable, liveTrailPoints, settleTrailPoint, trailDrawParts, trailSegmentDashed, WALK_STAY_LABEL_MS } from './tracking.mjs';
 
 const self = { id: 'self', share: 'allowed', role: 'self' };
 const peer = { id: 'admin', share: 'allowed', role: 'admin-share' };
@@ -158,6 +158,79 @@ test('a gps hole hides the chord and keeps the solid trail until the next step',
   });
   assert.ok(after.length >= 1);
   assert.ok(after[0].length >= walked.length);
+});
+
+function eastOf(lat, lng, meters) {
+  return lng + meters / (111_320 * Math.cos((lat * Math.PI) / 180));
+}
+
+function segmentMeters(start, end) {
+  const radius = 6_371_000;
+  const p1 = (start.lat * Math.PI) / 180;
+  const p2 = (end.lat * Math.PI) / 180;
+  const dLat = p2 - p1;
+  const dLng = ((end.lng - start.lng) * Math.PI) / 180;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(p1) * Math.cos(p2) * Math.sin(dLng / 2) ** 2;
+  return 2 * radius * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
+/**
+ * Walk east. Accuracy cycles through 15–150m the way a phone alternates GPS and network.
+ * Self fixes carry a walking speed. Family places are only lat, lng, time, and accuracy.
+ */
+function ingestMixedWalk(kind) {
+  const accuracies = [15, 80, 120, 150];
+  const lat = 37.6652;
+  let lng = 127.0472;
+  let points = [];
+  let pin = null;
+  const start = Date.UTC(2026, 9, 31, 3, 40, 0);
+  const stepM = 12;
+  const dt = 8_000;
+  for (let index = 0; index < 40; index += 1) {
+    const at = start + index * dt;
+    const sample = {
+      lat,
+      lng,
+      at,
+      accuracyM: accuracies[index % accuracies.length],
+      ...(kind === 'self' ? { speedMps: 1.3, staying: false } : {}),
+    };
+    const settled = settleTrailPoint(points, sample, at);
+    points = settled.points;
+    pin = {
+      lat: Number.isFinite(settled.lat) ? settled.lat : sample.lat,
+      lng: Number.isFinite(settled.lng) ? settled.lng : sample.lng,
+      at,
+      accuracyM: sample.accuracyM,
+      ...(kind === 'self' ? { speedMps: 1.3 } : {}),
+    };
+    lng = eastOf(lat, lng, stepM);
+  }
+  const now = start + 39 * dt + 500;
+  const live = liveTrailPoints(points, now);
+  const lines = mainOverviewTrails({
+    points: live,
+    motionPoints: points,
+    pin,
+    moving: kind === 'self' ? true : null,
+    now,
+  });
+  const solid = lines.flatMap((line) => trailDrawParts(line).filter((part) => !part.dashed && part.points.length >= 2));
+  const span = solid.reduce((sum, part) => sum + segmentMeters(part.points[0], part.points[part.points.length - 1]), 0);
+  return { points, live, lines, solid, span };
+}
+
+test('a mixed 15–150m walk draws a main-map line for self and for a family member', () => {
+  for (const kind of ['self', 'family']) {
+    const drawn = ingestMixedWalk(kind);
+    assert.ok(drawn.live.length >= 2, `${kind} live vertices ${drawn.live.length}`);
+    assert.ok(drawn.lines.length >= 1, `${kind} overview lines ${drawn.lines.length}`);
+    assert.ok(drawn.solid.length >= 1, `${kind} solid parts ${drawn.solid.length}`);
+    assert.ok(drawn.span >= 200, `${kind} solid span ${Math.round(drawn.span)}m`);
+  }
+  const self = ingestMixedWalk('self');
+  assert.ok(self.points.filter((point) => point && !point.stayEnd).length >= 2);
 });
 
 test('records include archived journeys even when the live segment is gone', () => {
