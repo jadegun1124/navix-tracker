@@ -12,7 +12,7 @@ import { bindPlaceToMember, placeIsSelf, placeMemberId } from '../../lib/placeBi
 import { hideLeftPublishers, sharedPlaceStopsReporting } from '../../lib/memberPresence.mjs';
 import { familyPinId, isMemberId, moveKeyed } from '../../lib/sharedIdentity.mjs';
 import { absorbPlaceholderMembers } from '../../lib/memberRoster.mjs';
-import { noteDiag } from '../../lib/diagLog.mjs';
+import { clearDiag, noteDiag } from '../../lib/diagLog.mjs';
 import { HISTORY_DAYS, JOURNEY_POINT_CAP, TRAIL_POINT_CAP, fixShowsRide, isWithinHistory, journeysWithinHistory, labelJourneyPlace, lastTravelAt, mergeJourneyLists, seoulDayKey, settleTrailPoint, stayLabelDwellMs, storedTrackAfterArchive, tracksWithinHistory, trimJourneyList, visitsWithinHistory, type JourneyRecord } from '../../lib/tracking.mjs';
 import type { DayStop } from '../../lib/tracking.mjs';
 import type { SharedPlace, SharedProfile } from '../../services/familyShare';
@@ -1661,12 +1661,14 @@ export function FamilyProvider({ children }: { children: React.ReactNode }) {
       cancelAccountBackup();
       cancelDeviceSealRestore();
       clearStoredSessions();
+      clearDiag();
       logoutLocalAccount(typeof localStorage === 'undefined' ? null : localStorage);
       dispatch({ type: 'logout' });
     },
     withdraw: () => {
       cancelAccountBackup();
       cancelDeviceSealRestore();
+      clearDiag();
       clearDeviceAccount(
         typeof localStorage === 'undefined' ? null : localStorage,
         typeof sessionStorage === 'undefined' ? null : sessionStorage,

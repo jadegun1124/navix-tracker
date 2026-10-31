@@ -35,6 +35,17 @@ function writeRaw(events) {
   }
 }
 
+export function clearDiag() {
+  const box = storage();
+  if (!box) return;
+  try {
+    box.removeItem(STORAGE_KEY);
+  } catch {
+    /* the next logout still drops the in-memory copy by rewriting an empty list */
+    writeRaw([]);
+  }
+}
+
 export function readDiagEvents(now = Date.now()) {
   return readRaw().filter((event) => event && Number.isFinite(event.t) && now - event.t <= WINDOW_MS).slice(-MAX_EVENTS);
 }

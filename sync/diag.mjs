@@ -70,6 +70,14 @@ export function cleanDiagEvents(value) {
   return events;
 }
 
+let diagQueue = Promise.resolve();
+
+function enqueueDiag(work) {
+  const run = diagQueue.then(work, work);
+  diagQueue = run.then(() => undefined, () => undefined);
+  return run;
+}
+
 async function readIndex(store) {
   const raw = await store.get(DIAG_INDEX);
   if (!Array.isArray(raw)) return [];
@@ -80,7 +88,7 @@ async function writeIndex(store, rows) {
   await store.put(DIAG_INDEX, rows);
 }
 
-export async function purgeDiagReports(store, now = Date.now()) {
+async function purgeDiagReportsNow(store, now) {
   const rows = await readIndex(store);
   const kept = [];
   for (const row of rows) {
@@ -94,23 +102,29 @@ export async function purgeDiagReports(store, now = Date.now()) {
   return { kept: kept.length };
 }
 
-export async function forgetDiagReports(store, accountId) {
-  const rows = await readIndex(store);
-  const kept = [];
-  for (const row of rows) {
-    if (row.accountId !== accountId) {
-      kept.push(row);
-      continue;
-    }
-    await store.delete(`diag:${row.id}`);
-  }
-  if (kept.length !== rows.length) await writeIndex(store, kept);
+export function purgeDiagReports(store, now = Date.now()) {
+  return enqueueDiag(() => purgeDiagReportsNow(store, now));
 }
 
-export async function putDiagReport(store, { accountId, memberId, events }, now = Date.now()) {
+export function forgetDiagReports(store, accountId) {
+  return enqueueDiag(async () => {
+    const rows = await readIndex(store);
+    const kept = [];
+    for (const row of rows) {
+      if (row.accountId !== accountId) {
+        kept.push(row);
+        continue;
+      }
+      await store.delete(`diag:${row.id}`);
+    }
+    if (kept.length !== rows.length) await writeIndex(store, kept);
+  });
+}
+
+async function putDiagReportNow(store, { accountId, memberId, events }, now) {
   const cleaned = cleanDiagEvents(events);
   if (cleaned.length === 0) return { error: 'empty' };
-  await purgeDiagReports(store, now);
+  await purgeDiagReportsNow(store, now);
   let id = '';
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const candidate = mintDiagId();
@@ -134,10 +148,16 @@ export async function putDiagReport(store, { accountId, memberId, events }, now 
   return { id, exp, count: cleaned.length };
 }
 
-export async function readDiagReport(store, id, now = Date.now()) {
-  if (typeof id !== 'string' || id.length < 16) return null;
-  await purgeDiagReports(store, now);
-  const row = await store.get(`diag:${id}`);
-  if (!row || !Array.isArray(row.events) || row.exp <= now) return null;
-  return { id, exp: row.exp, events: row.events };
+export function putDiagReport(store, input, now = Date.now()) {
+  return enqueueDiag(() => putDiagReportNow(store, input, now));
+}
+
+export function readDiagReport(store, id, now = Date.now()) {
+  return enqueueDiag(async () => {
+    if (typeof id !== 'string' || id.length < 16) return null;
+    await purgeDiagReportsNow(store, now);
+    const row = await store.get(`diag:${id}`);
+    if (!row || !Array.isArray(row.events) || row.exp <= now) return null;
+    return { id, exp: row.exp, events: row.events };
+  });
 }

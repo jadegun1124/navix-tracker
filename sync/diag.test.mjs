@@ -62,4 +62,14 @@ test('a diagnostic report is stored on the account and read only by its id', asy
 
   const expired = await call(accounts, 'GET', `/v1/diag/${saved.body.id}`, { now: saved.body.exp + 1 });
   assert.equal(expired.status, 404);
+
+  const [left, right] = await Promise.all([
+    call(accounts, 'POST', '/v1/diag', { accountKey, body: { events: [{ kind: 'fix', t: 1, lat: 37.1, lng: 127.1 }] } }),
+    call(accounts, 'POST', '/v1/diag', { accountKey, body: { events: [{ kind: 'fix', t: 2, lat: 37.2, lng: 127.2 }] } }),
+  ]);
+  assert.equal(left.status, 200);
+  assert.equal(right.status, 200);
+  assert.notEqual(left.body.id, right.body.id);
+  assert.equal((await call(accounts, 'GET', `/v1/diag/${left.body.id}`)).status, 200);
+  assert.equal((await call(accounts, 'GET', `/v1/diag/${right.body.id}`)).status, 200);
 });
