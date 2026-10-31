@@ -1,11 +1,19 @@
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { mkdirSync } from 'node:fs';
+import zlib from 'node:zlib';
 import path from 'node:path';
 import test from 'node:test';
 import { pathToFileURL } from 'node:url';
 import { memberLiveLines } from '../../lib/mapTrail.mjs';
 import { liveTrailPoints, settleTrailPoint } from '../../lib/tracking.mjs';
+
+// Node 20's zlib has no zstd. jsdom's undici calls createZstdDecompress.bind at load.
+if (typeof zlib.createZstdDecompress !== 'function') {
+  zlib.createZstdDecompress = function createZstdDecompress() {
+    throw new Error('zstd');
+  };
+}
 
 const require = createRequire(import.meta.url);
 
